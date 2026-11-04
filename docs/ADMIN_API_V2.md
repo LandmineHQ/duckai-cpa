@@ -262,8 +262,8 @@ data: {"type":"error","message":"...","code":"...","status":429}
 
 ### 10.4 联调记录（本机 10808）
 
-- `POST /admin/api/proxy/test`（overrides `{type:"http",host:"127.0.0.1",port:10808}`）：`ok:true, status:200, latencyMs≈7.4s, exitIp:"70.39.202.155", ipError:null`；
-- 同一端点的 SOCKS5 覆盖：`ok:true, status:200, latencyMs≈1.4s, exitIp:"70.39.202.155"`；
+- `POST /admin/api/proxy/test`（overrides `{type:"http",host:"127.0.0.1",port:10808}`）：`ok:true, status:200, latencyMs≈7.4s, exitIp:"203.0.113.10", ipError:null`；
+- 同一端点的 SOCKS5 覆盖：`ok:true, status:200, latencyMs≈1.4s, exitIp:"203.0.113.10"`；
 - `PUT /admin/api/proxy {enabled:true,type:"http",host:"127.0.0.1",port:10808}` 后：`GET /healthz.proxy = {enabled:true,mode:"http",active:true,...}`，`GET /admin/api/sync.transport = "available"`（此前 `blocked`）；
 - 代理不可达（如 port 9）：`POST /proxy/test` 仍 200，`{ok:false, code:"proxy_connect_failed", error:"fetch failed"}`，`status.lastTestOk=false` 且 `lastError` 记录；
 - 非法 PUT（type/port/host/noProxy/testUrl/ipCheckUrl/未知字段/非布尔 enabled）→ 400 `invalid_proxy`（`param` 指明字段），且不修改已保存配置；
@@ -373,7 +373,7 @@ data: {"type":"error","message":"...","code":"...","status":429}
 
 ### 14.1 设备名称（统一）
 
-- 默认 `DuckCPA@<4hex>`（如 `DuckCPA@5652`）：首次启动由 `sync-devices.ensureDeviceName()` 生成并持久化到 `data/identity.json` 的 `deviceName`，同时回写 `config.identity.deviceName`；重启/rotate 后保持。
+- 默认 `DuckCPA@<4hex>`（如 `DuckCPA@xxxx`）：首次启动由 `sync-devices.ensureDeviceName()` 生成并持久化到 `data/identity.json` 的 `deviceName`，同时回写 `config.identity.deviceName`；重启/rotate 后保持。
 - **旧默认名迁移**：`identity.deviceName` 为空或匹配旧默认（`/^DuckAI CPA/`，含 `DuckAI CPA @ <host>`）时自动重新生成 `DuckCPA@xxxx` 并同时持久化 identity + config；其他自定义名不受影响。
 - `deviceName` 在 `GET /admin/api/identity`、`GET /admin/api/sync`、`register-device` 统一使用。
 - 自定义：`PUT /admin/api/config { identity: { deviceName: "MyCPA@custom" } }`，立即持久化并用于 `/admin/api/identity`、`/admin/api/sync`、`register-device`；`PUT deviceName:null` 会重新生成 DuckCPA@xxxx。
@@ -423,9 +423,9 @@ data: {"type":"error","message":"...","code":"...","status":429}
 
 - 错误：body 非数组/未知 id/禁用身份/重复 → 400 `invalid_identity`；未注入服务 → 503；Sync 418 → 429 `sync_rate_limited`（`hint`+`retryAfterMs`+`Retry-After`，2 分钟进程内 cooldown）；其他登录/注册失败 502/503 沿用 §14。
 - `matchedIdentityId` 优先按 server device `id===identity.deviceId` 匹配；其次按解密 `name===identity.deviceName`。
-- `GET/POST /admin/api/sync/server-devices` 优先使用 `syncClient.listDevicesDetailed()`：name/type 为解密后的可读值（HONOR/Chrome），无法解密 → `null`（不返回 JWE/info 原文）；返回项含 `matchedIdentityId`。`POST /admin/api/sync/register-device` 保留（兼容单设备/默认身份）。
+- `GET/POST /admin/api/sync/server-devices` 优先使用 `syncClient.listDevicesDetailed()`：name/type 为解密后的可读值（Android 手机/Chrome），无法解密 → `null`（不返回 JWE/info 原文）；返回项含 `matchedIdentityId`。`POST /admin/api/sync/register-device` 保留（兼容单设备/默认身份）。
 - 真实设备槽位顺序：`[id_default, 分身1]` → `DuckAI@main` + `DuckCPA@xxxx` 两台；`[id_default]` → 分身设备被注销；手机 My Devices 名称与槽位一致。
-- **真实联调结果（2026-11-01，官方码 + 10808）**：`GET device-slots` 解密出 `HONOR BRT-AN00`（手机，ddg）/Chrome/Edge 等；`PUT [id_default, 分身1]` **200**，两台设备注册成功（`DuckAI@main` + `DuckCPA@9376`，均 `matchedIdentityId` 映射正确、serverDeviceId=identity.deviceId）；`PUT [id_default]` **200** 后分身设备注销；`DELETE id_default` 与 `?force=true` 都 **409 default_identity_protected**。
+- **真实联调结果（2026-11-01，官方码 + 10808）**：`GET device-slots` 解密出 `Android 手机`（手机，ddg）/Chrome/Edge 等；`PUT [id_default, 分身1]` **200**，两台设备注册成功（`DuckAI@main` + `DuckCPA@xxxx`，均 `matchedIdentityId` 映射正确、serverDeviceId=identity.deviceId）；`PUT [id_default]` **200** 后分身设备注销；`DELETE id_default` 与 `?force=true` 都 **409 default_identity_protected**。
 - 真实服务 `PATCH /devices` 只允许更新**当前 login 的 device_id**：duck-protocol `syncClient.registerDevices()` 内部为每个设备单独 login+PATCH（Admin 不感知，直接调用即可）；`forbidden_device` 401 目前表示“用错 token 尝试更新非当前设备”，不要当设备上限映射。
 
 ---
@@ -468,9 +468,9 @@ data: {"type":"error","message":"...","code":"...","status":429}
 
 ### 16.5 真实联调（2026-11-01，官方码 + 10808）
 
-- 分身 `id_f8bcd961`（`DuckCPA@9376`）加入 slots（`PUT [id_default, id_f8bcd961]` → 200）；
-- `DELETE /admin/api/identities/id_f8bcd961` → **409**，`error` 顶层 `{code:"identity_in_device_slots", identityId:"id_f8bcd961", deviceName:"DuckCPA@9376", hint}`，身份未变；
-- `DELETE ...?force=true` → **200 `{ok:true,id:"id_f8bcd961",removedDevice:true}`**，随后 `GET device-slots` → `identityIds:["id_default"]`、`orphans:[]`，该身份已删除；
+- 分身 `id_xxxxxxxx`（`DuckCPA@xxxx`）加入 slots（`PUT [id_default, id_xxxxxxxx]` → 200）；
+- `DELETE /admin/api/identities/id_xxxxxxxx` → **409**，`error` 顶层 `{code:"identity_in_device_slots", identityId:"id_xxxxxxxx", deviceName:"DuckCPA@xxxx", hint}`，身份未变；
+- `DELETE ...?force=true` → **200 `{ok:true,id:"id_xxxxxxxx",removedDevice:true}`**，随后 `GET device-slots` → `identityIds:["id_default"]`、`orphans:[]`，该身份已删除；
 - `DELETE /admin/api/identities/id_default?force=true` → **409 `default_identity_protected`**（优先）。
 
 ---
@@ -814,7 +814,7 @@ DuckDuckGo 手机上出现两个 `DuckAI@main`：
   并清理了历史遗留的重复设备（已注销 `8885c837…`）。
 - 同时修复 `DELETE current device` 判定（原先按全局身份判断，导致“删除当前设备”返回 200）。
 
-实测当前账号（`0a60c83c…`）：`HONOR BRT-AN00 (phone)` + `DuckAI@main (browser, primary)`，各一台。
+实测当前账号（`0a60c83c…`）：`Android 手机 (phone)` + `DuckAI@main (browser, primary)`，各一台。
 
 自动化：`npm test` **351/351**、`build-check` **16/16**、`page-check` **22/22**。
 

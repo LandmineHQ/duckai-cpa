@@ -4,17 +4,17 @@
 
 - 用户在 DuckDuckGo Sync 账号（`user_id = 489adc11-ab46-4046-8411-c2ce3f0a18bf`）中的**手机设备被删除**：
   - `device_id: c2458c0e-f14e-4f23-93f5-1adb4bac7e45`
-  - `name: HONOR BRT-AN00`，`type: phone`，`credential_id: ddg`
+  - `name: Android 手机`，`type: phone`，`credential_id: ddg`
 - 手机端表现：从「My Devices」消失；无法再与其他设备配对/同步（该设备的 Sync 会话被 `/logout-device` 注销）。
 
 ## 时间线（America/New_York）
 
 | 时间 | 事件 |
 | --- | --- |
-| 11-01 09:45 | 用户手机扫码配对成功，账号与设备（HONOR）建立 |
-| 11-01 10:00–13:40 | 反复联调设备注册/槽位；此阶段设备列表仍含 HONOR |
-| ~11-01 13:50 | 执行 `node scripts/page-check.mjs`（带 admin token / real account）；用例「sync 设备契约（v2.8）」中「删除其它设备 → 预期 200」挑选**第一个非当前设备** → 恰为 HONOR → `DELETE /admin/api/sync/server-devices/c2458c0e…` → 后端 `logoutDevices([id])` → **手机设备被注销并从账号删除** |
-| 11-01 14:14 | Lead 复查设备列表发现 HONOR 已消失（当时误以为是缓存问题） |
+| 11-01 09:45 | 用户手机扫码配对成功，账号与设备（Android 手机）建立 |
+| 11-01 10:00–13:40 | 反复联调设备注册/槽位；此阶段设备列表仍含 Android 手机 |
+| ~11-01 13:50 | 执行 `node scripts/page-check.mjs`（带 admin token / real account）；用例「sync 设备契约（v2.8）」中「删除其它设备 → 预期 200」挑选**第一个非当前设备** → 恰为 Android 手机 → `DELETE /admin/api/sync/server-devices/c2458c0e…` → 后端 `logoutDevices([id])` → **手机设备被注销并从账号删除** |
+| 11-01 14:14 | Lead 复查设备列表发现 Android 手机 已消失（当时误以为是缓存问题） |
 | 11-02 01:57 | 用户反馈手机无法配对、设备消失 |
 
 ## 根本原因

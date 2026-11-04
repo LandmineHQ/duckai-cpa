@@ -398,7 +398,7 @@ export function createSyncDeviceService({
     let devices;
     try {
       // Detailed list decrypts each device info envelope so the UI shows readable names
-      // (e.g. "Chrome 156.0.0.0", "HONOR BRT-AN00") instead of "未命名设备".
+      // (e.g. "Chrome 156.0.0.0", "Android 手机") instead of "未命名设备".
       devices = typeof syncClient.listDevicesDetailed === 'function'
         ? await syncClient.listDevicesDetailed()
         : await syncClient.listDevices();

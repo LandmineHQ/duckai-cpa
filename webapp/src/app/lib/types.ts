@@ -485,7 +485,7 @@ export interface SyncPairingSession {
   state?: string;
   endReason?: string | null;
   peerChannelId?: string | null;
-  /** 对端设备名/类型（如 HONOR BRT-AN00 / ddg）。 */
+  /** 对端设备名/类型（如 Android 手机 / ddg）。 */
   peerName?: string | null;
   peerKind?: string | null;
   completedAs?: string | null;

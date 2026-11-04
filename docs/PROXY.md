@@ -53,7 +53,7 @@
     "ipCheckUrl": "https://api.ipify.org?format=json",
     "status": {
       "active": true, "mode": "http", "lastTestAt": 1793, "lastTestOk": true,
-      "lastTestLatencyMs": 210, "lastTestStatus": 200, "exitIp": "70.39.202.155",
+      "lastTestLatencyMs": 210, "lastTestStatus": 200, "exitIp": "203.0.113.10",
       "lastError": null, "updatedAt": 1793
     }
   }
@@ -79,7 +79,7 @@ body 可选覆盖：`{ type?, host?, port?, username?, password?, noProxy?, test
 - 返回 200（测试失败也用 200，便于前端展示）：
 ```json
 { "ok": true, "mode": "http", "target": "https://duck.ai/duckchat/v1/status",
-  "status": 200, "latencyMs": 214, "exitIp": "70.39.202.155", "ipError": null,
+  "status": 200, "latencyMs": 214, "exitIp": "203.0.113.10", "ipError": null,
   "testedAt": 1793, "error": null, "code": null }
 ```
 - 失败：`{ ok:false, mode:"http", latencyMs: 8000, status:null, error:"...", code:"proxy_connect_failed"|"proxy_timeout"|"proxy_tls_failed"|"invalid_proxy" }`。

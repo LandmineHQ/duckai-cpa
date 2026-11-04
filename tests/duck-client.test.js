@@ -570,7 +570,7 @@ test('v2.3 proxy：所有上游请求经 proxyManager.fetch；health().proxy 透
       active: true,
       lastTestOk: true,
       lastTestLatencyMs: 210,
-      exitIp: '70.39.202.155'
+      exitIp: '203.0.113.10'
     }),
     shouldBypass: () => false
   };
@@ -590,7 +590,7 @@ test('v2.3 proxy：所有上游请求经 proxyManager.fetch；health().proxy 透
     assert.equal(health.proxy.enabled, true);
     assert.equal(health.proxy.mode, 'http');
     assert.equal(health.proxy.active, true);
-    assert.equal(health.proxy.exitIp, '70.39.202.155');
+    assert.equal(health.proxy.exitIp, '203.0.113.10');
     assert.equal(health.proxy.lastTestOk, true);
   } finally {
     mock.restore();

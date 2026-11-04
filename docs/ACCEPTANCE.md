@@ -48,12 +48,12 @@
 
 | # | 能力 | 结果 | 证据 |
 | --- | --- | --- | --- |
-| 1 | 代理页 `#/proxy` | ✅ | 左侧导航「代理」；状态卡/配置卡；真实数据渲染、无 console 报错（截图 `admin-proxy.png`）；UI「测试连接」显示「测试通过 · HTTP 代理 · 延迟 1.98s · HTTP 200 · 出口 IP 70.39.202.155」 |
-| 2 | HTTP 代理（127.0.0.1:10808） | ✅ | `POST /admin/api/proxy/test` → `ok:true, status:200, exitIp:70.39.202.155`；`/duckchat/v1/status` 200 + 挑战头；duckduckgo.com 200 |
+| 1 | 代理页 `#/proxy` | ✅ | 左侧导航「代理」；状态卡/配置卡；真实数据渲染、无 console 报错（截图 `admin-proxy.png`）；UI「测试连接」显示「测试通过 · HTTP 代理 · 延迟 1.98s · HTTP 200 · 出口 IP 203.0.113.10」 |
+| 2 | HTTP 代理（127.0.0.1:10808） | ✅ | `POST /admin/api/proxy/test` → `ok:true, status:200, exitIp:203.0.113.10`；`/duckchat/v1/status` 200 + 挑战头；duckduckgo.com 200 |
 | 3 | SOCKS5 代理（127.0.0.1:10808） | ✅ | 同上 test 通过（~1.2s）；**真实 chat 200**（SOCKS5 通道，挑战→SSE 全程走代理） |
 | 4 | 启用后全链路 | ✅ | `PUT /admin/api/proxy` 即时生效；`/healthz.proxy={enabled:true,mode:http,active:true,exitIp}`；网关 `POST /v1/chat/completions` 经代理 **200**；`sync.transport` 由 `blocked` → **`available`**（duckduckgo.com 可达） |
 | 5 | 失败与校验 | ✅ | 不可达代理 → `ok:false, code:proxy_connect_failed`；非法 PUT → 400 `invalid_proxy` 且不改配置；密码不回显、空密码不覆盖；关闭后回 `direct` |
-| 6 | 代理解锁的能力 | ✅ | 沙箱原本仅 `duck.ai` 可直连；启用代理后 `duckduckgo.com` 可访问（Sync transport available；pair 返回 501 `sync_handshake_unimplemented` 属既定边界）；出口 IP 70.39.202.155 |
+| 6 | 代理解锁的能力 | ✅ | 沙箱原本仅 `duck.ai` 可直连；启用代理后 `duckduckgo.com` 可访问（Sync transport available；pair 返回 501 `sync_handshake_unimplemented` 属既定边界）；出口 IP 203.0.113.10 |
 
 ## 2.2 v2.4 身份池 / 配对二维码 / 上下文守卫（Lead 实测）
 
@@ -129,7 +129,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 3 | 设备槽拖拽 | ✅ | 身份页两栏：左「身份池设备」/右「DuckDuckGo 设备列表·设备槽」，拖拽加入/移除、「有未保存更改」、保存 `PUT /sync/device-slots {identityIds}` 后生效并刷新（截图 `admin-identity-slots.png`） |
 | 4 | 默认身份可移除但保留账号 | ✅ | 默认身份初始在右栏，可拖出；slot 移除只注销设备，官方恢复码/配对账号仍保留 |
 | 5 | Sync 多设备注册 | ✅ | 真实账号：`PUT [id_default, 分身]` → 200，`DuckAI@main` + `DuckCPA@xxxx` 均注册成功（per-device login+PATCH，DDG 要求 PATCH 用该设备自己的 token）；手机 My Devices 可见 |
-| 6 | 设备名可读化 | ✅ | `listDevicesDetailed` 用 account_info 私钥解密 info：`HONOR BRT-AN00`/`Chrome` 等可读；无法解密条目 name/type=null（不泄露 JWE） |
+| 6 | 设备名可读化 | ✅ | `listDevicesDetailed` 用 account_info 私钥解密 info：`Android 手机`/`Chrome` 等可读；无法解密条目 name/type=null（不泄露 JWE） |
 | 7 | 每身份 deviceName | ✅ | `PATCH /admin/api/identities/:id {deviceName}`（1–100）；create/generate 自动 `DuckCPA@<4hex>`；默认身份迁移为 `DuckAI@main` |
 | 8 | 429 限流 | ✅ | DuckDuckGo Sync `/login` 418 → 429 `sync_rate_limited`（Retry-After/hint/retryAfterMs），2 分钟冷却；前端显示「限流中，请 X 秒后重试」 |
 
@@ -159,7 +159,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 3 | 身份池订阅字段 | ✅ | `GET /admin/api/identities` 返回 `subscriptionId/subscriptionLabel/subscriptionTier/subscriptionExpiresAt`；付费路由仍只选 `subscribed` |
 | 4 | 「订阅」标签页 | ✅ | 侧边栏「订阅」+ `#/subscriptions`：统计卡、订阅列表、新增/改名/校验/删除；jsdom 实测渲染 |
 | 5 | 身份池选择器绑定 | ✅ | 行操作「绑定订阅」弹窗为 Select（选项来自 `/subscriptions`，显示 label/tier/已绑数），提交 `{subscriptionId}`；「订阅」列显示名称+tier，未绑定显示「未绑定」 |
-| 6 | 配对成功不再误报冲突 | ✅ | `GET /admin/api/sync/pairing`：`accountMerged=true` 时 `accountConflict=false`；实测配对后账号已合并到手机账号（`383b793c…`），设备 `HONOR BRT-AN00 / Chrome / Edge / DuckAI@main` 同账号 |
+| 6 | 配对成功不再误报冲突 | ✅ | `GET /admin/api/sync/pairing`：`accountMerged=true` 时 `accountConflict=false`；实测配对后账号已合并到手机账号（`383b793c…`），设备 `Android 手机 / Chrome / Edge / DuckAI@main` 同账号 |
 | 7 | 扫码阶段明确提示 | ✅ | 配对面板 `pairing-phase-hint`：exchange/joiner_awaiting 时提示「手机已扫码，请回到手机点允许」；完成 toast 区分 joiner/host 与「两端已同账号」 |
 | 8 | 主设备标记 | ✅ | `/admin/api/sync/server-devices` 返回 `primaryDeviceId` 与每设备 `primary`；前端显示「主设备（本机）」 |
 

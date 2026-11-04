@@ -31,13 +31,13 @@
 | v2.10 设备槽删除/禁用保护 + force + 孤儿自愈 + 独立设备列表卡 | ✅ **6 / 6 新用例 PASS** | §4.34 |
 | v2.11 compact（协议层/自动/手动/失败回退/limit 重试/summary 持久化+重启）/ 模型上下文能力 / 官方恢复码明文查看+下载+二维码 | ✅ **26 / 26 新用例 PASS** | §4.37 |
 | v2.12 compact 触发语义（白名单/gpt-6-luna 不压缩/pair/char 兜底/activation/标记解析）+ 后端 pendingCompaction/LIMIT 压缩重试/summary PATCH-DELETE + 摘要折叠块前端 | ✅ **22 / 22 新用例 PASS** | §4.41 |
-| 本机代理真实联调（HTTP + SOCKS5，127.0.0.1:10808） | ✅ **11 / 11 PASS**（exitIp=70.39.202.155，sync transport available） | §5.6 |
+| 本机代理真实联调（HTTP + SOCKS5，127.0.0.1:10808） | ✅ **11 / 11 PASS**（exitIp=203.0.113.10，sync transport available） | §5.6 |
 | v2.4 真实身份池联调（2 身份 × 2 会话真实消息） | ✅ **2 个身份各 1 条真实 200**（经 10808 代理，内容「分身/分身1」，日志 identityId 正确） | §5.7 / §6.7 |
 | v2.5 真实联调（2 身份并行真实消息 + 配对真实 start） | ✅ 身份路由/并行可测（含一次双 200；复跑遇上游 429 限额）；**配对 start 200（channelId/waiting）** 经 10808；官方恢复码端点 200 | §5.8 / §6.8 |
 | v2.11 真实联调（恢复码明文/下载一致 + 模型能力 + compact 额度受限） | ✅ 恢复码 GET 200/len=191/source=pairing、download 一致；模型能力 200；compact **BLOCKED**（上游 rate limited） | §5.13 / §6.12 |
 | v2.10 真实联调（slots 内身份 DELETE 409 → force 删除） | ✅ **409 identity_in_device_slots → force 200 removedDevice**、slots 无残留；默认身份 force 409 | §5.12 / §6.11 |
-| v2.9 真实联调（device-slots 双设备注册 → 注销） | ✅ **GET/PUT 200**：默认 `DuckAI@main` + 分身 `DuckCPA@70e7` 注册、serverDevices 解密 HONOR/DuckCPA、PUT 注销成功（10808） | §5.11 / §6.10 |
-| v2.8 真实联调（真实官方恢复码 → 注册设备） | ✅ **register-device 200**（userId=489adc11…）、`server-devices` total=5 含本机 `DuckCPA@498a` current；DELETE 当前 400（经 10808） | §5.10 / §6.9 |
+| v2.9 真实联调（device-slots 双设备注册 → 注销） | ✅ **GET/PUT 200**：默认 `DuckAI@main` + 分身 `DuckCPA@xxxx` 注册、serverDevices 解密 Android 手机/DuckCPA、PUT 注销成功（10808） | §5.11 / §6.10 |
+| v2.8 真实联调（真实官方恢复码 → 注册设备） | ✅ **register-device 200**（userId=489adc11…）、`server-devices` total=5 含本机 `DuckCPA@xxxx` current；DELETE 当前 400（经 10808） | §5.10 / §6.9 |
 | OpenAI 官方 SDK × v2 网关（mock 上游） | ✅ **4 / 4 PASS** | §6.4 |
 | 真实上游端到端（经网关） | ⚠️ **部分实测 / 仍受额度 429 限制**：v2.2 durableStream 200（§6.5）、v2.3 代理解锁（§6.6）、v2.4 身份池（§6.7）、v2.5 身份路由+配对（§6.8）；其余文本/搜索/图片/SDK 受共享出口额度影响 | §6 |
 | OpenAI 官方 SDK 真实兼容（v2 强制 key） | ⚠️ **BLOCKED**（同上，冷却后执行） | §6.4 |
@@ -116,9 +116,9 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
 | `tests/sync-devices-api.test.js` | **v2.8 Admin HTTP**：未注入 503 `sync_transport_unavailable`+hint；register-device 无码 400 → 成功 200 `{ok,server}`；server-devices current/total/server、脱敏；DELETE 当前 400 invalid_device、其它 200；`GET /sync` deviceName DuckCPA@xxxx 稳定 + 自定义生效；rotate `identityLost:true`+note（无法恢复）；登录网络失败 503+hint；**418 → HTTP 429 sync_rate_limited/rate_limit_error + Retry-After:120，cooldown 内 register/server-devices/delete 均 429 且不再请求上游；直连 createServer 未 bootstrap 时 GET /sync 懒迁移旧设备名** | 8 | ✅ |
 | `tests/pairing-auto-register.test.js` | **v2.8 joiner 自动注册（index glue，mock）**：真实 PairingService（真实 PairingHost + mock exchange）joiner 完成后 onCompleted → `syncDevices.autoRegister()` → login+registerDevice；设备名 DuckCPA@xxxx；pairing 保持 completed | 1 | ✅ |
 | `tests/web-rotate-confirm.test.js` | **v2.8 前端（jsdom + 真实构建产物）**：轮换两步确认（第 1 / 2 步 → 确认轮换（不可恢复）/身份丢失）、取消不调 rotate API、确认仅调用一次（scope=all）并显示「身份已丢失」；设备列表显示 DuckDuckGo 设备/本机标记/当前设备不可删除，删除需确认且取消不调 DELETE；无 console 报错 | 2 | ✅ |
-| `tests/sync-client-multidevice.test.js` | **v2.9 sync-client 多设备**：`registerDevices` 每设备单独 login+PATCH（N 次、每次 updates=1），info 可解 `{name,type}`，返回 items/devices；`listDevicesDetailed` 解密 name/type（HONOR）、失败 null 无 info/JWE、current 标记；`logoutDevices` 每 id 一次 POST、404 不计入 removed、results 完整 | 3 | ✅ |
+| `tests/sync-client-multidevice.test.js` | **v2.9 sync-client 多设备**：`registerDevices` 每设备单独 login+PATCH（N 次、每次 updates=1），info 可解 `{name,type}`，返回 items/devices；`listDevicesDetailed` 解密 name/type（Android 手机）、失败 null 无 info/JWE、current 标记；`logoutDevices` 每 id 一次 POST、404 不计入 removed、results 完整 | 3 | ✅ |
 | `tests/device-slots.test.js` | **v2.9/v2.10 设备槽/设备名/默认保护/自愈（Admin HTTP + 真实池）**：id_default=DuckAI@main、generate=DuckCPA@xxxx、PATCH deviceName；DELETE id_default 409（force 亦拒）；GET/PUT device-slots 默认含默认身份、批量注册/注销、slots 持久化/重启、PUT 必须含默认身份(400)、非法/禁用 400、418→429、serverDevices 解密+matchedIdentityId；**v2.10：DELETE 在 slots → 409 identity_in_device_slots（hint/identityId/deviceName、状态不变）→ force 注销+清 slots+删身份+removedDevice:true；PATCH enabled:false 409 → force 注销+移除+禁用；orphans 过滤/reconcile 清理** | 9 | ✅ |
-| `tests/web-device-slots.test.js` | **v2.9 前端（jsdom + 真实构建产物）**：身份池「设备名称」列 DuckAI@main/DuckCPA@b2c4、默认身份「默认 · 不可删除」且删除 disabled；设备槽两栏拖拽加入/移除、`有未保存更改`、保存 PUT payload、保存后刷新/已保存、429「DuckAI Sync 限流中，请 5 秒后重试」；无 console 报错 | 2 | ✅ |
+| `tests/web-device-slots.test.js` | **v2.9 前端（jsdom + 真实构建产物）**：身份池「设备名称」列 DuckAI@main/DuckCPA@xxxx、默认身份「默认 · 不可删除」且删除 disabled；设备槽两栏拖拽加入/移除、`有未保存更改`、保存 PUT payload、保存后刷新/已保存、429「DuckAI Sync 限流中，请 5 秒后重试」；无 console 报错 | 2 | ✅ |
 | `tests/web-device-protection.test.js` | **v2.10 前端（jsdom + 真实构建产物）**：设备列表独立卡片 `ddg-device-list-card`（含两栏设备槽）；身份池删除在 slots 身份 → 409 弹窗「该身份正在设备列表中」+「先去设备列表移除」/「移除设备并删除（force）」；force 确认后 `DELETE ?force=true`；orphans 横幅「发现 N 个已失效身份的设备」+「清理」→ `PUT ?reconcile=true` 后消失；无 console 报错 | 3 | ✅ |
 | `tests/compact.test.js` | **v2.11/v2.12 compact 协议层**：buildSummaryPrompt 关键指令/maxSummaryChars clamp；serializeMessages 跳过 reasoning/空；estimateChars/estimateTokens/shouldCompact；summarizeMessages（单条 user、reasoningEffort=none、previousSummary 增量、字段/usage）；**原生 summarizeNative 优先（不调 chat，仅白名单模型；gpt-6-luna 跳过原生 fallbackReason=compaction_unsupported_model）**、原生失败回退 chat（native:false/fallbackReason）、原生 418/429 不回退；失败映射/截断/硬截断/signal；getModelCapabilities 与 getApiModelCatalog 上下文能力 | 14 | ✅ |
 | `tests/compact-session.test.js` | **v2.11 compact 后端**：未超阈值不压缩；超 triggerChars 自动压缩（done.compacted/summary、请求含摘要+最近消息、session.summary 持久化）；摘要失败回退（不标记 compacted/不落库）；手动 compact 200/幂等/404/400；ERR_CONVERSATION_LIMIT 先 compact 重试成功；`/v1` X-Session-Id 自动压缩+summary 复用+重启保留（chat-summaries.json）；`/v1/models` 与 admin models 上下文能力字段 | 7 | ✅ |
@@ -409,7 +409,7 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
 [PASS] proxy 契约（v2.3）         mode=direct enabled=false type=http healthz=direct（PUT 非法值 400 且不改配置）
 [PASS] identities 契约（v2.4）     total=1 enabled=1 subscribed=0 bindings=0 strategy=hash（pool 无 salt）
 [PASS] pairing 契约（v2.5）        pairing=null configured=false（GET/DELETE/官方恢复码）
-[PASS] sync 设备契约（v2.8）        deviceName=DuckCPA@4d77 total=2 registered=true（server-devices/register-device/DELETE）
+[PASS] sync 设备契约（v2.8）        deviceName=DuckCPA@xxxx total=2 registered=true（server-devices/register-device/DELETE）
 [PASS] 旧 /admin/api/test 404
 [PASS] device-slots 契约（v2.9）           slots=2 defaultDuckAI@main + DuckCPA@xxxx；空列表 400；保护 409
 [PASS] 设备删除保护/孤儿自愈（v2.10）            orphans/reconcile + DELETE 409(identityId/deviceName) + force removedDevice + 默认身份 409
@@ -427,10 +427,10 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
 [PASS] 代理端口可达                   127.0.0.1:10808
 [PASS] 读取当前代理配置                enabled=false type=http 127.0.0.1:8080
 [PASS] PUT 启用 http                  mode=http
-[PASS] POST test http                 status=200 latency=1285ms exitIp=70.39.202.155 mode=http
+[PASS] POST test http                 status=200 latency=1285ms exitIp=203.0.113.10 mode=http
 [PASS] healthz proxy http             mode=http active=true
 [PASS] PUT 启用 socks5                mode=socks5
-[PASS] POST test socks5               status=200 latency=1662ms exitIp=70.39.202.155 mode=socks5
+[PASS] POST test socks5               status=200 latency=1662ms exitIp=203.0.113.10 mode=socks5
 [PASS] healthz proxy socks5           mode=socks5 active=true
 [PASS] sync transport                 transport=available
 [PASS] 恢复原代理配置                  HTTP 200（enabled=false 等原值）
@@ -505,16 +505,16 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
 
 ```
 [PASS] 官方恢复码存在                        len=191（复用 data/pairing.json 中真实码）
-[PASS] GET /sync 设备名                  deviceName=DuckCPA@498a
+[PASS] GET /sync 设备名                  deviceName=DuckCPA@xxxx
 [PASS] POST register-device           HTTP 200 ok=true userId=489adc11-ab46-4046-8411-c2ce3f0a18bf
-[PASS] GET server-devices 含本机         total=5 current=ad9c87a3-… name=DuckCPA@498a
-[PASS] sync.server registered         "DuckCPA@498a"
+[PASS] GET server-devices 含本机         total=5 current=ad9c87a3-… name=DuckCPA@xxxx
+[PASS] sync.server registered         "DuckCPA@xxxx"
 ```
 
 > 执行：QA 临时真实网关（端口 18789，真实 IdentityStore/PairingStore/SyncDeviceService/SyncClient + 代理 10808），
 > 复制真实 `data/identity.json` + `data/pairing.json`（官方码）到临时目录；`POST /admin/api/sync/register-device` 真实走
 > `sync.duckduckgo.com` login + keys + PATCH devices → **200**；`GET /admin/api/sync/server-devices` 返回服务端设备列表，
-> 含本机 current `DuckCPA@498a`（total=5）；`GET /sync` 的 `sync.server.registered=true`。
+> 含本机 current `DuckCPA@xxxx`（total=5）；`GET /sync` 的 `sync.server.registered=true`。
 > 证据：`data/tmp/v28-real-integration.json`；脚本 `data/tmp/qa-v28-real-integration.mjs`。
 ### 5.11 v2.9 真实联调（device-slots 双设备注册 → 注销，经 10808 代理）
 
@@ -522,24 +522,24 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
 [PASS] 官方恢复码                          len=191
 [PASS] GET device-slots               HTTP 200 identityIds=["id_default"]
 [PASS] 默认设备名                          deviceName=DuckAI@main
-[PASS] 生成分身                           id=id_a8c7b838 deviceName=DuckCPA@70e7
+[PASS] 生成分身                           id=id_a8c7b838 deviceName=DuckCPA@xxxx
 [PASS] PUT slots 注册 2 台               HTTP 200 identityIds=["id_default","id_a8c7b838"]
 [PASS] GET slots 复核                   identityIds=["id_default","id_a8c7b838"]
-[PASS] serverDevices 解密               ["HONOR BRT-AN00", … ,"DuckCPA@70e7(本机)"]
+[PASS] serverDevices 解密               ["Android 手机", … ,"DuckCPA@xxxx(本机)"]
 [PASS] PUT slots 注销分身                 HTTP 200 identityIds=["id_default"]
 ```
 
 > 执行：QA 临时真实网关（端口 18790，真实 IdentityStore/IdentityPool/PairingStore/SyncDeviceService/SyncClient + 代理 10808），
-> 复制真实 `data/pairing.json` 官方码；`GET /admin/api/sync/device-slots` 200（默认 DuckAI@main）；生成分身（DuckCPA@70e7）后
-> `PUT [id_default, 分身]` **200** 双设备注册（真实 PATCH /devices 每设备一次），服务端设备列表解密出 HONOR BRT-AN00 与 DuckCPA@70e7；
+> 复制真实 `data/pairing.json` 官方码；`GET /admin/api/sync/device-slots` 200（默认 DuckAI@main）；生成分身（DuckCPA@xxxx）后
+> `PUT [id_default, 分身]` **200** 双设备注册（真实 PATCH /devices 每设备一次），服务端设备列表解密出 Android 手机 与 DuckCPA@xxxx；
 > 再 `PUT [id_default]` 注销分身 **200**。证据：`data/tmp/v29-real-integration.json`；脚本 `data/tmp/qa-v29-real-integration.mjs`。
 ### 5.12 v2.10 真实联调（slots 内身份删除保护 → force 删除，经 10808 代理）
 
 ```
 [PASS] GET device-slots                 HTTP 200 identityIds=["id_default"]
-[PASS] 生成分身                             id=id_3cac67ae name=DuckCPA@07ac
+[PASS] 生成分身                             id=id_3cac67ae name=DuckCPA@xxxx
 [PASS] 加入 slots                         HTTP 200 identityIds=["id_default","id_3cac67ae"]
-[PASS] DELETE 409                       HTTP 409 code=identity_in_device_slots identityId=id_3cac67ae deviceName=DuckCPA@07ac
+[PASS] DELETE 409                       HTTP 409 code=identity_in_device_slots identityId=id_3cac67ae deviceName=DuckCPA@xxxx
 [PASS] force 删除                         HTTP 200 removedDevice=true {"ok":true,"id":"id_3cac67ae","removedDevice":true}
 [PASS] slots 无残留                        identityIds=["id_default"] orphans=0
 [PASS] 默认身份 force 409                   HTTP 409 code=default_identity_protected
@@ -613,13 +613,13 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | OpenAI SDK 真实兼容（v2 强制 key） | ⏳ BLOCKED（429 冷却） |
 | v2.2 durableStream 上游接受 / journeyId 稳定性 | ✅ **已实测**（§6.5：默认开启 + 真实 chat **200**、`durableStreamRejected=0/degraded=false`；重启身份稳定） |
 | v2.2 真实订阅 token（activate/verify） | ⏳ BLOCKED（需真实 DuckDuckGo 登录态） |
-| v2.3 本机代理（HTTP/SOCKS5）出站与 Sync 可达 | ✅ **已实测**（§5.6/§6.6：test exitIp=70.39.202.155、`/status` 200、duckduckgo.com 200、sync available） |
+| v2.3 本机代理（HTTP/SOCKS5）出站与 Sync 可达 | ✅ **已实测**（§5.6/§6.6：test exitIp=203.0.113.10、`/status` 200、duckduckgo.com 200、sync available） |
 | v2.3 经代理的真实 chat | ⚠️ 部分：SOCKS5 曾 200（duck-protocol 实测）、HTTP 代理遇上游 418 额度软限流（非链路问题） |
 | v2.4 身份池真实路由（2 身份 × 2 会话真实消息） | ✅ **已实测**（§5.7/§6.7：两个身份各 1 条真实 200「分身/分身1」，identityId 响应头/日志/绑定一致） |
 | v2.4 上下文守卫真实超长会话 | ⏳ BLOCKED（需真实超长会话触发 ERR_CONVERSATION_LIMIT；mock 层已覆盖 trim 重试） |
 | v2.5 会话并发（后端/jsdom） | ✅ **已实测**（§5.8/§6.8：2 身份并行真实消息双 200 且 identityId 不同；前端 jsdom 并发 2/2；mock 层 maxInFlight/串行断言） |
 | v2.5 扫码配对真实 start | ✅ **已实测**（§5.8/§6.8：POST /admin/api/sync/pairing → 200 channelId/waiting，GET/DELETE 正常；经 10808 代理） |
-| v2.9 device-slots 真实注册/注销（官方码+10808） | ✅ **已实测**（§5.11/§6.10：默认 DuckAI@main + 分身 DuckCPA@70e7 双注册 200、serverDevices 解密 HONOR、PUT 注销 200） |
+| v2.9 device-slots 真实注册/注销（官方码+10808） | ✅ **已实测**（§5.11/§6.10：默认 DuckAI@main + 分身 DuckCPA@xxxx 双注册 200、serverDevices 解密 Android 手机、PUT 注销 200） |
 | v2.10 slots 内身份删除保护（官方码+10808） | ✅ **已实测**（§5.12/§6.11：DELETE 409 identity_in_device_slots → force 200 removedDevice:true、slots 无残留、默认身份 force 409） |
 | v2.11 官方恢复码明文/下载 + 模型能力 | ✅ **已实测**（§5.13/§6.12：GET 明文 len=191/source=pairing、download 一致；/v1/models chars=16000/tokens=5333） |
 | v2.11 真实 compact | ⏳ **BLOCKED**（上游 rate limited/418；mock 层自动/手动/limit 重试已覆盖） |
@@ -660,8 +660,8 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 
 - 网关：QA 临时 mock 网关（`createServer({identity, proxy})`，端口 18787；上游用 MockDuckClient，仅验证代理/Admin/网络链路）。
 - 结果（`scripts/proxy-live-check.mjs --with-proxy`，11/11 PASS，§5.6）：
-  - HTTP 代理：`POST /admin/api/proxy/test` → `ok:true, status:200, latencyMs=1285, exitIp=70.39.202.155`；
-  - SOCKS5 代理：`ok:true, status:200, latencyMs=1662, exitIp=70.39.202.155`（与直连出口不同）；
+  - HTTP 代理：`POST /admin/api/proxy/test` → `ok:true, status:200, latencyMs=1285, exitIp=203.0.113.10`；
+  - SOCKS5 代理：`ok:true, status:200, latencyMs=1662, exitIp=203.0.113.10`（与直连出口不同）；
   - `GET /healthz` → `proxy.mode=http|socks5, active=true`；关闭/恢复后 `mode=direct`；
   - `GET /admin/api/sync` → `transport:"available"`（代理可达 duckduckgo.com）；恢复原配置后回到 blocked。
 - duck-protocol 独立实测（同 10808，真实 duck.ai）：`/duckchat/v1/status` 200 + 挑战头、`duckduckgo.com/sync/pairing` 200、
@@ -700,21 +700,21 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 - 环境：临时 dataDir（复制真实 `identity.json` + `pairing.json` 官方码），真实 IdentityStore/PairingStore/SyncDeviceService
   （lazy 真实 `sync-client.js`），代理 127.0.0.1:10808，端口 18789。
 - 结果（`data/tmp/v28-real-integration.json`，§5.10）：`POST /admin/api/sync/register-device` **200 / ~3.3s**；
-  `serverDevice {name:"DuckCPA@498a", current:true, credential_id:"3party"}`；`server.userId=489adc11-…`；
-  `GET server-devices` total=5 含本机 current；`DELETE` 当前设备 → 400 invalid_device；`GET /sync.deviceName=DuckCPA@498a`。
+  `serverDevice {name:"DuckCPA@xxxx", current:true, credential_id:"3party"}`；`server.userId=489adc11-…`；
+  `GET server-devices` total=5 含本机 current；`DELETE` 当前设备 → 400 invalid_device；`GET /sync.deviceName=DuckCPA@xxxx`。
 - 限界：真实服务端设备列表可能含历史设备（本次 total=5），删除为 best-effort 且 logout 会使当前 token 失效（需重新 login）；
   真实官方 App 端完整账号数据同步仍属后续迭代。
 ### 6.10 v2.9 真实设备槽联调（QA 独立执行，真实官方码 + 10808）
 
 - 环境：临时 dataDir（真实 identity.json + pairing.json 官方码），真实 IdentityPool（含 id_default）+ SyncDeviceService + 真实 sync-client，代理 10808，端口 18790。
-- 结果（`data/tmp/v29-real-integration.json`，§5.11）：`GET device-slots` 200（默认 `DuckAI@main`，serverDevices 解密 HONOR/Chrome/Edge 等）；
-  `PUT [id_default, 分身]` **200**（`DuckAI@main` + `DuckCPA@70e7` 双注册，serverDeviceId=identity.deviceId）；
+- 结果（`data/tmp/v29-real-integration.json`，§5.11）：`GET device-slots` 200（默认 `DuckAI@main`，serverDevices 解密 Android 手机/Chrome/Edge 等）；
+  `PUT [id_default, 分身]` **200**（`DuckAI@main` + `DuckCPA@xxxx` 双注册，serverDeviceId=identity.deviceId）；
   `PUT [id_default]` **200** 注销分身；`DELETE id_default` → 409（单独由 Admin 断言覆盖）。
 - 限界：真实 Sync token 若被 logout 失效会自动重登；设备列表传播 best-effort（可能延迟）；官方 App 数据同步仍属后续迭代。
 ### 6.11 v2.10 真实删除保护联调（QA 独立执行，真实官方码 + 10808）
 
 - 环境：临时 dataDir（真实 identity.json + pairing.json 官方码），真实 IdentityPool/SyncDeviceService/sync-client，代理 10808，端口 18791。
-- 结果（`data/tmp/v210-real-integration.json`，§5.12）：分身（DuckCPA@07ac）加入 slots 200 → `DELETE` **409 `identity_in_device_slots`**
+- 结果（`data/tmp/v210-real-integration.json`，§5.12）：分身（DuckCPA@xxxx）加入 slots 200 → `DELETE` **409 `identity_in_device_slots`**
   （identityId/deviceName 正确）→ `DELETE ?force=true` **200 `{ok:true,id,removedDevice:true}`** → GET slots `identityIds:["id_default"]`、orphans=0；
   `DELETE id_default?force=true` → **409 `default_identity_protected`**。
 - 限界：真实 logout 失败（429/503）时身份仍会删除（仅 warn），设备列表中可能残留服务端条目（best-effort 传播）；手机 App 复核需 Lead 持设备。
@@ -788,7 +788,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | # | 标准 | 状态 | 证据 |
 | --- | --- | --- | --- |
 | 1 | PUT 关闭/开启、四种类型切换；非法字段 → 400 `invalid_proxy`；密码不回显、空密码不覆盖 | ✅ | `proxy-api.test.js`（9 类非法值、密码语义、不发 password）；`proxy-manager.test.js` |
-| 2 | POST /proxy/test：HTTP 10808 → ok/status=200/latency/exitIp 为代理出口；错误 host/port → ok:false+code+lastError；禁用时直连 ok | ✅ 真实 10808（§5.6/§6.6） | exitIp=70.39.202.155（http+socks5）；不可达端口 `ok:false`；直连测试分支 |
+| 2 | POST /proxy/test：HTTP 10808 → ok/status=200/latency/exitIp 为代理出口；错误 host/port → ok:false+code+lastError；禁用时直连 ok | ✅ 真实 10808（§5.6/§6.6） | exitIp=203.0.113.10（http+socks5）；不可达端口 `ok:false`；直连测试分支 |
 | 3 | 代理启用后 DuckClient 真实请求走代理；/status 200；chat 200（额度允许时）；healthz.proxy 正确；sync transport 变 available | ✅（链路）/ ⚠️（chat 受 418/429 限流） | `proxy-manager.test.js` 端到端 mock 代理；`duck-client.test.js` proxyManager.fetch 计数；§6.6 真实 `/status` 200、duckduckgo.com 200、sync available；真实 chat SOCKS5 200（duck-protocol）/HTTP 418 额度 |
 | 4 | 代理关闭后行为与 v2.2 完全一致（回归全绿） | ✅ | `npm test` 250/250（v2.0–v2.5 全部用例） |
 | 5 | 前端代理页可保存/测试/状态展示；身份页 Sync blocked 文案带代理引导；无 console 报错 | ✅（构建/静态契约） | build-check「v2.3 代理页文案」11/11；page-check proxy 契约 16/16；浏览器交互人工验收 |
@@ -824,7 +824,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | 2 | Admin：register-device 400/503+hint/200/418→429+Retry-After、server-devices 脱敏/current/缓存、DELETE（当前 400）、`GET /sync.server`、joiner 自动注册、deviceName 默认 DuckCPA@xxxx 稳定/自定义/旧名迁移 | ✅ | `tests/sync-devices-api.test.js` 8 项 + `tests/sync-devices.test.js` 10 项 + `tests/pairing-auto-register.test.js` 1 项；page-check v2.8 契约 |
 | 3 | 轮换：rotate 响应 identityLost:true+note；前端 jsdom 两步确认、第二步含不可恢复/身份丢失、取消不调 API | ✅ | `tests/web-rotate-confirm.test.js` 2 项（真实构建产物；含设备列表删除确认）；`tests/sync-devices-api.test.js` rotate 断言 |
 | 4 | 构建/脚本：build-check 设备列表/轮换警告、page-check server-devices/register-device | ✅ | build-check 12/12；page-check 17/17（sync 设备契约） |
-| 5 | 真实联调：register-device 200、server-devices 含本机 DuckCPA@xxxx | ✅ | §5.10/§6.9（真实官方码 + 10808，total=5 current DuckCPA@498a） |
+| 5 | 真实联调：register-device 200、server-devices 含本机 DuckCPA@xxxx | ✅ | §5.10/§6.9（真实官方码 + 10808，total=5 current DuckCPA@xxxx） |
 
 ### 7.8 v2.9 设备名 / 设备槽验收（Lead 任务口径，5 组）
 
@@ -832,9 +832,9 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | --- | --- | --- | --- |
 | 1 | 每身份设备名：id_default=DuckAI@main、其它 DuckCPA@<4hex>（create/generate 持久化）；PATCH deviceName；池 items；DELETE id_default → 409 default_identity_protected | ✅ | `tests/device-slots.test.js`（池设备名/PATCH/默认保护 409 force 亦拒） |
 | 2 | device-slots：GET 默认含 id_default；PUT 增量注册/注销（批量调用次数、`identity.sync.slots` 持久化/重启）；空列表；非法/禁用 400；418→429；serverDevices 解密 name/type + matchedIdentityId | ✅ | `tests/device-slots.test.js` 6 项（stateful fake 验证 registerDevices/logoutDevices 各一次） |
-| 3 | sync-client 多设备：registerDevices 批量（真实每设备 login+PATCH）、listDevicesDetailed 解密、logoutDevices 批量（404 容忍/自动重登） | ✅ | `tests/sync-client-multidevice.test.js` 3 项（updates=1×N、HONOR 解密、404 removed 排除） |
+| 3 | sync-client 多设备：registerDevices 批量（真实每设备 login+PATCH）、listDevicesDetailed 解密、logoutDevices 批量（404 容忍/自动重登） | ✅ | `tests/sync-client-multidevice.test.js` 3 项（updates=1×N、Android 手机 解密、404 removed 排除） |
 | 4 | 前端 jsdom：身份池设备名/默认删除 disabled、两栏拖拽、未保存提示、保存 PUT payload、保存后刷新、429 文案；build-check/page-check 契约 | ✅ | `tests/web-device-slots.test.js` 2 项（真实产物 + DragEvent 模拟）；build-check 13/13、page-check 18/18 |
-| 5 | 真实联调：GET device-slots → PUT [id_default,分身] → My Devices 出现 DuckAI@main+DuckCPA@xxxx → PUT [id_default] 注销 | ✅（协议/接口）/ ⏳（手机 My Devices 人工复核） | §5.11/§6.10：双设备注册 200、serverDevices 解密 HONOR/DuckCPA@70e7、注销 200；手机端可见性需 Lead 持设备复核 |
+| 5 | 真实联调：GET device-slots → PUT [id_default,分身] → My Devices 出现 DuckAI@main+DuckCPA@xxxx → PUT [id_default] 注销 | ✅（协议/接口）/ ⏳（手机 My Devices 人工复核） | §5.11/§6.10：双设备注册 200、serverDevices 解密 Android 手机/DuckCPA@xxxx、注销 200；手机端可见性需 Lead 持设备复核 |
 
 ### 7.9 v2.10 删除/禁用保护 + 孤儿自愈验收（Lead 任务口径，5 组）
 
@@ -1187,9 +1187,9 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 - [x] v2.5 joiner 修复：`recovery_code_available` 不再回 unavailable → 等待 response → completed(joiner)，
       官方码落盘并暴露 `accountAvailable`（§5.9 端到端；模块级 14 项含 same_account/awaiting/confirmed/denied）。
 - [ ] 真实手机复测扫码配对（用真实 DuckDuckGo App 扫码，验证原「绑定失败」已修复；需 Lead 持设备）。
-- [x] v2.8 真实注册设备：真实官方恢复码 + 10808 → register-device 200、server-devices 含本机 `DuckCPA@498a`（§5.10/§6.9）。
+- [x] v2.8 真实注册设备：真实官方恢复码 + 10808 → register-device 200、server-devices 含本机 `DuckCPA@xxxx`（§5.10/§6.9）。
 - [ ] v2.8 余项：真实手机端「My Devices」可见性复核（注册后手机 App 查看本机，需 Lead 持设备）；
-- [x] v2.9 真实 device-slots：双设备注册 200（DuckAI@main + DuckCPA@70e7）、serverDevices 解密 HONOR、PUT 注销 200（§5.11/§6.10）。
+- [x] v2.9 真实 device-slots：双设备注册 200（DuckAI@main + DuckCPA@xxxx）、serverDevices 解密 Android 手机、PUT 注销 200（§5.11/§6.10）。
 - [ ] v2.9 余项：手机 My Devices 实际可见性人工复核（需 Lead 持设备）；多设备注销后的列表传播延迟观察。
 - [x] v2.10 真实删除保护：slots 内分身 DELETE 409 → force 200 removedDevice、slots 无残留、默认身份 force 409（§5.12/§6.11）。
 - [ ] v2.10 余项：手机 My Devices 中设备实际消失的人工复核；force 时 logout 失败后的服务端残留清理（依赖 window/orphans）。

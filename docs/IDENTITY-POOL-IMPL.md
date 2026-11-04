@@ -209,7 +209,7 @@ const result = await pool.run(identityId, (runtime) => runtime.chat(params, hand
 
 ### 8.1 真实集成（身份池 → DuckClient → SOCKS5 代理 → 上游）
 
-脚本：`data/tmp/verify-pool-live.mjs` / `verify-pool-live-retry.mjs`（本机代理 `127.0.0.1:10808`，SOCKS5，exit IP 70.39.202.155）。
+脚本：`data/tmp/verify-pool-live.mjs` / `verify-pool-live-retry.mjs`（本机代理 `127.0.0.1:10808`，SOCKS5，exit IP 203.0.113.10）。
 
 | 步骤 | 结果 |
 | --- | --- |

@@ -124,7 +124,7 @@ test('registerDevices：一次 GET /keys + 一次 PATCH，updates 多条且 info
   }
 });
 
-test('listDevicesDetailed：解密 name/type（HONOR 等）、失败 null 不泄漏 info、current 标记', async () => {
+test('listDevicesDetailed：解密 name/type（Android 手机 等）、失败 null 不泄漏 info、current 标记', async () => {
   const code = makeCode('user-detail-1', 'detail-secret');
   const creds = JSON.parse(Buffer.from(code, 'base64url').toString('utf8')).recovery;
   const scoped = deriveScoped(creds.user_id, creds.secret);
@@ -143,7 +143,7 @@ test('listDevicesDetailed：解密 name/type（HONOR 等）、失败 null 不泄
         entries: [{ id: selfId, jwt_iat: 111, name: 'DuckAI@main', type: 'browser' }],
         entries_v2: [
           { credential_id: '3party', id: selfId, info: deviceInfo(accountInfo.publicJwk, accountInfo.kid, 'DuckAI@main') },
-          { credential_id: '3party', id: phoneId, info: deviceInfo(accountInfo.publicJwk, accountInfo.kid, 'HONOR BRT-AN00') },
+          { credential_id: '3party', id: phoneId, info: deviceInfo(accountInfo.publicJwk, accountInfo.kid, 'Android 手机') },
           { credential_id: '3party', id: badId, info: 'not-a-valid-jwe' }
         ]
       }
@@ -156,7 +156,7 @@ test('listDevicesDetailed：解密 name/type（HONOR 等）、失败 null 不泄
     const detailed = await client.listDevicesDetailed();
     assert.equal(detailed.length, 3);
     const phone = detailed.find((device) => device.id === phoneId);
-    assert.equal(phone.name, 'HONOR BRT-AN00');
+    assert.equal(phone.name, 'Android 手机');
     assert.equal(phone.type, 'browser');
     assert.equal(phone.credential_id, '3party');
     assert.ok(phone.decoupled === true || phone.decoded === true || phone.decryptable === true, '应标记已解密');

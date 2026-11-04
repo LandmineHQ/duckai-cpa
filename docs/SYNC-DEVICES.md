@@ -102,7 +102,7 @@ const client = await createSyncClient({
 | `close()` | 清空内存 token/scopedPassword/credentials |
 
 ### 2.3 设备名（v2.9）
-- 普通身份默认 `DuckCPA@<4 位小写 hex>`：`defaultDeviceName()`（`crypto.randomBytes(2).toString('hex')`），如 `DuckCPA@a3f9`。
+- 普通身份默认 `DuckCPA@<4 位小写 hex>`：`defaultDeviceName()`（`crypto.randomBytes(2).toString('hex')`），如 `DuckCPA@xxxx`。
 - **默认身份 `id_default` 默认 `DuckAI@main`**：新增导出 `DEFAULT_MAIN_DEVICE_NAME = 'DuckAI@main'`。
 - 自定义：`createSyncClient({deviceName})` / `login({deviceName})` / `registerDevice({name})` / `registerDevices([{deviceName}])`；持久化由 api-core 调 `identity.setDeviceName()`（1–100 字符）或 `pool.update(id,{deviceName})`。
 - identity-pool：`generate/create` 自动给每个身份写 `identity.deviceName`（默认身份 `DuckAI@main`，其他 `DuckCPA@<4hex>`），启动时迁移旧默认名；详见 §7。
@@ -155,35 +155,35 @@ const host = await createPairingHost({ ..., onCompleted: autoRegister });
 9. 网络不可达 → `sync_transport_unavailable`；
 10. `setDeviceName`/`setSyncServer` 持久化 + reload 后仍存在；非法值 400；
 11. **v2.9 `registerDevices`**：2 台设备 → 每台一次 login（设备级 PATCH）+ 每台一次单条 PATCH，info 全部可解；
-12. **v2.9 `listDevicesDetailed`**：解密出 `HONOR BRT-AN00`/`Chrome` 可读名，坏 info → `name/type=null, decoded:false`，无 JWE 泄漏；
+12. **v2.9 `listDevicesDetailed`**：解密出 `Android 手机`/`Chrome` 可读名，坏 info → `name/type=null, decoded:false`，无 JWE 泄漏；
 13. **v2.9 `logoutDevices`**：每个 id 一次 POST（token 失效自动重登）、404 不计入 `removed`、`results.length===ids.length`。
 
 ### 4.2 真实联调（代理 10808，用户真实账号）
 
 **v2.8 单设备**（`data/tmp/verify-sync-live.mjs` / `sync-live.json`）：
-用户 `489adc11-…`；本机 deviceId `ad9c87a3-…`；设备名 `DuckCPA@564b`。
+用户 `489adc11-…`；本机 deviceId `ad9c87a3-…`；设备名 `DuckCPA@xxxx`。
 
 | 步骤 | 真实结果 |
 | --- | --- |
 | `login()`（HKDF/JWE） | ✅ 200，token ~732 字符 |
 | `GET /keys` | ✅ 4 条：account_info(ddg/3party)、ai_chats(ddg/3party) |
-| `registerDevice()` → `PATCH /devices` | ✅ 200，返回 device id = 本机 deviceId，name=`DuckCPA@564b` |
+| `registerDevice()` → `PATCH /devices` | ✅ 200，返回 device id = 本机 deviceId，name=`DuckCPA@xxxx` |
 | `GET /devices` | ✅ 共 5 台，含本机 id，`credential_id:"3party"`，`hasInfo:true` |
-| 用 account_info 私钥解密服务端 `info` | ✅ `{"name":"DuckCPA@564b","type":"browser"}`（证明手机端可解密显示） |
+| 用 account_info 私钥解密服务端 `info` | ✅ `{"name":"DuckCPA@xxxx","type":"browser"}`（证明手机端可解密显示） |
 | `logoutDevice()` | ✅ 200 `removed:true`；**token 立即失效**（后续 401），重新 login 可继续 |
 | 重新 login 后 `GET /devices` | ⚠️ 本机 id 仍在列表（服务端删除传播/刷新延迟；logout 为 best-effort） |
 
 **v2.9 多设备 + 解密列表 + 批量注销**（`data/tmp/verify-sync-multidevice-live.mjs` / `sync-multidevice-live.json`）：
-账号已有 5 台（HONOR BRT-AN00、Chrome 156.0.0.0、Edge 156.0.0.0、旧 id_default、孤儿 ad9c…）。
+账号已有 5 台（Android 手机、Chrome 156.0.0.0、Edge 156.0.0.0、旧 id_default、孤儿 ad9c…）。
 
 | 步骤 | 真实结果 |
 | --- | --- |
-| `registerDevices([{main,'DuckAI@main'},{extra,'DuckCPA@4ed7'}])` | ✅ 两台均注册成功（**第 6/7 台**，无 5 台上限）；每台各自 login → 单条 PATCH |
-| `listDevicesDetailed()` | ✅ total 6；`decoded:true` 名称：`HONOR BRT-AN00`、`Chrome 156.0.0.0`、`Edge 156.0.0.0`、`DuckAI@main`、`DuckCPA@4ed7`；1 台旧 ddg 凭据无法解密（name/type=null）；`leaksJwe:false` |
+| `registerDevices([{main,'DuckAI@main'},{extra,'DuckCPA@xxxx'}])` | ✅ 两台均注册成功（**第 6/7 台**，无 5 台上限）；每台各自 login → 单条 PATCH |
+| `listDevicesDetailed()` | ✅ total 6；`decoded:true` 名称：`Android 手机`、`Chrome 156.0.0.0`、`Edge 156.0.0.0`、`DuckAI@main`、`DuckCPA@xxxx`；1 台旧 ddg 凭据无法解密（name/type=null）；`leaksJwe:false` |
 | `logoutDevices([main,extra])` | ✅ `ok:true`、removed 2，token 失效后自动重登 |
 | `current` 标记 | ✅ `listDevicesDetailed` 中最后注册的设备为 current |
 
-结论：真实账号上 **登录 / 多设备注册 / 解密名称（含手机 HONOR/Chrome）/ 批量注销** 全部达成；
+结论：真实账号上 **登录 / 多设备注册 / 解密名称（含手机 Android 手机/Chrome）/ 批量注销** 全部达成；
 `forbidden_device` 是「用错的 token PATCH 非本机设备」，不是设备上限（本次实测第 6/7 台成功）。
 设备名默认 `DuckAI@main`（默认身份）与 `DuckCPA@<4hex>`（普通身份）按要求生效。
 
@@ -220,7 +220,7 @@ const host = await createPairingHost({ ..., onCompleted: autoRegister });
 | 读取 | `pool.getDeviceName(id)`；`pool.list()/get()` summary 的 `deviceName`；`pool.getDefaultIdentityId()`（`id_default` 或 activeId） |
 | 校验 | 空/超 100 → `PoolError{400, code:'invalid_identity', field:'deviceName'}`（`IdentityError` 同义） |
 
-真实联调：`id_default` 以 `DuckAI@main` 注册、新身份以 `DuckCPA@4ed7` 注册，手机端 `listDevicesDetailed` 均可读。
+真实联调：`id_default` 以 `DuckAI@main` 注册、新身份以 `DuckCPA@xxxx` 注册，手机端 `listDevicesDetailed` 均可读。
 
 ---
 

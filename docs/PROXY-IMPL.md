@@ -2,7 +2,7 @@
 
 > 对应契约：`docs/PROXY.md`。本文记录 **协议层实现**（ProxyManager + DuckClient/sync/auth 集成）、
 > API 形状、SOCKS 踩坑点与 **真实联调结果**（本机 `127.0.0.1:10808`，同时支持 HTTP CONNECT 与 SOCKS5，
-> exit IP `70.39.202.155`）。
+> exit IP `203.0.113.10`）。
 >
 > Admin API（`/admin/api/proxy*`）、配置持久化、前端「代理」页由 api-core / web-dashboard 实现；
 > 协议层只暴露 manager，不直接暴露 HTTP 端点。
@@ -162,17 +162,17 @@ direct 时 `getDispatcher()` 返回 `undefined`，`fetch()` 走注入的 `fetchI
 
 | 项 | 结果 |
 | --- | --- |
-| `POST proxy/test`（= `manager.test()`） | `{ok:true, mode:"http", status:200, latencyMs:~1.6–2.2s, exitIp:"70.39.202.155", ipError:null}` |
+| `POST proxy/test`（= `manager.test()`） | `{ok:true, mode:"http", status:200, latencyMs:~1.6–2.2s, exitIp:"203.0.113.10", ipError:null}` |
 | `GET https://duck.ai/duckchat/v1/status`（经代理，带挑战头） | ✅ 200，`x-vqd-hash-1` 下发（len 5388–7496），body `{"status":"0",...}`，~0.8–1.0s |
 | `GET https://duckduckgo.com/sync/pairing`（经代理） | ✅ 200 |
-| exit IP（ipify 经代理） | ✅ `70.39.202.155` |
+| exit IP（ipify 经代理） | ✅ `203.0.113.10` |
 | 真实 chat（经 HTTP 代理） | ⚠️ 上游 `418 ERR_BN_LIMIT`（`overrideCode:8e04`，映射 429 `upstream_rate_limited`）——该出口 IP 处于匿名额度软限流；**非代理链路问题**（status/挑战/DDG 均正常） |
 
 ### 4.3 SOCKS5 代理（`type:"socks5"`）
 
 | 项 | 结果 |
 | --- | --- |
-| `manager.test()` | `{ok:true, mode:"socks5", status:200, latencyMs:~0.7–1.4s, exitIp:"70.39.202.155"}` |
+| `manager.test()` | `{ok:true, mode:"socks5", status:200, latencyMs:~0.7–1.4s, exitIp:"203.0.113.10"}` |
 | `GET /duckchat/v1/status` | ✅ 200 + 挑战头（len 5456–7540） |
 | `GET duckduckgo.com/sync/pairing` | ✅ 200 |
 | **真实 chat（完整 DuckClient：挑战求解→chat SSE）** | ✅ **200**，内容「代理」，事件 `title → reasoning → text → done`，`requests=1 / retries=0 / limitHits418=0`，`health().proxy.mode="socks5"`，journeyId/指纹来自持久 identity |

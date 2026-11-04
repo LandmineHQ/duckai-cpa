@@ -131,7 +131,7 @@ createPairingHost({
 | host `start()` | ✅ 频道 `6dafcc37-8f9f-4ca9-b10b-c4f370c11c67`，state=waiting |
 | scanner PUT 自建频道 | ✅ 204 |
 | scanner hello → host poll | ✅ 204 / host state=exchange，seq=1 |
-| scanner `recovery_code_available`（HONOR BRT-AN00 / ddg / user_id） | ✅ 204；host `state=exchange, substate=joiner_awaiting`，**不回任何消息**（scanner 新消息数 = 0） |
+| scanner `recovery_code_available`（Android 手机 / ddg / user_id） | ✅ 204；host `state=exchange, substate=joiner_awaiting`，**不回任何消息**（scanner 新消息数 = 0） |
 | scanner `recovery_code_response`（官方码 base64url） | ✅ 204；host `state=completed, completedAs="joiner", endReason="completed"`，`recoveryCodeReceived=true`、`recoveryUserId` 与手机 user_id 一致，`onCompleted` 收到 `recoveryCode` 原文 |
 | 消息日志 | `in:hello → out:hello → in:recovery_code_available → in:recovery_code_response`（无 out:unavailable） |
 

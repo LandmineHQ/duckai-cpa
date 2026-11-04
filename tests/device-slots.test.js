@@ -402,7 +402,7 @@ test('serverDevices：解密 name/type + matchedIdentityId；slot registered 标
   await runSlots({
     overrides: {
       serverDevices: [
-        { id: 'server-main-id', name: 'HONOR BRT-AN00', type: 'browser', credential_id: '3party', jwt_iat: 111, decoded: true }
+        { id: 'server-main-id', name: 'Android 手机', type: 'browser', credential_id: '3party', jwt_iat: 111, decoded: true }
       ],
       assert: async ({ env, handle }) => {
         const { baseUrl } = env;
@@ -410,7 +410,7 @@ test('serverDevices：解密 name/type + matchedIdentityId；slot registered 标
         const defaultDeviceId = env.identityStore.getRedacted().deviceId;
         handle.fake.client.listDevicesDetailed = async () => [
           { id: defaultDeviceId, name: 'DuckAI@main', type: 'browser', credential_id: '3party', jwt_iat: 111, current: true, decoded: true },
-          { id: 'server-phone-id', name: 'HONOR BRT-AN00', type: 'browser', credential_id: '3party', jwt_iat: 222, decoded: true }
+          { id: 'server-phone-id', name: 'Android 手机', type: 'browser', credential_id: '3party', jwt_iat: 222, decoded: true }
         ];
         const res = await adminRequest(baseUrl, '/admin/api/sync/device-slots');
         assert.equal(res.status, 200, res.text);
@@ -418,7 +418,7 @@ test('serverDevices：解密 name/type + matchedIdentityId；slot registered 标
         assert.equal(main.registered, true, '默认身份应标记 registered');
         assert.equal(main.matchedIdentityId, 'id_default');
         const phone = res.json.serverDevices.find((device) => device.id === 'server-phone-id');
-        assert.equal(phone.name, 'HONOR BRT-AN00');
+        assert.equal(phone.name, 'Android 手机');
         assert.equal(phone.type, 'browser');
         assert.equal(phone.matchedIdentityId, null, '未知设备 matchedIdentityId 应为 null');
         assert.ok(!('info' in phone), 'serverDevices 不应返回 info 原文');
