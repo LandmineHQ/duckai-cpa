@@ -518,3 +518,13 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 3 | 模型仍能调用工具 | ✅ | 真实上游 `gpt-5.6-terra`：协议在第一条 user 时，第二轮仍输出 `read_file` tool_call；回传 role:tool 后得到最终回答 |
 | 4 | 不引入真实缓存依赖 | ✅ | `/v1/*` 仍无状态、发送完整历史；duck.ai 实测无跨请求上下文缓存（会话 A/B 数字记忆测试为“不知道”）；稳定前缀只是让上游 prefix cache 可复用 |
 | 5 | 回归 | ✅ | `npm test` **448/448**、`build-check` 16/16、`page-check` 22/22 |
+## 2.40 v2.47 服务端会话 + 精确 upstream 前缀（前缀 cache / 图片压缩）
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | Responses `previous_response_id` | ✅ | `responses` 表保存 canonical + 精确 upstream 前缀 + output；下一轮只发新 input 可重建完整历史 |
+| 2 | Chat Completions 服务端会话 | ✅ | 显式 `X-Conversation-Mode: server` + `X-Session-Id`；完整历史前缀复用 / `X-Conversation-Delta: true` 只发新消息；冲突 409 |
+| 3 | 精确前缀（图片压缩只一次） | ✅ | `upstream_json` 保存已注入协议/已压缩图片的 duckMessages；toolsHash/systemPrompt 不变时直接拼接，不重新处理旧消息 |
+| 4 | 真实上游验证 | ✅ | Chat 会话：记住 24680 → 第二轮答 24680 → delta 第三轮答 24681；冲突 409；Responses 链：13579；图片链：回放后答“红色” |
+| 5 | 存储/清理 | ✅ | 新表 `conversation_state`；`responses`/`conversation_state` 按 30 分钟清理过期记录；`store:false` 不保存 |
+| 6 | 回归 | ✅ | `npm test` **456/456**、`build-check` 16/16、`page-check` 22/22 |

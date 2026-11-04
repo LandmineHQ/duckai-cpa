@@ -562,6 +562,8 @@ export function createServer(options = {}) {
       sessionKey: null,
       identityRoute: null,
       history,
+      // v2.46：Responses API response chaining 存储（previous_response_id）
+      responsesStore: options.responsesStore || null,
       // v2.31：查询身份额度时走同一代理
       usageFetch: proxy ? (url, init) => proxy.fetch(url, init) : null,
       log: {

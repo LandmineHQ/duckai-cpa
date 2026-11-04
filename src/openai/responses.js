@@ -15,6 +15,7 @@
  * plus `response.image_generation_call.*` events for generated images.
  */
 
+import crypto from 'node:crypto';
 import {
   composeSystemPrompt,
   buildDuckMessages,
@@ -145,7 +146,7 @@ function pushContentItem(item, systemParts, conversation, state = { pendingImage
 /**
  * @returns {{systemParts: string[], conversation: Array<{role:string,content:string}>, promptChars: number}}
  */
-export function normalizeResponsesInput(input) {
+export function normalizeResponsesInput(input, { allowEmptyUser = false } = {}) {
   const systemParts = [];
   const conversation = [];
   const state = { pendingImages: [] };
@@ -164,7 +165,7 @@ export function normalizeResponsesInput(input) {
   const hasUserText =
     conversation.some((message) => message.role === 'user' && message.content.trim()) ||
     conversation.some((message) => message.role === 'user' && Array.isArray(message.images) && message.images.length);
-  if (!hasUserText) {
+  if (!hasUserText && !allowEmptyUser) {
     throw badRequest('"input" must contain at least one non-empty user message', 'input');
   }
 
@@ -223,6 +224,58 @@ function buildImageItem(id, image, status = 'completed') {
   };
 }
 
+/**
+ * v2.46：把上一轮 response 的 output items 还原成 conversation（供 previous_response_id 链式回放）。
+ * 与客户端自行回放时的归一化规则保持一致。
+ */
+export function outputItemsToConversation(outputItems) {
+  const conversation = [];
+  const pendingImages = [];
+  const flushImages = (role = 'assistant') => {
+    if (!pendingImages.length) return;
+    conversation.push({ role, content: '', images: pendingImages.splice(0) });
+  };
+  for (const item of Array.isArray(outputItems) ? outputItems : []) {
+    if (!item || typeof item !== 'object') continue;
+    const type = typeof item.type === 'string' ? item.type : '';
+    if (type === 'message') {
+      const text = Array.isArray(item.content)
+        ? item.content
+            .filter((part) => part && part.type === 'output_text' && typeof part.text === 'string')
+            .map((part) => part.text)
+            .join('')
+        : '';
+      conversation.push({ role: 'assistant', content: text });
+      continue;
+    }
+    if (type === 'function_call') {
+      conversation.push({
+        role: 'assistant',
+        content: formatToolCallsForHistory([
+          { name: typeof item.name === 'string' ? item.name : 'tool', arguments: item.arguments || '{}' }
+        ])
+      });
+      continue;
+    }
+    if (type === 'function_call_output') {
+      conversation.push({ role: 'user', content: formatToolResult({ result: item.output }) });
+      continue;
+    }
+    if (type === 'image_generation_call') {
+      const format = typeof item.output_format === 'string' && item.output_format ? item.output_format : 'png';
+      const b64 = typeof item.result === 'string' ? item.result : '';
+      if (b64) {
+        const mime = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : `image/${format.replace(/^image\//, '')}`;
+        pendingImages.push({ mimeType: mime, dataUrl: `data:${mime};base64,${b64}` });
+      }
+      continue;
+    }
+    // reasoning / 其它 item 不参与对话上下文
+  }
+  flushImages('assistant');
+  return conversation;
+}
+
 function makeResponseObject({
   id,
   createdAt,
@@ -257,7 +310,7 @@ function makeResponseObject({
       effort: reasoningEffort,
       summary: reasoningText ? [{ type: 'summary_text', text: reasoningText }] : []
     },
-    store: false,
+    store: body?.store !== false,
     temperature: Number.isFinite(Number(body?.temperature)) ? Number(body.temperature) : null,
     text: { format: { type: 'text' } },
     tool_choice: body?.tool_choice ?? 'auto',
@@ -289,12 +342,42 @@ export async function handleResponses(req, res, ctx) {
   const resolved = resolveModel(ctx.config, body.model);
   ctx.log.model = resolved.id;
 
-  const input = normalizeResponsesInput(body.input);
-  ctx.log.promptChars = input.promptChars;
-
   if (body.instructions != null && typeof body.instructions !== 'string') {
     throw badRequest('"instructions" must be a string', 'instructions');
   }
+
+  const previousResponseId =
+    typeof body.previous_response_id === 'string' && body.previous_response_id.trim()
+      ? body.previous_response_id.trim()
+      : null;
+  const storeResponse = body.store !== false;
+  const responseStore = ctx.responsesStore || null;
+  let previousRecord = null;
+  if (previousResponseId) {
+    if (!responseStore || responseStore.enabled === false) {
+      throw badRequest(
+        'previous_response_id is not supported when response storage is disabled',
+        'previous_response_id',
+        'previous_response_not_found'
+      );
+    }
+    previousRecord = await responseStore.get(previousResponseId);
+    if (!previousRecord) {
+      throw badRequest(
+        'previous_response_id was not found or has expired',
+        'previous_response_id',
+        'previous_response_not_found'
+      );
+    }
+  }
+
+  const input = normalizeResponsesInput(body.input, { allowEmptyUser: Boolean(previousResponseId) });
+  ctx.log.promptChars = input.promptChars;
+
+  const outputConversation = previousRecord ? outputItemsToConversation(previousRecord.output) : [];
+  const chainedConversation = previousRecord
+    ? [...previousRecord.conversation, ...outputConversation, ...input.conversation]
+    : input.conversation;
   const reasoning = resolveReasoningEffort(
     resolved.model,
     body.reasoning?.effort ?? body.reasoning_effort,
@@ -305,22 +388,47 @@ export async function handleResponses(req, res, ctx) {
   const clientTools =
     ctx.config?.tools?.clientFunctionCalling?.enabled === false ? [] : normalizeToolDefinitions(body.tools);
   if (clientTools.length) ctx.log.clientTools = clientTools.map((tool) => tool.name);
+  const toolsHash = crypto.createHash('sha1').update(JSON.stringify(clientTools)).digest('hex');
 
-  const systemPrompt = composeSystemPrompt(ctx.config, resolved, [
-    typeof body.instructions === 'string' ? body.instructions : '',
-    ...input.systemParts
-  ]);
-  const guarded = guardConversation(input.conversation, systemPrompt, ctx.config?.context || {});
-  if (guarded.trimmed) ctx.log.contextTrimmed = true;
-  let upstreamMessages = guarded.messages;
-  if (clientTools.length) {
-    upstreamMessages = injectProtocolIntoFirstUser(guarded.messages, buildToolProtocol(clientTools));
+  let systemPrompt;
+  if (previousRecord && typeof body.instructions !== 'string') {
+    const parts = [previousRecord.systemPrompt || '', ...input.systemParts].filter((part) => part && String(part).trim());
+    systemPrompt = parts.join('\n\n');
+  } else {
+    systemPrompt = composeSystemPrompt(ctx.config, resolved, [
+      typeof body.instructions === 'string' ? body.instructions : '',
+      ...input.systemParts
+    ]);
   }
-  const duckMessages = buildDuckMessages({
-    systemPrompt,
-    conversation: upstreamMessages,
-    promptMode: ctx.config?.prompts?.mode
-  });
+  const reusablePrefix =
+    previousRecord &&
+    Array.isArray(previousRecord.upstream) &&
+    previousRecord.upstream.length > 0 &&
+    previousRecord.toolsHash === toolsHash &&
+    (previousRecord.systemPrompt || '') === (systemPrompt || '');
+  let canonicalConversation;
+  let duckMessages;
+  if (reusablePrefix) {
+    // v2.47：精确复用上一轮发给上游的前缀（含协议/图片），只追加新输出与新 user，
+    // 保证 duck.ai 收到的历史前缀逐字节一致。
+    canonicalConversation = chainedConversation;
+    duckMessages = [...previousRecord.upstream, ...outputConversation, ...input.conversation];
+    ctx.log.conversationChain = 'prefix-reuse';
+  } else {
+    const guarded = guardConversation(chainedConversation, systemPrompt, ctx.config?.context || {});
+    if (guarded.trimmed) ctx.log.contextTrimmed = true;
+    canonicalConversation = guarded.messages;
+    let upstreamMessages = guarded.messages;
+    if (clientTools.length) {
+      upstreamMessages = injectProtocolIntoFirstUser(guarded.messages, buildToolProtocol(clientTools));
+    }
+    duckMessages = buildDuckMessages({
+      systemPrompt,
+      conversation: upstreamMessages,
+      promptMode: ctx.config?.prompts?.mode
+    });
+    ctx.log.conversationChain = previousRecord ? 'rebuild' : 'new';
+  }
   if (typeof ctx.selectIdentity === 'function') {
     const paidModel =
       ctx.config?.duck?.allowPaidModels === true && (resolved.paid === true || resolved.model?.paid === true);
@@ -348,16 +456,33 @@ export async function handleResponses(req, res, ctx) {
     flags,
     duckMessages,
     systemPrompt,
-    conversation: guarded.messages,
-    upstreamMessages,
-    historyMessages: guarded.messages,
+    conversation: canonicalConversation,
+    upstreamMessages: duckMessages,
+    historyMessages: canonicalConversation,
     clientTools,
-    contextTrimmed: guarded.trimmed,
-    promptChars: input.promptChars
+    toolsHash,
+    contextTrimmed: Boolean(ctx.log.contextTrimmed),
+    promptChars: input.promptChars,
+    responseId: body.__responseId || null,
+    previousResponseId,
+    storeResponse,
+    responseStore
   };
 
-  if (stream) await streamResponse(ctx, params);
-  else await completeResponse(ctx, params);
+  const payload = stream ? await streamResponse(ctx, params) : await completeResponse(ctx, params);
+  if (payload && storeResponse && responseStore && responseStore.enabled !== false) {
+    await responseStore.save({
+      id: payload.id,
+      previousId: previousResponseId,
+      sessionKey: ctx.sessionKey || null,
+      model: params.resolved.id,
+      systemPrompt,
+      conversation: canonicalConversation,
+      upstream: duckMessages,
+      toolsHash,
+      output: payload.output
+    });
+  }
 }
 
 async function collectResponse(ctx, params) {
@@ -514,6 +639,7 @@ async function completeResponse(ctx, params) {
     model: params.resolved.id
   });
   ctx.json(200, payload);
+  return payload;
 }
 
 /**
@@ -706,6 +832,7 @@ async function streamResponseWithTools(ctx, params) {
   });
   emit('response.completed', { response: payload });
   writer.end();
+  return payload;
 }
 
 async function streamResponse(ctx, params) {
@@ -1203,10 +1330,10 @@ async function streamResponse(ctx, params) {
       toolCalls: [],
       model: params.resolved.id
     });
-    emit('response.completed', {
-      response: makeSnapshot('completed', { usage: responsesUsage })
-    });
+    const completedPayload = makeSnapshot('completed', { usage: responsesUsage });
+    emit('response.completed', { response: completedPayload });
     writer.end();
+    return completedPayload;
   } catch (error) {
     const normalized = toOpenAIError(error);
     ctx.log.error = normalized.message;

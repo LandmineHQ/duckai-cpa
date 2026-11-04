@@ -130,7 +130,11 @@ export const DEFAULT_CONFIG = Object.freeze({
     location: false,
     // v2.44：客户端工具桥（Codex/DSH 文件工具）——仅 client 模式，网关不执行工具
     clientFunctionCalling: { enabled: true }
-  }
+  },
+  // v2.46：Responses API response chaining（previous_response_id）
+  responses: { enabled: true, retentionDays: 7 },
+  // v2.47：服务端会话模式（Chat Completions，需要 X-Session-Id）
+  conversations: { mode: 'auto', retentionDays: 7 }
 });
 
 /** Config paths the dashboard may edit through PUT /admin/api/config. */
@@ -194,7 +198,12 @@ export const ADMIN_EDITABLE_PATHS = Object.freeze([
   // v2.36：是否允许上游使用「大致位置」（user-location）。默认不允许。
   'tools.location',
   // v2.44：客户端工具桥（Completions / Responses 自动转换）
-  'tools.clientFunctionCalling.enabled'
+  'tools.clientFunctionCalling.enabled',
+  // v2.46：Responses API 响应链（previous_response_id）
+  'responses.enabled',
+  'responses.retentionDays',
+  'conversations.mode',
+  'conversations.retentionDays'
 ]);
 
 /** Editable by prefix (arbitrary keys below the prefix). */
@@ -572,6 +581,25 @@ export function normalizeModelOverrides(raw) {
   return out;
 }
 
+function normalizeConversationsConfig(raw = {}) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const days = Number(source.retentionDays);
+  const mode = source.mode === 'server' ? 'server' : source.mode === 'auto' ? 'auto' : 'stateless';
+  return {
+    mode,
+    retentionDays: Number.isFinite(days) ? Math.min(365, Math.max(0, Math.floor(days))) : 7
+  };
+}
+
+function normalizeResponsesConfig(raw = {}) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const days = Number(source.retentionDays);
+  return {
+    enabled: source.enabled !== false,
+    retentionDays: Number.isFinite(days) ? Math.min(365, Math.max(0, Math.floor(days))) : 7
+  };
+}
+
 export function normalizeConfig(raw = {}) {
   const source = isPlainObject(raw) ? deepMerge(DEFAULT_CONFIG, raw) : deepClone(DEFAULT_CONFIG);
 
@@ -689,7 +717,11 @@ export function normalizeConfig(raw = {}) {
       clientFunctionCalling: {
         enabled: toBoolean(tools.clientFunctionCalling?.enabled, true)
       }
-    }
+    },
+    // v2.46：Responses API response chaining
+    responses: normalizeResponsesConfig(source.responses),
+    // v2.47：服务端会话（Chat Completions 需要显式 session id）
+    conversations: normalizeConversationsConfig(source.conversations)
   };
 }
 
@@ -748,11 +780,25 @@ function assertEditableValue(dotted, value) {
     case 'tools.imageGeneration':
     case 'tools.location':
     case 'tools.clientFunctionCalling.enabled':
+    case 'responses.enabled':
     case 'duck.allowPaidModels':
     case 'identity.enabled':
     case 'identity.durableStream.enabled':
     case 'identity.sync.enabled':
       if (typeof value !== 'boolean') fail('boolean');
+      return;
+    case 'responses.retentionDays': {
+      const days = Number(value);
+      if (!Number.isInteger(days) || days < 0 || days > 365) fail('integer 0-365');
+      return;
+    }
+    case 'conversations.retentionDays': {
+      const days = Number(value);
+      if (!Number.isInteger(days) || days < 0 || days > 365) fail('integer 0-365');
+      return;
+    }
+    case 'conversations.mode':
+      if (value !== 'auto' && value !== 'server' && value !== 'stateless') fail('"auto" | "server" | "stateless"');
       return;
     case 'identity.deviceName':
       if (value !== null && (typeof value !== 'string' || value.length > 200)) fail('string (max 200) or null');

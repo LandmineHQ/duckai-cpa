@@ -349,6 +349,17 @@ async function main() {
     logger.warn('会话历史不可用：/admin/api/history 将返回 503', { error: error.message });
   }
 
+  // v2.46：Responses API 响应链（previous_response_id）
+  let responsesStore = null;
+  try {
+    const responsesModule = await import('./openai/responses-store.js');
+    responsesStore = await responsesModule.createResponseStore({ dataDir: paths.dataDir, config, logger });
+    if (responsesStore.enabled) logger.info('Responses 响应链存储就绪（data/duckai.db: responses）');
+  } catch (error) {
+    responsesStore = null;
+    logger.warn('Responses 响应链不可用：previous_response_id 将被拒绝', { error: error.message });
+  }
+
   const queue = createUpstreamQueue({ config, logger });
   const server = createServer({
     config,
@@ -361,6 +372,7 @@ async function main() {
     proxy,
     identities,
     history: historyStore,
+    responsesStore,
     pairing,
     syncDevices,
     chatSummaries,
@@ -416,6 +428,18 @@ async function main() {
   }
 
   // v2.30：会话→身份绑定是缓存（默认 7 天未使用即失效），定期清理过期绑定
+  let responsesSweepTimer = null;
+  if (responsesStore && typeof responsesStore.prune === 'function') {
+    responsesSweepTimer = setInterval(() => {
+      try {
+        const removed = responsesStore.prune();
+        if (removed > 0) logger.info('[responses] 已清理过期 response', { removed });
+      } catch (error) {
+        logger.warn('[responses] prune failed', { error: error.message });
+      }
+    }, 30 * 60 * 1000);
+    responsesSweepTimer.unref?.();
+  }
   let historySweepTimer = null;
   if (historyStore && typeof historyStore.prune === 'function') {
     historySweepTimer = setInterval(() => {

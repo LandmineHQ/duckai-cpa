@@ -123,6 +123,33 @@ CREATE TABLE IF NOT EXISTS chat_summaries (
   data_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_chat_summaries_updated ON chat_summaries(updated_at DESC);
+CREATE TABLE IF NOT EXISTS responses (
+  id TEXT PRIMARY KEY,
+  previous_id TEXT,
+  session_key TEXT,
+  model TEXT,
+  system_prompt TEXT,
+  conversation_json TEXT NOT NULL,
+  upstream_json TEXT,
+  tools_hash TEXT,
+  output_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_responses_previous ON responses(previous_id);
+CREATE INDEX IF NOT EXISTS idx_responses_expires ON responses(expires_at);
+CREATE TABLE IF NOT EXISTS conversation_state (
+  session_key TEXT PRIMARY KEY,
+  model TEXT,
+  mode TEXT,
+  system_prompt TEXT,
+  canonical_json TEXT NOT NULL,
+  upstream_json TEXT NOT NULL,
+  tools_hash TEXT,
+  updated_at INTEGER NOT NULL,
+  expires_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_state_expires ON conversation_state(expires_at);
 `;
 
 const connections = new Map();
@@ -146,6 +173,16 @@ export async function openDatabase(options = {}) {
     db.exec('PRAGMA synchronous = NORMAL');
     db.exec('PRAGMA foreign_keys = ON');
     db.exec(SCHEMA);
+    // 兼容 v2.46 已存在的 responses 表：补 upstream/tools_hash 列
+    const responseColumns = new Set(
+      db.prepare('PRAGMA table_info(responses)').all().map((column) => column.name)
+    );
+    if (!responseColumns.has('upstream_json')) {
+      db.exec('ALTER TABLE responses ADD COLUMN upstream_json TEXT');
+    }
+    if (!responseColumns.has('tools_hash')) {
+      db.exec('ALTER TABLE responses ADD COLUMN tools_hash TEXT');
+    }
   } catch (error) {
     options.logger?.warn?.('[db] failed to init sqlite', { error: error.message });
     throw error;

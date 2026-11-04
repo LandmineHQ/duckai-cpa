@@ -34,6 +34,7 @@ It ships with a complete self-hosted control plane: identity pool management, su
 - **Image generation** via `GenerateImage` (OpenAI Images format + chat `message.images` data-URI extension; JPEG/PNG auto-detected).
 - **Image context across turns**: replayed `image_generation_call` / `image_url` inputs are sent upstream as real image parts (JPEG automatically converted to PNG ≤512px), so follow-up prompts like “modify the previous image” keep visual context instead of degrading to text.
 - **Client tool bridge**: OpenAI `tools[].function` is accepted on both Chat Completions and Responses, auto-normalized between protocols, and returned as native `tool_calls` / `function_call` items. File tools run **client-side** (Codex/DSH); the gateway never executes them.
+- **Server-side sessions**: Responses `previous_response_id` chaining is supported (the gateway stores canonical conversation + exact upstream prefix); Chat Completions can opt into server sessions with `X-Session-Id` + `X-Conversation-Mode: server` (or `X-Conversation-Delta: true` for delta-only messages). Historical prefix is reused byte-for-byte so image compression and tool protocol don't change earlier turns.
 
 ### Identity & routing
 
@@ -259,6 +260,8 @@ Frequently used settings:
 | `tools.webSearch` / `imageGeneration` | `true` | Built-in tools |
 | `tools.location` | `false` | Approximate location (user-location) |
 | `tools.clientFunctionCalling.enabled` | `true` | Client tool bridge (Codex/DSH file tools) |
+| `responses.enabled` / `retentionDays` | `true` / `7` | Responses `previous_response_id` chaining |
+| `conversations.mode` | `stateless` | Chat Completions server sessions (`stateless` / `auto` / `server`) |
 | `history.retentionDays` | `30` | Session history retention |
 | `prompts.source` | `duckai` | Prompt generator source (`duckai`/`custom`/`none`) |
 

@@ -1437,3 +1437,29 @@ cooldownScope = entity | account
 - 上游仅接受 PNG/WebP；JPEG 会返回 400 `ERR_BAD_REQUEST`（sc22）；
 - 网关统一转 PNG 并缩到 512px（`src/duck/image-convert.js`，jpeg-js/pngjs 纯 JS）；
 - 图片上下文通过真实 image part 回传，不再使用文本占位。
+## 41. 服务端会话 / response chaining（v2.47）
+
+### 41.1 配置
+
+| 路径 | 默认 | 说明 |
+| --- | --- | --- |
+| `responses.enabled` | true | Responses `previous_response_id` 存储 |
+| `responses.retentionDays` | 7 | response 记录保留天数（0=不过期） |
+| `conversations.mode` | stateless | Chat Completions 服务端会话模式：`stateless` / `auto` / `server` |
+| `conversations.retentionDays` | 7 | 会话状态保留天数 |
+
+### 41.2 Chat Completions 服务端会话
+
+- 显式开启：config `conversations.mode=server`，或请求头 `X-Conversation-Mode: server`；
+- 身份/会话标识：`X-Session-Id`（或 body `session_id` / `conversation_id`）；
+- 只发新消息：`X-Conversation-Delta: true`；
+- 历史前缀不一致：409 `conversation_session_conflict`；
+- 响应头返回 `X-Session-Id`；
+- 默认 stateless，避免影响已有客户端。
+
+### 41.3 存储与一致性
+
+- `responses` 表：response 链（canonical + 精确 upstream 前缀 + output + toolsHash）；
+- `conversation_state` 表：Chat Completions 会话（同结构）；
+- 精确前缀复用：旧消息逐字节不变；工具协议/图片压缩只处理一次；
+- 工具列表或 system prompt 变化时按 canonical 重建（cache miss 可接受）。

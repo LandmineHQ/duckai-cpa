@@ -1009,8 +1009,10 @@ chunked_transfer_encoding on;
 ### 多轮对话怎么传？
 
 把历史消息按 `user` / `assistant` 顺序原样传入 `messages`（或 Responses 的 `input` 数组）即可，
-网关每次都会把完整历史转发给上游。`/v1/*` 当前**无状态**，不保存 `conversation_id` / `previous_response_id`；
-需要服务端保存多轮历史的场景请使用管理后台「连接测试」的会话式测试（`/admin/api/test/sessions`）。
+网关每次都会把完整历史转发给上游。`/v1/chat/completions` 默认**无状态**（客户端回放完整历史）；
+Responses API 支持官方 `previous_response_id` 链式（网关保存 response 的 canonical conversation + 精确上游前缀，
+下一轮只发新 `input`）。Chat Completions 如需服务端会话，需显式开启：请求头 `X-Session-Id` +
+`X-Conversation-Mode: server`（或只发新消息时 `X-Conversation-Delta: true`）；历史前缀不匹配返回 409 `conversation_session_conflict`。
 
 ### 请求被取消会怎样？
 
@@ -1110,3 +1112,23 @@ Chat Completions 没有官方的 assistant 图片字段，采用主流 OpenAI �
 - `/v1/responses`：支持 `input_image`；上一轮 `image_generation_call` item 原样回传时，网关保留真实图片并挂到下一轮 user 消息（不再变文本）。
 - 上游图像输入只接受 PNG/WebP（JPEG 返回 400 sc22）：网关用 `jpeg-js` + `pngjs` 统一转 PNG 并缩到 **512px**；超过限制的图片会被压缩。
 - 仅图片的响应仍补 `message` + `output_text` 兜底，避免客户端显示空消息。
+## v2.47：服务端会话与精确前缀
+
+### Responses：`previous_response_id`
+
+- `POST /v1/responses` 支持 `previous_response_id`、`store`（默认 true）；
+- 网关在 SQLite `responses` 表保存 canonical conversation、**精确 upstream 前缀**、output items、toolsHash；
+- 下一轮只发新 `input`（可只有 `function_call_output`）；能复用前缀时直接拼接，tools/system 变化时按 canonical 重建；
+- 图片回放仍走真实 image part + PNG 压缩；
+- 未知/过期 id → 400 `previous_response_not_found`；`store:false` 不保存。
+
+### Chat Completions：可选服务端会话
+
+默认 `stateless`。开启服务端会话（config `conversations.mode=server`，或请求头 `X-Conversation-Mode: server`）且带 `X-Session-Id` 时：
+
+- 第一轮发送完整历史，网关保存 canonical + 精确 upstream 前缀；
+- 后续可继续发完整历史（前缀一致时只追加新消息），或只发新消息并带 `X-Conversation-Delta: true`；
+- 历史与存储不一致 → 409 `conversation_session_conflict`（不会静默拼接）；
+- 响应头返回 `X-Session-Id`。
+
+> 精确前缀包含已注入的工具协议与已压缩的图片；因此后续轮次 duck.ai 收到的历史逐字节一致，prefix cache 可复用。

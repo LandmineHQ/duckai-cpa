@@ -119,12 +119,20 @@ data/                运行时数据（不入库；含敏感文件）
   输出分别映射为 `tool_calls` / `function_call`；下一轮接受 `role:"tool"` 与 `function_call_output`。
   协议注入必须放在**第一条 user 消息**（v2.45 稳定前缀，保证旧消息逐字节不变、上游 prefix cache 可命中；
   不要改回最后一条 user：下一轮协议消失会导致历史文本变化、cache miss）。配置 `tools.clientFunctionCalling.enabled`（默认 true）。
-- **上下文前缀稳定（v2.45）**：客户端工具协议固定在第一条 user；历史文本/工具调用/图片映射必须确定性序列化，
-  跨轮不改写旧消息。压缩摘要（`chat_summaries`）和 context-guard 裁剪会改变前缀，启用后无法保证 cache 命中；
-  `/v1/*` 仍是无状态（不支持 `previous_response_id`），客户端必须回放完整历史。
+- **上下文前缀稳定（v2.45/v2.47）**：客户端工具协议固定在第一条 user；历史文本/工具调用/图片映射必须确定性序列化，
+  跨轮不改写旧消息。压缩摘要（`chat_summaries`）和 context-guard 裁剪会改变前缀，启用后无法保证 cache 命中。
+- **服务端会话 / response chaining（v2.46/v2.47）**：
+  - `/v1/responses`：支持官方 `previous_response_id`；`responses` 表保存 canonical conversation、
+    **精确 upstream 前缀（duckMessages，含协议/图片）**、output items、toolsHash；下一轮只发新 input，
+    能复用前缀时直接拼接，否则按 canonical 重建（tools/system 变化）。
+  - `/v1/chat/completions`：默认 **stateless**（客户端回放完整历史）；需要服务端会话时必须显式：
+    `config.conversations.mode='server'` 或请求头 `X-Conversation-Mode: server`，并带 `X-Session-Id`；
+    只发新消息用 `X-Conversation-Delta: true`；历史前缀不匹配返回 409 `conversation_session_conflict`。
+  - 精确前缀复用保证图片压缩只发生一次；图片链/工具链/文本链均真实验证通过。
 - **图片上下文（v2.44）**：`image_generation_call` 回放不能退化成文本占位；必须转成真实 image part（挂到下一轮 user 消息）。
   上游图像输入只接受 PNG/WebP（JPEG 实测 400 sc22），`src/duck/image-convert.js`（jpeg-js + pngjs，纯 JS）统一转 PNG 并缩到 **512px**；
   `/v1/chat/completions` 的 `image_url` data URL、`/v1/responses` 的 `input_image` 同样支持。
+
 - **消息组件统一（v2.37）**：「连接测试」与「会话历史」共用 `webapp/src/app/components/chat-message.tsx` 的
   `ChatMessageBubble`（+`ToolCallList`）：助手气泡/思考折叠/来源/图片/工具调用徽章一致；会话历史只读（不传 onRetry）。
   后端用 `src/openai/chat.js` 的 `normalizeToolCalls({toolCalls, approvals, images})` 统一生成 toolCalls，

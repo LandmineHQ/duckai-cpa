@@ -17,6 +17,7 @@ import { createServer } from '../../src/http/server.js';
 import { createStore } from '../../src/store.js';
 import { normalizeConfig, PROJECT_ROOT } from '../../src/config.js';
 import { createNullLogger } from '../../src/logger.js';
+import { createResponseStore } from '../../src/openai/responses-store.js';
 import { MockDuckClient } from './mock-duck.js';
 // v2.42：测试绝不发真实外网请求（duck.ai / duckduckgo.com 等统一拦截为 503）
 import './no-external-network.js';
@@ -131,6 +132,15 @@ export async function startTestServer(options = {}) {
     syncDevices = options.syncDevices;
   }
 
+  let responseStore = options.responsesStore || null;
+  if (!responseStore && options.responses !== false) {
+    try {
+      responseStore = await createResponseStore({ dataDir, config, logger });
+    } catch {
+      responseStore = null;
+    }
+  }
+
   const server = createServer({
     config,
     store,
@@ -146,6 +156,7 @@ export async function startTestServer(options = {}) {
     ...(options.sessions ? { sessions: options.sessions } : {}),
     ...(options.subscriptions ? { subscriptions: options.subscriptions } : {}),
     ...(options.history ? { history: options.history } : {}),
+    ...(responseStore ? { responsesStore: responseStore } : {}),
     ...(options.queue ? { queue: options.queue } : {}),
     ...(options.mcp ? { mcp: options.mcp } : {})
   });

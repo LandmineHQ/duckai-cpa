@@ -10,6 +10,7 @@
  *   - estimated usage (4 chars ≈ 1 token)
  */
 
+import crypto from 'node:crypto';
 import { resolveConfiguredPrompt } from '../duck/prompt.js';
 import {
   resolveModel,
@@ -20,6 +21,7 @@ import {
 } from './models.js';
 import {
   badRequest,
+  conflict,
   buildEstimatedUsage,
   genId,
   normalizeFinishReason,
@@ -179,7 +181,7 @@ export function normalizeImagePart(part) {
  * Normalize OpenAI chat `messages` into system parts + a user/assistant history.
  * @returns {{systemParts: string[], conversation: Array<{role:string,content:string}>, promptChars: number}}
  */
-export function normalizeChatMessages(rawMessages) {
+export function normalizeChatMessages(rawMessages, { allowEmptyUser = false } = {}) {
   if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
     throw badRequest('"messages" must be a non-empty array', 'messages', 'messages_required');
   }
@@ -225,7 +227,7 @@ export function normalizeChatMessages(rawMessages) {
   });
 
   const hasUserText = conversation.some((message) => message.role === 'user' && message.content.trim());
-  if (userMessages === 0 || !hasUserText) {
+  if (!allowEmptyUser && (userMessages === 0 || !hasUserText)) {
     throw badRequest('messages must contain at least one non-empty user message', 'messages');
   }
 
@@ -708,9 +710,43 @@ export async function handleChatCompletions(req, res, ctx) {
       ctx.config?.duck?.allowPaidModels === true && (resolved.paid === true || resolved.model?.paid === true);
     await ctx.selectIdentity({ paidModel });
   }
+  // v2.47：服务端会话模式。默认 stateless；需要显式开启（config conversations.mode=server，
+  // 或请求头 X-Conversation-Mode: server / X-Conversation-Delta: true）。
+  const headerMode = String(ctx.req?.headers?.['x-conversation-mode'] || '').toLowerCase();
+  const deltaRequested = String(ctx.req?.headers?.['x-conversation-delta'] || body.conversation_delta || '') === 'true';
+  const configuredMode = ctx.config?.conversations?.mode || 'stateless';
+  const conversationMode = deltaRequested
+    ? 'server'
+    : headerMode === 'server'
+      ? 'server'
+      : headerMode === 'stateless'
+        ? 'stateless'
+        : configuredMode === 'server'
+          ? 'server'
+          : 'stateless';
+  const responseStore = ctx.responsesStore || null;
+  if (conversationMode === 'server' && !ctx.sessionKey) {
+    throw badRequest(
+      'conversation mode "server" requires an X-Session-Id header (or session_id in body)',
+      'X-Session-Id',
+      'session_required'
+    );
+  }
+  let storedConversation = null;
+  if (conversationMode === 'server' && responseStore?.enabled && ctx.sessionKey) {
+    storedConversation = await responseStore.getConversation(ctx.sessionKey);
+  }
+  if (ctx.sessionKey) {
+    try {
+      ctx.res.setHeader('X-Session-Id', ctx.sessionKey);
+    } catch {
+      // headers may already be sent
+    }
+  }
+
   let requestConversation = messages.conversation;
   let compactedInfo = null;
-  if (ctx.sessionKey && ctx.chatSummaries) {
+  if (!storedConversation && ctx.sessionKey && ctx.chatSummaries) {
     const compactConfig = getCompactConfig(ctx.config);
     const split = splitForCompact(messages.conversation, compactConfig.keepRecentMessages);
     if (compactConfig.enabled && split.compactable) {
@@ -763,20 +799,94 @@ export async function handleChatCompletions(req, res, ctx) {
       }
     }
   }
-  const guarded = guardConversation(requestConversation, systemPrompt, ctx.config?.context || {});
-  // v2.31：会话历史记录用的是最终发送给上游的消息（含裁剪后的）
-  const historyMessages = guarded.messages;
-  ctx.historyMessages = historyMessages;
-  if (guarded.trimmed) ctx.log.contextTrimmed = true;
-  let upstreamMessages = guarded.messages;
-  if (clientTools.length) {
-    upstreamMessages = injectProtocolIntoFirstUser(guarded.messages, buildToolProtocol(clientTools));
+  const rawMessages = Array.isArray(body.messages) ? body.messages : [];
+  const toolsHash = crypto.createHash('sha1').update(JSON.stringify(clientTools)).digest('hex');
+  let canonicalBefore = rawMessages;
+  let tailRaw = rawMessages;
+  let canonicalForSave = rawMessages;
+  let duckMessages;
+  let historyMessages;
+  let retryConversation = messages.conversation;
+  let prefixReused = false;
+
+  if (storedConversation) {
+    const storedCanonical = Array.isArray(storedConversation.canonical) ? storedConversation.canonical : [];
+    let prefixMatch = false;
+    if (storedCanonical.length > 0 && rawMessages.length >= storedCanonical.length) {
+      try {
+        prefixMatch =
+          JSON.stringify(rawMessages.slice(0, storedCanonical.length)) === JSON.stringify(storedCanonical);
+      } catch {
+        prefixMatch = false;
+      }
+    }
+    if (prefixMatch) {
+      tailRaw = rawMessages.slice(storedCanonical.length);
+      canonicalBefore = rawMessages;
+    } else if (String(ctx.req?.headers?.['x-conversation-delta'] || body.conversation_delta || '') === 'true') {
+      tailRaw = rawMessages;
+      canonicalBefore = [...storedCanonical, ...rawMessages];
+    } else {
+      throw conflict(
+        'conversation session conflict: request history does not match the stored session; start a new session, or send only the delta with X-Conversation-Delta: true',
+        'conversation_session_conflict'
+      );
+    }
+    if (!tailRaw.length) {
+      throw badRequest('no new messages for this session', 'messages', 'no_new_messages');
+    }
+    const reusablePrefix =
+      Array.isArray(storedConversation.upstream) &&
+      storedConversation.upstream.length > 0 &&
+      storedConversation.toolsHash === toolsHash &&
+      (storedConversation.systemPrompt || '') === (systemPrompt || '');
+    if (reusablePrefix) {
+      const tail = normalizeChatMessages(tailRaw, { allowEmptyUser: true });
+      if (tail.systemParts.length === 0) {
+        duckMessages = [...storedConversation.upstream, ...tail.conversation];
+        canonicalForSave = canonicalBefore;
+        try {
+          retryConversation = normalizeChatMessages(canonicalBefore, { allowEmptyUser: true }).conversation;
+        } catch {
+          retryConversation = tail.conversation;
+        }
+        historyMessages = messages.conversation;
+        prefixReused = true;
+        ctx.log.conversationChain = 'prefix-reuse';
+      }
+    }
   }
-  const duckMessages = buildDuckMessages({
+
+  if (!prefixReused) {
+    const rebuild = storedConversation ? normalizeChatMessages(canonicalBefore) : messages;
+    const guarded = guardConversation(rebuild.conversation, systemPrompt, ctx.config?.context || {});
+    historyMessages = guarded.messages;
+    ctx.historyMessages = historyMessages;
+    if (guarded.trimmed) ctx.log.contextTrimmed = true;
+    let upstreamMessages = guarded.messages;
+    if (clientTools.length) {
+      upstreamMessages = injectProtocolIntoFirstUser(guarded.messages, buildToolProtocol(clientTools));
+    }
+    duckMessages = buildDuckMessages({
+      systemPrompt,
+      conversation: upstreamMessages,
+      promptMode: ctx.config?.prompts?.mode
+    });
+    canonicalForSave = storedConversation ? canonicalBefore : rebuild.conversation;
+    retryConversation = guarded.messages;
+    ctx.log.conversationChain = storedConversation ? 'rebuild' : 'stateless';
+  }
+  ctx.historyMessages = historyMessages;
+  ctx.chatSession = {
+    enabled: conversationMode === 'server' && Boolean(responseStore?.enabled && ctx.sessionKey),
+    store: responseStore,
+    sessionKey: ctx.sessionKey || null,
+    mode: conversationMode,
     systemPrompt,
-    conversation: upstreamMessages,
-    promptMode: ctx.config?.prompts?.mode
-  });
+    toolsHash,
+    canonicalBefore,
+    upstreamBeforeResponse: duckMessages
+  };
 
   const stream = body.stream === true;
   ctx.log.stream = stream;
@@ -788,12 +898,12 @@ export async function handleChatCompletions(req, res, ctx) {
     flags,
     duckMessages,
     systemPrompt,
-    conversation: upstreamMessages,
-    guardedMessages: upstreamMessages,
+    conversation: canonicalForSave,
+    guardedMessages: retryConversation,
     historyMessages,
     clientTools,
     promptChars: messages.promptChars,
-    contextTrimmed: guarded.trimmed,
+    contextTrimmed: Boolean(ctx.log.contextTrimmed),
     compactedInfo,
     streamOptions: body.stream_options && typeof body.stream_options === 'object' ? body.stream_options : null
   };
@@ -802,6 +912,33 @@ export async function handleChatCompletions(req, res, ctx) {
     await streamChatCompletion(ctx, params);
   } else {
     await completeChatCompletion(ctx, params);
+  }
+
+  // v2.47：保存服务端会话（canonical + 精确 upstream 前缀），供下一轮增量/前缀复用
+  const session = ctx.chatSession;
+  if (session?.enabled && session.store && ctx.chatFinal) {
+    const assistantCanonical =
+      Array.isArray(ctx.chatFinal.toolCalls) && ctx.chatFinal.toolCalls.length
+        ? { role: 'assistant', content: null, tool_calls: ctx.chatFinal.toolCalls }
+        : { role: 'assistant', content: String(ctx.chatFinal.content || '') };
+    const assistantUpstream =
+      Array.isArray(ctx.chatFinal.toolCalls) && ctx.chatFinal.toolCalls.length
+        ? { role: 'assistant', content: formatToolCallsForHistory(ctx.chatFinal.toolCalls) }
+        : { role: 'assistant', content: String(ctx.chatFinal.content || '') };
+    try {
+      await session.store.saveConversation({
+        sessionKey: session.sessionKey,
+        model: resolved.id,
+        mode: session.mode,
+        systemPrompt: session.systemPrompt,
+        canonical: [...session.canonicalBefore, assistantCanonical],
+        upstream: [...session.upstreamBeforeResponse, assistantUpstream],
+        toolsHash: session.toolsHash
+      });
+      ctx.log.conversationState = 'saved';
+    } catch (error) {
+      ctx.logger?.warn?.('failed to save conversation state', { error: error.message });
+    }
   }
 }
 
@@ -860,14 +997,20 @@ async function callChatUpstreamOnce(ctx, params, { conversation, systemPrompt } 
       },
       handlers
     );
-  const result = await ctx.callUpstream(
-    taskFor(
-      buildDuckMessages({
+  const initialMessages = conversation
+    ? buildDuckMessages({
         systemPrompt: prompt,
         conversation: upstreamConversation,
         promptMode: ctx.config?.prompts?.mode
       })
-    ),
+    : params.duckMessages ||
+      buildDuckMessages({
+        systemPrompt: prompt,
+        conversation: upstreamConversation,
+        promptMode: ctx.config?.prompts?.mode
+      });
+  const result = await ctx.callUpstream(
+    taskFor(initialMessages),
     {
       model,
       onContextLimitRetry: () => {
@@ -896,7 +1039,6 @@ async function callChatUpstreamOnce(ctx, params, { conversation, systemPrompt } 
  */
 async function resolveChatCompletion(ctx, params) {
   const outcome = await callChatUpstreamOnce(ctx, params, {
-    conversation: params.guardedMessages || params.conversation,
     systemPrompt: params.systemPrompt
   });
   const { collected, result } = outcome;
@@ -973,6 +1115,7 @@ async function completeChatCompletion(ctx, params) {
     usage: resolved.usage,
     toolCalls
   });
+  ctx.chatFinal = { content, toolCalls };
   if (ctx.log.contextTrimmed) payload.context_trimmed = true;
   if (params.compactedInfo) {
     payload.compacted = true;
@@ -1033,6 +1176,7 @@ async function streamChatCompletionWithTools(ctx, params) {
     model: params.resolved.id,
     system_fingerprint: null
   };
+  ctx.chatFinal = { content, toolCalls };
   const writer = ctx.openSSE();
   const emit = (delta, finish = null) => {
     if (!writer.closed) writer.data({ ...base, choices: [{ index: 0, delta, logprobs: null, finish_reason: finish }] });
@@ -1064,6 +1208,7 @@ async function streamChatCompletionWithTools(ctx, params) {
     if (images.length) emit({ images: images.map(toChatImage) });
     emit({}, finishReason);
   }
+  ctx.chatFinal = { content, toolCalls };
   if (params.streamOptions?.include_usage === true) {
     writer.data({ ...base, choices: [], usage: resolved.usage });
   }
@@ -1283,6 +1428,7 @@ async function streamChatCompletion(ctx, params) {
     model: params.resolved.id
   });
     emitDelta({}, finishReason);
+    ctx.chatFinal = { content: collected.content, toolCalls: [] };
 
     // v2.24：流式请求也要统计 token（无论是否 include_usage）
     streamUsage = buildEstimatedUsage({
