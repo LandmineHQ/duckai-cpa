@@ -349,21 +349,6 @@ async function main() {
     logger.warn('会话历史不可用：/admin/api/history 将返回 503', { error: error.message });
   }
 
-  // v2.39：MCP 工具管理器（网关级 function calling 的 auto 模式使用）
-  let mcp = null;
-  try {
-    const mcpModule = await import('./tools/mcp-client.js');
-    mcp = await mcpModule.createMcpManager({ config: config.tools?.mcp || {}, logger });
-    if (config.tools?.mcp?.enabled !== true) {
-      logger.info('MCP 工具未启用（设置 → 工具 → MCP servers 可开启）');
-    } else {
-      logger.info('MCP 工具管理器已创建（懒连接）', { servers: (config.tools?.mcp?.servers || []).length });
-    }
-  } catch (error) {
-    mcp = null;
-    logger.warn('MCP 客户端初始化失败：function calling auto 模式不可用', { error: error.message });
-  }
-
   const queue = createUpstreamQueue({ config, logger });
   const server = createServer({
     config,
@@ -379,8 +364,7 @@ async function main() {
     pairing,
     syncDevices,
     chatSummaries,
-    subscriptions,
-    mcp
+    subscriptions
   });
   let address;
   try {

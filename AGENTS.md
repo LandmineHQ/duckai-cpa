@@ -110,11 +110,10 @@ data/                运行时数据（不入库；含敏感文件）
   `test_sessions`、`chat_summaries`、`meta.stats.*`、`meta.keys.managed`（旧 JSON 仅首启导入一次，随后可归档到 `data/legacy-json-archive/`）。
 - **session id 展示（v2.40）**：连接测试 header/列表与会话历史详情/列表都展示完整 session id（可复制）；无 X-Session-Id 的 v1 请求历史 key 为 `auto:<hash>`。
 - **Responses 生图（v2.40）**：`/v1/responses` 只有图片时必须补 message item + output_text；下一轮 input 里的 `image_generation_call` 必须接受（转 assistant 占位文本），否则 Codex 继续对话会 400。
-- **function calling（v2.39）**：duck.ai 上游**没有** tools schema 通道（固定内置工具 + 浏览器 bridge；`client-tools-support`
-  实验开关默认 false；`metadata.toolChoice` 未知工具名被忽略）。网关在 `src/openai/function-calling.js` 实现兼容层：
-  `tools[].function` → 协议文本必须注入**最后一条 user 消息**（放 system/inline 前缀模型会忽略/说“无法调用”），
-  `mode=client` 返回 `tool_calls`（客户端用 role:"tool" 回传），`mode=auto` 由网关调用 MCP 工具并继续（`src/tools/mcp-client.js`，
-  支持 stdio/http；server 列表变更需重启）。`/v1/responses` 暂未接入。
+- **自定义 tools 已移除（v2.42）**：v2.39 引入的网关级 function calling（`tools.functionCalling.*`）与 MCP 工具
+  （`tools.mcp.*`、`src/tools/mcp-client.js`、`src/openai/function-calling.js`）已全部删除。保留内置工具
+  `tools.webSearch` / `tools.imageGeneration` / `tools.location`；OpenAI `tools[].function` 重新视为不支持的 tool
+  （默认静默丢弃，`models.tools.dropUnsupported=false` 时 400 `unsupported_tool`），`role:"tool"` 消息返回 400。
 - **消息组件统一（v2.37）**：「连接测试」与「会话历史」共用 `webapp/src/app/components/chat-message.tsx` 的
   `ChatMessageBubble`（+`ToolCallList`）：助手气泡/思考折叠/来源/图片/工具调用徽章一致；会话历史只读（不传 onRetry）。
   后端用 `src/openai/chat.js` 的 `normalizeToolCalls({toolCalls, approvals, images})` 统一生成 toolCalls，

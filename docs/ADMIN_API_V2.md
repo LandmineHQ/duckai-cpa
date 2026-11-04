@@ -1388,41 +1388,9 @@ cooldownScope = entity | account
 「会话历史」页据此渲染：工具调用徽章（位置调用 / 图片生成 / 联网搜索，可展开参数与结果）、
 生成图片（data URI 直接回放）、思考过程折叠块、来源链接。
 有生成图片但上游没有给 GenerateImage 工具帧时，网关会自动补一条「图片生成」记录。
-## 38. 网关级 function calling 与 MCP 工具（v2.39）
+## 38. 网关级 function calling 与 MCP 工具（v2.39，**v2.42 已移除**）
 
-### 38.1 配置（PUT /admin/api/config）
-
-```json
-"tools": {
-  "functionCalling": {"enabled": true, "mode": "client", "maxRounds": 4},
-  "mcp": {"enabled": false, "timeoutMs": 30000, "servers": []}
-}
-```
-
-| 路径 | 类型 | 默认 | 说明 |
-| --- | --- | --- | --- |
-| `tools.functionCalling.enabled` | boolean | true | 是否接受 OpenAI `tools[].function` |
-| `tools.functionCalling.mode` | `client`/`auto` | client | client 返回 tool_calls；auto 由网关执行 MCP 工具 |
-| `tools.functionCalling.maxRounds` | 0–8 | 4 | auto 模式最多工具轮次 |
-| `tools.mcp.enabled` | boolean | false | 启用 MCP 工具管理器 |
-| `tools.mcp.timeoutMs` | 1000–120000 | 30000 | 单次 MCP 请求超时 |
-| `tools.mcp.servers` | array | [] | `{name,transport:"studio/http",command?,args?,env?,cwd?,url?,headers?}` |
-
-修改 `tools.mcp.*` 会返回 `restartRequired: true`（MCP 连接在启动时建立）。
-
-### 38.2 上游协议事实（为什么需要网关实现）
-
-- `/duckchat/v1/chat` 请求体没有 `tools`/JSON Schema 字段，只有 `canUseTools` 开关；
-- 模型目录里的 `supportedTools` 是固定枚举（WebSearch/GenerateImage/LocationPrompt/浏览器工具等）；
-- `metadata.toolChoice` 传未知工具名会被静默忽略（实测）；
-- `x-duckai-client-tools` 只声明浏览器 bridge 的已知能力（含实验开关 `client-tools-support`，默认 false）。
-
-因此自定义工具只能由网关做「提示词协议 + 解析 + 执行」；工具协议必须注入**最后一条用户消息**
-（放 system prompt / inline 前缀时模型会忽略或回答“无法调用”）。
-
-### 38.3 管理页
-
-「设置 → 工具」新增：函数调用开关、执行模式（client/auto）、MCP 开关与 servers JSON 编辑框。
+> v2.42 已删除 `tools.functionCalling.*`、`tools.mcp.*`、`src/openai/function-calling.js`、`src/tools/mcp-client.js` 与设置页对应卡片。保留内置工具 `tools.webSearch` / `tools.imageGeneration` / `tools.location`。
 ## 39. 会话存储统一到 SQLite 与 session id 展示（v2.40）
 
 ### 39.1 存储

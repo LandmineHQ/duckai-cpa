@@ -628,7 +628,7 @@ export function modelSupportsTool(model, tool) {
 export function parseTools(config, tools, { param = 'tools' } = {}) {
   // v2.22：只做解析与归类，不再因为「不支持的 tool」抛错——
   // 由 resolveToolFlags 按 models.tools.strictUnsupported 决定丢弃还是报错。
-  const result = { webSearch: false, imageGeneration: false, functions: [], unsupported: [], malformed: [] };
+  const result = { webSearch: false, imageGeneration: false, unsupported: [], malformed: [] };
   if (tools == null) return result;
   if (!Array.isArray(tools)) throw badRequest(`"${param}" must be an array`, param, 'invalid_tools');
 
@@ -641,22 +641,6 @@ export function parseTools(config, tools, { param = 'tools' } = {}) {
       result.webSearch = true;
     } else if (type === 'image_generation') {
       result.imageGeneration = true;
-    } else if (type === 'function') {
-      // v2.39：OpenAI function tools —— 由网关做提示词注入 + 解析 + 执行（上游无 tools schema 通道）
-      const fn = tool.function && typeof tool.function === 'object' ? tool.function : null;
-      const name = fn && typeof fn.name === 'string' ? fn.name.trim() : '';
-      if (!fn || !/^[a-zA-Z0-9_-]{1,64}$/.test(name)) {
-        result.malformed.push('function (invalid name)');
-        continue;
-      }
-      result.functions.push({
-        name,
-        description: typeof fn.description === 'string' ? fn.description.slice(0, 2000) : '',
-        parameters:
-          fn.parameters && typeof fn.parameters === 'object' && !Array.isArray(fn.parameters)
-            ? fn.parameters
-            : { type: 'object', properties: {} }
-      });
     } else {
       result.unsupported.push(type || '(missing type)');
     }

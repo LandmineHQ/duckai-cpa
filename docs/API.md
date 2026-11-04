@@ -964,8 +964,9 @@ v2 有三类 429，处理方式不同：
 
 ### 支持 function calling / 自定义工具吗？
 
-不支持。仅支持 `web_search` 与 `image_generation` 两种**内置工具**；
-其它 `tools` 类型会返回 `400 unsupported_tool`。需要函数调用请在客户端自行实现「把工具结果拼回 prompt」。
+不支持（v2.39 曾实验性支持，v2.42 已移除）。仅支持 `web_search` 与 `image_generation` 两种**内置工具**；
+OpenAI `tools[].function` 默认会被静默丢弃（`models.tools.dropUnsupported=false` 时返回 `400 unsupported_tool`）。
+需要函数调用请在客户端自行实现「把工具结果拼回 prompt」。
 
 ### 模型别名与 `duck-` 前缀
 
@@ -1090,47 +1091,8 @@ Chat Completions 没有官方的 assistant 图片字段，采用主流 OpenAI �
 
 图片以 OpenAI Responses 官方格式返回：`output` 中的 `image_generation_call` 项，
 `result` 为 base64，`output_format` 为真实格式（`jpeg`/`png`/`webp`）。
-## v2.39：自定义 tools（网关级 function calling + MCP）
+## v2.42：自定义 tools 已移除
 
-duck.ai 上游**没有** OpenAI 的 `tools[]` schema 通道（只有固定内置工具）；网关实现了兼容层：
-把客户端声明的 `tools[].function` 注入提示词，解析模型输出的工具调用 JSON，再按模式处理。
-
-### 请求（`POST /v1/chat/completions`）
-
-```json
-{"model":"gpt-6-luna","messages":[...],
- "tools":[{"type":"function","function":{
-   "name":"get_weather","description":"查询城市天气",
-   "parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}],
- "tool_choice":"auto"}
-```
-
-- 不需要 `function_call`/`multiple`；name 需匹配 `^[a-zA-Z0-9_-]{1,64}$`；
-- 内置工具（`web_search` / `image_generation`）与 function tools 可同时存在。
-
-### 两种执行模式（`config.tools.functionCalling.mode`）
-
-| 模式 | 行为 | 客户端下一轮 |
-| --- | --- | --- |
-| `client`（默认） | 模型要求调用工具时，网关返回 `finish_reason:"tool_calls"` + `message.tool_calls`（与 OpenAI 一致，content=null） | 客户端执行工具后，把 assistant(tool_calls) + `role:"tool",tool_call_id,name,content` 发回，网关继续生成最终回答 |
-| `auto` | 网关直接调用配置的 **MCP server** 执行工具，把结果回填给模型并继续（最多 `maxRounds` 轮），返回最终回答（不向客户端暴露 tool_calls） | 无（一步到位） |
-
-### MCP 配置（`config.tools.mcp`）
-
-```json
-"mcp": {"enabled": true, "timeoutMs": 30000, "servers": [
-  {"name":"fs","transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","C:/data"]},
-  {"name":"remote","transport":"http","url":"https://mcp.example.com/mcp","headers":{"Authorization":"Bearer ..."}}
-]}
-```
-
-- stdio：JSON-RPC 2.0（换行分帧）+ `initialize → notifications/initialized → tools/list → tools/call`；
-- http：POST JSON-RPC，支持 JSON/SSE 响应与 `Mcp-Session-Id`；
-- 工具名：单 server 用原名；多 server 用 `<server>__<tool>`；
-- 修改 servers 需**重启网关**生效；MCP 不可用时 auto 模式会把错误作为工具结果回填（不会 500）。
-
-### 限制
-
-- 工具调用依赖模型遵循提示词协议（网关会把协议注入**最后一条用户消息**）；`gpt-6-luna` 等模型可用，但
-  偶发不遵循时按普通回答处理（不会伪造 tool_calls）。
-- `/v1/responses` 暂未接入 function tools（仅 `/v1/chat/completions`）。
+v2.39 的网关级 function calling（`tools.functionCalling.*`）与 MCP 工具（`tools.mcp.*`）已全部删除。
+现在只保留 duck.ai 原生内置工具：`web_search`、`image_generation`、`location`（设置 → 工具）。
+OpenAI `tools[].function` 视为不支持的 tool：默认静默丢弃；`models.tools.dropUnsupported=false` 时返回 `400 unsupported_tool`。

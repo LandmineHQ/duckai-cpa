@@ -31,13 +31,6 @@ import {
 import { guardConversation } from './context-guard.js';
 import { detectImageFormat, normalizeFormat, imageDataUri, imageMimeType } from '../duck/image-format.js';
 import {
-  buildToolProtocol,
-  buildToolCall,
-  buildUpstreamConversation,
-  createFunctionCallRunner,
-  parseToolCall
-} from './function-calling.js';
-import {
   buildCompactedSystemPrompt,
   evaluateCompactionTrigger,
   getCompactConfig,
@@ -174,29 +167,14 @@ export function normalizeChatMessages(rawMessages) {
       return;
     }
     if (role === 'assistant') {
-      // v2.39：客户端 function calling 回传时，assistant 消息可能只有 tool_calls、没有文本
-      let assistantContent = content;
-      if (!assistantContent.trim() && Array.isArray(message.tool_calls)) {
-        assistantContent = message.tool_calls
-          .map((call) => {
-            const name = call && call.function && call.function.name ? call.function.name : 'tool';
-            const args = call && call.function && call.function.arguments ? call.function.arguments : '{}';
-            return `[tool_call] ${name}(${args})`;
-          })
-          .join('\n');
-      }
-      conversation.push({ role: 'assistant', content: assistantContent });
+      conversation.push({ role: 'assistant', content });
       return;
     }
     if (role === 'tool' || role === 'function') {
-      // v2.39：网关级 function calling——客户端执行完工具后用 role:"tool" 回传结果
-      conversation.push({
-        role: 'tool',
-        content,
-        ...(typeof message.tool_call_id === 'string' ? { toolCallId: message.tool_call_id } : {}),
-        ...(typeof message.name === 'string' && message.name ? { name: message.name } : {})
-      });
-      return;
+      throw badRequest(
+        `messages[${index}].role "${role}" is not supported: this gateway does not proxy function/tool calls`,
+        'messages'
+      );
     }
     throw badRequest(`messages[${index}].role "${role || '(missing)'}" is not supported`, 'messages');
   });
@@ -261,28 +239,6 @@ export function buildDuckMessages({ systemPrompt = '', conversation = [], prompt
 /* ------------------------------------------------------------------ */
 
 /**
- * v2.39：把工具调用协议附加到最后一条 user 消息（模型才会按协议输出 JSON）。
- * @param {Array<{role:string, content:string}>} messages
- * @param {string} protocol
- */
-export function injectProtocolIntoLastUser(messages, protocol) {
-  if (!Array.isArray(messages) || !protocol) return messages;
-  let lastUserIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index] && messages[index].role === 'user') {
-      lastUserIndex = index;
-      break;
-    }
-  }
-  if (lastUserIndex < 0) return messages;
-  return messages.map((message, index) =>
-    index === lastUserIndex
-      ? { ...message, content: `${message.content}\n\n${protocol}` }
-      : message
-  );
-}
-
-/**
  * Resolve capability flags from the request (`tools` array + `web_search` /
  * `image_generation` shortcuts) and validate them against config + model.
  */
@@ -339,7 +295,7 @@ export function resolveToolFlags(config, model, body = {}, gatewayToolPolicy = n
     throw badRequest(messages[first.reason], 'tools', codes[first.reason]);
   }
   // v2.39：function tools 由网关处理，不受上游 modelSupportsTool 限制
-  return { webSearch, imageGeneration, functions: parsed.functions || [], dropped };
+  return { webSearch, imageGeneration, dropped };
 }
 
 /* ------------------------------------------------------------------ */
@@ -612,20 +568,13 @@ export function buildChatCompletion({
   sources,
   images,
   finishReason,
-  usage,
-  toolCalls
+  usage
 }) {
-  const hasToolCalls = Array.isArray(toolCalls) && toolCalls.length > 0;
   const message = {
     role: 'assistant',
-    // OpenAI 规范：有 tool_calls 时 content 通常为 null
-    content: hasToolCalls && !content ? null : content || '',
+    content: content || '',
     refusal: null
   };
-  if (hasToolCalls) {
-    message.tool_calls = toolCalls;
-    message.finish_reason = 'tool_calls';
-  }
   if (reasoning) message.reasoning_content = reasoning;
   if (sources && sources.length) {
     message.annotations = buildAnnotations(sources);
@@ -642,7 +591,7 @@ export function buildChatCompletion({
         index: 0,
         message,
         logprobs: null,
-        finish_reason: hasToolCalls ? 'tool_calls' : normalizeFinishReason(finishReason)
+        finish_reason: normalizeFinishReason(finishReason)
       }
     ],
     usage,
@@ -675,14 +624,7 @@ export async function handleChatCompletions(req, res, ctx) {
   const reasoning = resolveReasoningEffort(resolved.model, body.reasoning_effort ?? body.reasoning?.effort);
   const flags = resolveToolFlags(ctx.config, resolved.model, body);
   if (flags.dropped && flags.dropped.length) ctx.log.droppedTools = flags.dropped;
-  // v2.39：网关级 function calling（OpenAI tools[].function）
-  const functionCallingConfig = ctx.config?.tools?.functionCalling || {};
-  const functionTools =
-    functionCallingConfig.enabled === false ? [] : Array.isArray(flags.functions) ? flags.functions : [];
   let systemPrompt = composeSystemPrompt(ctx.config, resolved, messages.systemParts);
-  if (functionTools.length) {
-    ctx.log.functionTools = functionTools.map((tool) => tool.name);
-  }
   // v2.11: routed identity is needed before compaction (summary is an upstream call).
   if (typeof ctx.selectIdentity === 'function') {
     const paidModel =
@@ -749,16 +691,9 @@ export async function handleChatCompletions(req, res, ctx) {
   const historyMessages = guarded.messages;
   ctx.historyMessages = historyMessages;
   if (guarded.trimmed) ctx.log.contextTrimmed = true;
-  // v2.39：工具调用协议必须放在「最后一条 user 消息」里（实测放在 system/inline 前缀会被模型忽略，
-  // 甚至回答“无法调用”）。auto 模式的后续轮次也复用这条消息，因此协议一直在上下文中。
-  let upstreamMessages = guarded.messages;
-  if (functionTools.length) {
-    const protocol = buildToolProtocol(functionTools);
-    if (protocol) upstreamMessages = injectProtocolIntoLastUser(guarded.messages, protocol);
-  }
   const duckMessages = buildDuckMessages({
     systemPrompt,
-    conversation: upstreamMessages,
+    conversation: guarded.messages,
     promptMode: ctx.config?.prompts?.mode
   });
 
@@ -772,14 +707,12 @@ export async function handleChatCompletions(req, res, ctx) {
     flags,
     duckMessages,
     systemPrompt,
-    conversation: upstreamMessages,
-    guardedMessages: upstreamMessages,
+    conversation: guarded.messages,
+    guardedMessages: guarded.messages,
     historyMessages,
     promptChars: messages.promptChars,
     contextTrimmed: guarded.trimmed,
     compactedInfo,
-    functionTools,
-    functionCalling: functionCallingConfig,
     streamOptions: body.stream_options && typeof body.stream_options === 'object' ? body.stream_options : null
   };
 
@@ -875,57 +808,27 @@ async function callChatUpstreamOnce(ctx, params, { conversation, systemPrompt } 
 }
 
 /**
- * 解析一次 chat 请求的最终结果（含 function calling 多轮）。
+ * 解析一次 chat 请求的最终结果。
  * @returns {Promise<{content:string, reasoningText:string, sources:any[], images:any[], usage:any,
- *   finishReason:string|null, functionCalls:any[], collected:any, result:any}>}
+ *   finishReason:string|null, collected:any, result:any}>}
  */
 async function resolveChatCompletion(ctx, params) {
-  const functionTools = Array.isArray(params.functionTools) ? params.functionTools : [];
-  const fc = params.functionCalling || {};
-  const baseConversation = buildUpstreamConversation(params.guardedMessages || params.conversation);
-  let outcome = await callChatUpstreamOnce(ctx, params, {
-    conversation: baseConversation,
+  const outcome = await callChatUpstreamOnce(ctx, params, {
+    conversation: params.guardedMessages || params.conversation,
     systemPrompt: params.systemPrompt
   });
-  let functionCalls = [];
-  let executed = [];
-  if (functionTools.length && fc.enabled !== false) {
-    const runner = createFunctionCallRunner({
-      tools: functionTools,
-      mode: fc.mode === 'auto' ? 'auto' : 'client',
-      maxRounds: fc.maxRounds ?? 4,
-      mcp: ctx.mcp || null,
-      logger: ctx.logger
-    });
-    const resolution = await runner.run(
-      { outcome, conversation: baseConversation, systemPrompt: params.systemPrompt },
-      ({ conversation, systemPrompt }) =>
-        callChatUpstreamOnce(ctx, params, { conversation, systemPrompt })
-    );
-    outcome = resolution.outcome;
-    functionCalls = resolution.toolCalls || [];
-    executed = resolution.executed || [];
-  }
-
   const { collected, result } = outcome;
   if (collected.error && !collected.content && !result) throw collected.error;
 
-  let content = cleanCitationText(
+  const content = cleanCitationText(
     typeof result?.content === 'string' && result.content ? result.content : collected.content
   );
-  // v2.39：client 模式返回 tool_calls 时，从正文里去掉提示词协议要求的 JSON（OpenAI 规范 content=null）
-  if (functionCalls.length) {
-    const trimmed = content.trim();
-    if (/^```|^\{|^<tool_call>/i.test(trimmed)) content = '';
-  }
   const reasoningText = cleanCitationText(
     typeof result?.reasoning === 'string' && result.reasoning ? result.reasoning : collected.reasoning
   );
   const sources = mergeSources(collected.sources, result?.sources);
   const images = mergeImages(collected.images, result?.images);
-  const finishReason = functionCalls.length
-    ? 'tool_calls'
-    : result?.finishReason || collected.finishReason;
+  const finishReason = result?.finishReason || collected.finishReason;
   const usage = buildEstimatedUsage({
     promptChars: params.promptChars,
     completionChars: content.length,
@@ -939,10 +842,6 @@ async function resolveChatCompletion(ctx, params) {
     images,
     usage,
     finishReason,
-    functionCalls: functionCalls.map((call) => ({
-      ...call,
-      ...(executed.find((item) => item.id === call.id) ? { result: executed.find((item) => item.id === call.id).result } : {})
-    })),
     collected,
     result
   };
@@ -950,7 +849,7 @@ async function resolveChatCompletion(ctx, params) {
 
 async function completeChatCompletion(ctx, params) {
   const resolved = await resolveChatCompletion(ctx, params);
-  const { content, reasoningText, sources, images, finishReason, functionCalls } = resolved;
+  const { content, reasoningText, sources, images, finishReason } = resolved;
   const model = params.resolved.id;
 
   // v2.31：写入会话历史（附 function calls）
@@ -960,18 +859,11 @@ async function completeChatCompletion(ctx, params) {
     reasoning: reasoningText,
     images,
     sources,
-    toolCalls: [
-      ...normalizeToolCalls({
-        toolCalls: [...(resolved.collected.toolCalls || []), ...((resolved.result && resolved.result.toolCalls) || [])],
-        approvals: (resolved.result && resolved.result.approvals) || [],
-        images
-      }),
-      ...functionCalls.map((call) => ({
-        name: call.function && call.function.name ? call.function.name : 'tool',
-        args: call.function ? call.function.arguments : undefined,
-        result: call.result !== undefined ? call.result : '等待客户端执行'
-      }))
-    ],
+    toolCalls: normalizeToolCalls({
+      toolCalls: [...(resolved.collected.toolCalls || []), ...((resolved.result && resolved.result.toolCalls) || [])],
+      approvals: (resolved.result && resolved.result.approvals) || [],
+      images
+    }),
     model
   });
   recordUsageOnLog(ctx, resolved.usage);
@@ -985,8 +877,7 @@ async function completeChatCompletion(ctx, params) {
     sources,
     images,
     finishReason,
-    usage: resolved.usage,
-    toolCalls: functionCalls
+    usage: resolved.usage
   });
   if (ctx.log.contextTrimmed) payload.context_trimmed = true;
   if (params.compactedInfo) {
@@ -996,62 +887,6 @@ async function completeChatCompletion(ctx, params) {
     payload.summary = params.compactedInfo;
   }
   ctx.json(200, payload);
-}
-
-/**
- * v2.39：带 function tools 的流式响应。
- * 上游无原生 tool_calls，因此先缓冲解析（必要时 MCP 多轮），再按 OpenAI chunk 形状回放。
- */
-async function streamBufferedChatCompletion(ctx, params) {
-  const resolved = await resolveChatCompletion(ctx, params);
-  const { content, reasoningText, sources, images, finishReason, functionCalls } = resolved;
-  const usage = resolved.usage;
-  const base = {
-    id: genId('chatcmpl-'),
-    object: 'chat.completion.chunk',
-    created: nowSec(),
-    model: params.resolved.id,
-    system_fingerprint: null
-  };
-  const writer = ctx.openSSE();
-  const emit = (delta, finish = null) => {
-    if (!writer.closed) writer.data({ ...base, choices: [{ index: 0, delta, logprobs: null, finish_reason: finish }] });
-  };
-
-  emit({ role: 'assistant', content: '' });
-  if (reasoningText) {
-    for (let index = 0; index < reasoningText.length; index += 200) {
-      emit({ reasoning_content: reasoningText.slice(index, index + 200) });
-    }
-  }
-  if (functionCalls.length) {
-    functionCalls.forEach((call, index) => {
-      emit({
-        tool_calls: [
-          {
-            index,
-            id: call.id,
-            type: 'function',
-            function: { name: call.function.name, arguments: call.function.arguments }
-          }
-        ]
-      });
-    });
-    emit({}, 'tool_calls');
-  } else {
-    const text = content || '';
-    for (let index = 0; index < text.length; index += 120) {
-      emit({ content: text.slice(index, index + 120) });
-    }
-    if (sources.length) emit({ annotations: buildAnnotations(sources), sources });
-    if (images.length) emit({ images: images.map(toChatImage) });
-    emit({}, finishReason);
-  }
-  if (params.streamOptions?.include_usage === true) {
-    writer.data({ ...base, choices: [], usage });
-  }
-  writer.data('[DONE]');
-  writer.end();
 }
 
 /**
@@ -1096,16 +931,6 @@ async function streamChatCompletion(ctx, params) {
   const created = nowSec();
   const model = params.resolved.id;
   const base = { id, object: 'chat.completion.chunk', created, model, system_fingerprint: null };
-
-  // v2.39：function tools 需要先解析（可能多轮 MCP），用缓冲模式回放 chunk
-  const functionCallingConfig = ctx.config?.tools?.functionCalling || {};
-  if (
-    Array.isArray(params.functionTools) &&
-    params.functionTools.length > 0 &&
-    functionCallingConfig.enabled !== false
-  ) {
-    return streamBufferedChatCompletion(ctx, params);
-  }
 
   let writer = null;
   const pendingChoices = [];

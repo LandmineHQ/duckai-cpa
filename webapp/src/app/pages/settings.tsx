@@ -45,12 +45,6 @@ interface FormState {
   imageGeneration: boolean;
   /** v2.36：允许上游使用「大致位置」（user-location），默认关闭 */
   location: boolean;
-  /** v2.39：网关级 function calling */
-  functionCallingEnabled: boolean;
-  functionCallingMode: 'client' | 'auto';
-  /** v2.39：MCP 工具服务器 */
-  mcpEnabled: boolean;
-  mcpServersJson: string;
   logLevel: string;
 }
 
@@ -75,10 +69,6 @@ const DEFAULT_FORM: FormState = {
   webSearch: true,
   imageGeneration: true,
   location: false,
-  functionCallingEnabled: true,
-  functionCallingMode: 'client',
-  mcpEnabled: false,
-  mcpServersJson: '[]',
   logLevel: 'info'
 };
 
@@ -147,10 +137,6 @@ function formFromConfig(config: Config, _fallbackModel?: string): FormState {
     webSearch: config.tools?.webSearch !== false,
     imageGeneration: config.tools?.imageGeneration !== false,
     location: config.tools?.location === true,
-    functionCallingEnabled: config.tools?.functionCalling?.enabled !== false,
-    functionCallingMode: config.tools?.functionCalling?.mode === 'auto' ? 'auto' : 'client',
-    mcpEnabled: config.tools?.mcp?.enabled === true,
-    mcpServersJson: JSON.stringify(config.tools?.mcp?.servers || [], null, 2),
     logLevel: config.logging?.level || 'info'
   };
 }
@@ -256,30 +242,7 @@ export function SettingsPage() {
                 }
               }
             : card === 'tools'
-              ? {
-                  tools: {
-                    webSearch: form.webSearch,
-                    imageGeneration: form.imageGeneration,
-                    location: form.location,
-                    functionCalling: {
-                      enabled: form.functionCallingEnabled,
-                      mode: form.functionCallingMode
-                    },
-                    mcp: {
-                      enabled: form.mcpEnabled,
-                      servers: (() => {
-                        let servers;
-                        try {
-                          servers = JSON.parse(form.mcpServersJson || '[]');
-                        } catch {
-                          throw new Error('MCP servers 不是合法 JSON');
-                        }
-                        if (!Array.isArray(servers)) throw new Error('MCP servers 必须是 JSON 数组');
-                        return servers;
-                      })()
-                    }
-                  }
-                }
+              ? { tools: { webSearch: form.webSearch, imageGeneration: form.imageGeneration, location: form.location } }
               : { logging: { level: form.logLevel } };
       const response = await apiPut<UpdateConfigResponse>('/config', body);
       if (response?.config) setForm(formFromConfig(response.config));
@@ -714,77 +677,6 @@ export function SettingsPage() {
                   checked={form.location}
                   onCheckedChange={(checked) => patch({ location: checked })}
                 />
-              </div>
-              <Separator />
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <Label htmlFor="settings-tool-function-calling">函数调用 tools.functionCalling.enabled</Label>
-                    <p className="text-[11px] text-muted-foreground">
-                      允许客户端传 OpenAI tools[].function；duck.ai 无原生 tools 通道，由网关注入提示词协议解析。
-                    </p>
-                  </div>
-                  <Switch
-                    id="settings-tool-function-calling"
-                    data-testid="settings-tool-function-calling"
-                    checked={form.functionCallingEnabled}
-                    onCheckedChange={(checked) => patch({ functionCallingEnabled: checked })}
-                  />
-                </div>
-                {form.functionCallingEnabled ? (
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="settings-tool-function-mode" className="shrink-0 text-[11px] text-muted-foreground">
-                      执行模式
-                    </Label>
-                    <Select
-                      value={form.functionCallingMode}
-                      onValueChange={(value) => patch({ functionCallingMode: value as 'client' | 'auto' })}
-                    >
-                      <SelectTrigger id="settings-tool-function-mode" data-testid="settings-tool-function-mode" className="h-8 w-64 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="client">client：返回 tool_calls，客户端执行</SelectItem>
-                        <SelectItem value="auto">auto：网关调用 MCP 工具后继续</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
-              </div>
-              <Separator />
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <Label htmlFor="settings-tool-mcp">MCP 工具 tools.mcp.enabled</Label>
-                    <p className="text-[11px] text-muted-foreground">
-                      auto 模式通过 MCP server（stdio / http）执行工具；修改服务器列表后需重启网关生效。
-                    </p>
-                  </div>
-                  <Switch
-                    id="settings-tool-mcp"
-                    data-testid="settings-tool-mcp"
-                    checked={form.mcpEnabled}
-                    onCheckedChange={(checked) => patch({ mcpEnabled: checked })}
-                  />
-                </div>
-                {form.mcpEnabled ? (
-                  <div className="space-y-1">
-                    <Label htmlFor="settings-tool-mcp-servers" className="text-[11px] text-muted-foreground">
-                      MCP servers（JSON 数组）
-                    </Label>
-                    <Textarea
-                      id="settings-tool-mcp-servers"
-                      data-testid="settings-tool-mcp-servers"
-                      value={form.mcpServersJson}
-                      onChange={(event) => patch({ mcpServersJson: event.target.value })}
-                      className="min-h-[120px] font-mono text-[11px]"
-                      placeholder={'[{"name":"fs","transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","C:\\data"]}]'}
-                    />
-                    <p className="text-[11px] text-muted-foreground">
-                      示例：stdio 需 name/command/args；http 需 name/transport:"http"/url。当前环境若禁止子进程，请使用 http MCP server。
-                    </p>
-                  </div>
-                ) : null}
               </div>
             </CardContent>
             <CardFooter className="justify-end pt-0">

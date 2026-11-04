@@ -127,12 +127,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   tools: {
     webSearch: true,
     imageGeneration: true,
-    location: false,
-    // v2.39：网关级 function calling（OpenAI tools[].function）——上游没有 tools schema 通道，
-    // 由网关把工具定义注入提示词并解析模型输出；mode=client 返回 tool_calls，auto 由网关执行 MCP 工具后继续。
-    functionCalling: { enabled: true, mode: 'client', maxRounds: 4 },
-    // v2.39：MCP（Model Context Protocol）工具服务器
-    mcp: { enabled: false, timeoutMs: 30000, servers: [] }
+    location: false
   }
 });
 
@@ -195,14 +190,7 @@ export const ADMIN_EDITABLE_PATHS = Object.freeze([
   'tools.webSearch',
   'tools.imageGeneration',
   // v2.36：是否允许上游使用「大致位置」（user-location）。默认不允许。
-  'tools.location',
-  // v2.39：网关级 function calling + MCP
-  'tools.functionCalling.enabled',
-  'tools.functionCalling.mode',
-  'tools.functionCalling.maxRounds',
-  'tools.mcp.enabled',
-  'tools.mcp.timeoutMs',
-  'tools.mcp.servers'
+  'tools.location'
 ]);
 
 /** Editable by prefix (arbitrary keys below the prefix). */
@@ -391,11 +379,7 @@ export const RESTART_REQUIRED_PATHS = Object.freeze([
   'duck.baseUrl',
   'duck.userAgent',
   'duck.challenge.engine',
-  'duck.challenge.refreshAheadMs',
-  // v2.39：MCP 服务器连接在启动时建立，变更后需重启网关
-  'tools.mcp.enabled',
-  'tools.mcp.servers',
-  'tools.mcp.timeoutMs'
+  'duck.challenge.refreshAheadMs'
 ]);
 
 const PLACEHOLDER_ADMIN_TOKENS = new Set(['', 'change-me-admin-token', 'changeme', 'admin']);
@@ -584,61 +568,6 @@ export function normalizeModelOverrides(raw) {
   return out;
 }
 
-function normalizeFunctionCallingTools(raw = {}) {
-  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  const mode = source.mode === 'auto' ? 'auto' : 'client';
-  const rounds = Number(source.maxRounds);
-  return {
-    enabled: source.enabled !== false,
-    mode,
-    maxRounds: Number.isFinite(rounds) ? Math.min(8, Math.max(0, Math.floor(rounds))) : 4
-  };
-}
-
-function normalizeMcpServer(raw, index) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const name =
-    typeof raw.name === 'string' && /^[a-zA-Z0-9_-]{1,32}$/.test(raw.name.trim())
-      ? raw.name.trim()
-      : `mcp${index + 1}`;
-  const transport = raw.transport === 'http' ? 'http' : 'stdio';
-  if (transport === 'http') {
-    if (typeof raw.url !== 'string' || !/^https?:\/\//i.test(raw.url.trim())) return null;
-    return {
-      name,
-      transport,
-      url: raw.url.trim(),
-      ...(raw.headers && typeof raw.headers === 'object' && !Array.isArray(raw.headers)
-        ? { headers: Object.fromEntries(Object.entries(raw.headers).filter(([k, v]) => typeof k === 'string' && typeof v === 'string').slice(0, 20)) }
-        : {})
-    };
-  }
-  if (typeof raw.command !== 'string' || !raw.command.trim()) return null;
-  return {
-    name,
-    transport,
-    command: raw.command.trim(),
-    args: Array.isArray(raw.args) ? raw.args.filter((item) => typeof item === 'string').slice(0, 40) : [],
-    ...(raw.env && typeof raw.env === 'object' && !Array.isArray(raw.env)
-      ? { env: Object.fromEntries(Object.entries(raw.env).filter(([k, v]) => typeof k === 'string' && typeof v === 'string').slice(0, 40)) }
-      : {}),
-    ...(typeof raw.cwd === 'string' && raw.cwd.trim() ? { cwd: raw.cwd.trim() } : {})
-  };
-}
-
-function normalizeMcpTools(raw = {}) {
-  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  const timeout = Number(source.timeoutMs);
-  const servers = Array.isArray(source.servers)
-    ? source.servers.map((server, index) => normalizeMcpServer(server, index)).filter(Boolean).slice(0, 20)
-    : [];
-  return {
-    enabled: source.enabled === true,
-    timeoutMs: Number.isFinite(timeout) ? Math.min(120000, Math.max(1000, Math.floor(timeout))) : 30000,
-    servers
-  };
-}
-
 export function normalizeConfig(raw = {}) {
   const source = isPlainObject(raw) ? deepMerge(DEFAULT_CONFIG, raw) : deepClone(DEFAULT_CONFIG);
 
@@ -751,9 +680,7 @@ export function normalizeConfig(raw = {}) {
       webSearch: toBoolean(tools.webSearch, true),
       imageGeneration: toBoolean(tools.imageGeneration, true),
       // v2.36：定位能力（对应 duck.ai bundle 的 canUseApproxLocation）；默认不允许
-      location: toBoolean(tools.location, false),
-      functionCalling: normalizeFunctionCallingTools(tools.functionCalling),
-      mcp: normalizeMcpTools(tools.mcp)
+      location: toBoolean(tools.location, false)
     }
   };
 }
@@ -812,45 +739,12 @@ function assertEditableValue(dotted, value) {
     case 'tools.webSearch':
     case 'tools.imageGeneration':
     case 'tools.location':
-    case 'tools.functionCalling.enabled':
-    case 'tools.mcp.enabled':
     case 'duck.allowPaidModels':
     case 'identity.enabled':
     case 'identity.durableStream.enabled':
     case 'identity.sync.enabled':
       if (typeof value !== 'boolean') fail('boolean');
       return;
-    case 'tools.functionCalling.mode':
-      if (value !== 'client' && value !== 'auto') fail('"client" or "auto"');
-      return;
-    case 'tools.functionCalling.maxRounds': {
-      const rounds = Number(value);
-      if (!Number.isInteger(rounds) || rounds < 0 || rounds > 8) fail('integer 0-8');
-      return;
-    }
-    case 'tools.mcp.timeoutMs': {
-      const timeout = Number(value);
-      if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 120000) fail('integer 1000-120000');
-      return;
-    }
-    case 'tools.mcp.servers': {
-      if (!Array.isArray(value)) fail('array');
-      if (value.length > 20) fail('array (max 20 servers)');
-      const seen = new Set();
-      for (const server of value) {
-        if (!server || typeof server !== 'object' || Array.isArray(server)) fail('server objects');
-        const name = typeof server.name === 'string' ? server.name.trim() : '';
-        if (!/^[a-zA-Z0-9_-]{1,32}$/.test(name)) fail('server.name (a-z0-9_- max 32)');
-        if (seen.has(name)) fail('unique server names');
-        seen.add(name);
-        if (server.transport !== 'http') {
-          if (typeof server.command !== 'string' || !server.command.trim()) fail('server.command (stdio)');
-        } else if (typeof server.url !== 'string' || !/^https?:\/\//i.test(server.url.trim())) {
-          fail('server.url (http)');
-        }
-      }
-      return;
-    }
     case 'identity.deviceName':
       if (value !== null && (typeof value !== 'string' || value.length > 200)) fail('string (max 200) or null');
       return;

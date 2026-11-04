@@ -562,8 +562,6 @@ export function createServer(options = {}) {
       sessionKey: null,
       identityRoute: null,
       history,
-      // v2.39：MCP 工具管理器（function calling auto 模式）
-      mcp: options.mcp || null,
       // v2.31：查询身份额度时走同一代理
       usageFetch: proxy ? (url, init) => proxy.fetch(url, init) : null,
       log: {
@@ -1148,11 +1146,6 @@ export function createServer(options = {}) {
 
   /** Graceful shutdown: stop accepting, close queue, flush sessions/store. */
   server.closeGracefully = async ({ timeoutMs = 5000 } = {}) => {
-    try {
-      if (options.mcp && typeof options.mcp.close === 'function') await options.mcp.close();
-    } catch {
-      // MCP 关闭失败不影响主流程
-    }
     try {
       queue.close?.();
     } catch {

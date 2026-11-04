@@ -480,3 +480,14 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 5 | 生图后空消息 | ✅ 修复 | `/v1/responses` 只有图片时补 `message` item + `output_text`「已生成 N 张图片（base64 位于 image_generation_call.result 字段）」；实测 round1 有文本、round2 继续对话 200 |
 | 6 | client tools 调研 | ✅ | `docs/CLIENT-TOOLS-RESEARCH.md`：真正自定义 client tools 不可行（上游固定 supportedTools + loadUserSkill 固定契约，实验开关默认 false）；只能走网关 function calling + MCP（已实现） |
 | 7 | 回归 | ✅ | `npm test` **438/438**、`build-check` 16/16、`page-check` 22/22（首次 compact 因上游 418 冷却失败，重跑通过） |
+## 2.36 v2.42 移除自定义 tools（网关级 function calling + MCP）
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 删除前端「函数调用」开关 / 执行模式 | ✅ | 设置 → 工具卡片仅保留 联网搜索 / 图片生成 / 允许定位 三个开关（截图 `admin-settings-tools-clean.png`） |
+| 2 | 删除前端 MCP 开关与 servers JSON | ✅ | `settings-tool-mcp*` / `settings-tool-function*` testid 均不存在 |
+| 3 | 删除后端 function calling | ✅ | 删除 `src/openai/function-calling.js`；`models.js` 不再解析 `type:"function"`；`chat.js` 不再注入协议/返回 tool_calls；`role:"tool"` 返回 400 |
+| 4 | 删除 MCP 能力 | ✅ | 删除 `src/tools/mcp-client.js`、`src/tools/`、index/server 的 MCP 装配与 `ctx.mcp` |
+| 5 | 删除配置项 | ✅ | `tools.functionCalling.*` / `tools.mcp.*` 从默认配置、可编辑路径、校验、重启路径、`data/config.json` 全部移除 |
+| 6 | 保留内置 tools | ✅ | `tools.webSearch` / `tools.imageGeneration` / `tools.location` 与 `/v1` 的 web_search/image_generation 行为不变；function tool 默认静默丢弃、strict 400 `unsupported_tool` |
+| 7 | 回归 | ✅ | `npm test` **429/429**（删除 9 个 function calling/MCP 用例）、`build-check` 16/16、`page-check` 22/22 |

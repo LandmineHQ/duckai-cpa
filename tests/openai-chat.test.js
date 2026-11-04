@@ -511,7 +511,7 @@ test('工具校验：默认策略丢弃不可用工具；dropUnsupported=false �
     }
   );
 
-  // 5) strict：不支持的 tool 类型 → 400 unsupported_tool（function 已由网关支持，用 code_interpreter 验证）
+  // 5) strict：OpenAI function tool（v2.39 曾支持，v2.42 已移除）→ 400 unsupported_tool
   const duck5 = newDuck();
   await withServer(
     { duck: duck5, config: makeConfig({ ...ADMIN, models: { tools: { dropUnsupported: false } } }) },
@@ -521,13 +521,28 @@ test('工具校验：默认策略丢弃不可用工具；dropUnsupported=false �
         body: {
           model: 'gpt-6-luna',
           messages: [{ role: 'user', content: 'x' }],
-          tools: [{ type: 'code_interpreter' }]
+          tools: [{ type: 'function', function: { name: 'f' } }]
         }
       });
       assert.equal(res.status, 400);
       assert.equal(res.json.error.code, 'unsupported_tool');
     }
   );
+
+  // 6) 默认：function tool 被静默丢弃（不触达上游工具开关），请求仍 200
+  const duck6 = newDuck();
+  await withServer({ duck: duck6, config: makeConfig({ ...ADMIN }) }, async ({ baseUrl }) => {
+    const res = await v1Request(baseUrl, '/v1/chat/completions', {
+      method: 'POST',
+      body: {
+        model: 'gpt-6-luna',
+        messages: [{ role: 'user', content: 'x' }],
+        tools: [{ type: 'function', function: { name: 'f' } }, { type: 'web_search' }]
+      }
+    });
+    assert.equal(res.status, 200, res.text);
+    assert.equal(duck6.calls.chat[0].params.webSearch, true, '仍支持内置 web_search');
+  });
 });
 
 test('每模型工具开关：关闭 web_search 后请求不再联网；strict 时报错', async () => {
