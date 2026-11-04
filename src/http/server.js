@@ -721,7 +721,11 @@ export function createServer(options = {}) {
             identityId: entry.identityId ?? ctx.log.identityId ?? null,
             identityLabel: entry.identityLabel ?? ctx.log.identityLabel ?? null,
             sessionKey: entry.sessionKey ?? ctx.log.sessionKey ?? ctx.sessionKey ?? null,
-            requestId: ctx.requestId || null
+            requestId: ctx.requestId || null,
+            clientTools: ctx.log.clientTools ?? null,
+            protocolInjected: Boolean(ctx.log.protocolInjected),
+            upstreamMessageCount: ctx.log.upstreamMessageCount ?? null,
+            conversationChain: ctx.log.conversationChain ?? null
           });
         } catch (error) {
           logger.warn?.('failed to record admin-test upstream log', { error: error.message });
@@ -1084,7 +1088,11 @@ export function createServer(options = {}) {
             identityId: ctx.log.identityId ?? null,
             identityLabel: ctx.log.identityLabel ?? null,
             sessionKey: ctx.log.sessionKey ?? ctx.sessionKey ?? null,
-            requestId: ctx.requestId || null
+            requestId: ctx.requestId || null,
+            clientTools: ctx.log.clientTools ?? null,
+            protocolInjected: Boolean(ctx.log.protocolInjected),
+            upstreamMessageCount: ctx.log.upstreamMessageCount ?? null,
+            conversationChain: ctx.log.conversationChain ?? null
           });
         } else if (ctx.log.kind === 'admin') {
           store.recordAdmin?.({

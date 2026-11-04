@@ -443,6 +443,7 @@ export function recordHistoryOnLog(
       model: model || ctx.log?.model || null,
       systemPrompt: typeof ctx.systemPromptSnapshot === 'string' ? ctx.systemPromptSnapshot : null,
       messages: normalized,
+      injection: ctx.historyInjection || null,
       ts: Date.now()
     });
   } catch {
@@ -877,6 +878,18 @@ export async function handleChatCompletions(req, res, ctx) {
     ctx.log.conversationChain = storedConversation ? 'rebuild' : 'stateless';
   }
   ctx.historyMessages = historyMessages;
+  const protocolText = clientTools.length ? buildToolProtocol(clientTools) : '';
+  const firstInjectedUser = duckMessages.find((message) => message && message.role === 'user');
+  ctx.historyInjection = {
+    injected: Boolean(protocolText),
+    clientTools: clientTools.map((tool) => tool.name),
+    protocolText,
+    firstUserContent: firstInjectedUser && typeof firstInjectedUser.content === 'string' ? firstInjectedUser.content : '',
+    upstreamMessageCount: duckMessages.length,
+    chain: ctx.log.conversationChain || null
+  };
+  ctx.log.protocolInjected = Boolean(protocolText);
+  ctx.log.upstreamMessageCount = duckMessages.length;
   ctx.chatSession = {
     enabled: conversationMode === 'server' && Boolean(responseStore?.enabled && ctx.sessionKey),
     store: responseStore,

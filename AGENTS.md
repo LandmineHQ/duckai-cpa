@@ -121,6 +121,11 @@ data/                运行时数据（不入库；含敏感文件）
   不要改回最后一条 user：下一轮协议消失会导致历史文本变化、cache miss）。配置 `tools.clientFunctionCalling.enabled`（默认 true）。
 - **上下文前缀稳定（v2.45/v2.47）**：客户端工具协议固定在第一条 user；历史文本/工具调用/图片映射必须确定性序列化，
   跨轮不改写旧消息。压缩摘要（`chat_summaries`）和 context-guard 裁剪会改变前缀，启用后无法保证 cache 命中。
+- **提示词注入可观测（v2.48）**：工具协议注入是上游临时消息，不写进会话历史的 messages；
+  但 `history` 表新增 `injection_json`（`{injected,clientTools,protocolText,firstUserContent,upstreamMessageCount,chain}`），
+  会话历史详情可查看完整协议与注入后的第一条 user；upstream 日志新增 `clientTools/protocolInjected/upstreamMessageCount/conversationChain`；
+  `GET /admin/api/history/:id/upstream` 返回脱敏后的真实 upstream messages（图片 base64 替换为 `[image data ...]`）。
+  手动 `/v1/compact` 现在会把 assistant.tool_calls / role:"tool" 编码成文本再摘要，不再丢工具轨迹。
 - **服务端会话 / response chaining（v2.46/v2.47）**：
   - `/v1/responses`：支持官方 `previous_response_id`；`responses` 表保存 canonical conversation、
     **精确 upstream 前缀（duckMessages，含协议/图片）**、output items、toolsHash；下一轮只发新 input，

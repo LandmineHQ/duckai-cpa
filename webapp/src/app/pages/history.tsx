@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, History, Loader2, RefreshCw, Trash2, User } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Code2, History, Loader2, RefreshCw, Server, Trash2, User } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { apiDelete, apiGet, apiPut, ApiError } from '@/app/lib/api';
@@ -9,10 +9,11 @@ import { ErrorBanner } from '@/app/components/error-banner';
 import { EmptyState } from '@/app/components/empty-state';
 import { ChatMessageBubble } from '@/app/components/chat-message';
 import { CopyButton } from '@/app/components/copy-button';
-import type { SessionMessage } from '@/app/lib/types';
+import type { HistoryInjection, HistoryUpstreamResponse, SessionMessage } from '@/app/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
@@ -73,6 +74,8 @@ interface HistoryDetail {
   title: string;
   model: string | null;
   systemPrompt: string | null;
+  /** v2.48：客户端工具协议注入快照（旧记录或未捕获时为 null）。 */
+  injection?: HistoryInjection | null;
   messages: HistoryMessage[];
   messageCount: number;
   createdAt: number;
@@ -93,6 +96,11 @@ const ROLE_LABEL: Record<string, string> = {
   tool: '工具'
 };
 
+const UPSTREAM_SOURCE_LABEL: Record<string, string> = {
+  conversation_state: 'conversation_state（服务端会话状态）',
+  response: 'response（最近一次响应记录）'
+};
+
 function formatBytes(bytes: number): string {
   const value = Number(bytes) || 0;
   if (value < 1024) return `${value} B`;
@@ -111,6 +119,11 @@ export function HistoryPage() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [retentionDays, setRetentionDays] = useState('30');
   const [savingRetention, setSavingRetention] = useState(false);
+  // v2.48：上游请求调试视图 + 提示词注入面板折叠状态
+  const [upstreamOpen, setUpstreamOpen] = useState(false);
+  const [upstreamLoading, setUpstreamLoading] = useState(false);
+  const [upstream, setUpstream] = useState<HistoryUpstreamResponse | null>(null);
+  const [injectionOpen, setInjectionOpen] = useState(true);
 
   const identityLabel = useCallback(
     (identityId: string | null) => {
@@ -150,6 +163,9 @@ export function HistoryPage() {
 
   const loadDetail = useCallback(async (id: string) => {
     setSelectedId(id);
+    setUpstreamOpen(false);
+    setUpstream(null);
+    setInjectionOpen(true);
     setDetailLoading(true);
     try {
       const result = await apiGet<{ item: HistoryDetail }>(`/history/${encodeURIComponent(id)}`);
@@ -160,6 +176,21 @@ export function HistoryPage() {
       toast.error((err as Error)?.message || '加载会话详情失败');
     } finally {
       setDetailLoading(false);
+    }
+  }, []);
+
+  /** v2.48：查看该会话最近一次实际发给上游的请求（脱敏 JSON，仅本地调试）。 */
+  const loadUpstream = useCallback(async (id: string) => {
+    setUpstreamLoading(true);
+    try {
+      const result = await apiGet<HistoryUpstreamResponse>(`/history/${encodeURIComponent(id)}/upstream`);
+      setUpstream(result);
+      setUpstreamOpen(true);
+    } catch (err) {
+      if ((err as ApiError)?.handled) return;
+      toast.error((err as Error)?.message || '加载上游请求失败');
+    } finally {
+      setUpstreamLoading(false);
     }
   }, []);
 
@@ -353,18 +384,35 @@ export function HistoryPage() {
                 </CardDescription>
               </div>
               {detail ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => {
-                    const item = groups.flatMap((group) => group.items).find((entry) => entry.id === detail.id);
-                    if (item) void removeConversation(item);
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  删除记录
-                </Button>
+                <div className="flex flex-wrap items-center gap-1">
+                  {/* v2.48：查看该会话最近一次实际发给上游的请求（Dialog + 脱敏 JSON） */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void loadUpstream(detail.id)}
+                    disabled={upstreamLoading}
+                    data-testid="history-view-upstream"
+                  >
+                    {upstreamLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Server className="h-3.5 w-3.5" />
+                    )}
+                    查看上游请求
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => {
+                      const item = groups.flatMap((group) => group.items).find((entry) => entry.id === detail.id);
+                      if (item) void removeConversation(item);
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    删除记录
+                  </Button>
+                </div>
               ) : null}
             </div>
           </CardHeader>
@@ -386,6 +434,79 @@ export function HistoryPage() {
                       {detail.systemPrompt}
                     </pre>
                   </details>
+                ) : null}
+                {/* v2.48：客户端工具协议注入快照（完整 protocolText / 实际发给上游的第一条 user） */}
+                {detail.injection ? (
+                  <div className="rounded-lg border bg-muted/20" data-testid="history-injection">
+                    <div className="flex flex-wrap items-center gap-1.5 p-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-1.5 text-xs"
+                        aria-expanded={injectionOpen}
+                        onClick={() => setInjectionOpen((previous) => !previous)}
+                      >
+                        <ChevronDown
+                          className={`h-3.5 w-3.5 transition-transform ${injectionOpen ? '' : '-rotate-90'}`}
+                        />
+                        <Code2 className="h-3.5 w-3.5" />
+                        提示词注入
+                      </Button>
+                      <Badge
+                        variant={detail.injection.injected ? 'success' : 'muted'}
+                        className="px-1.5 py-0 text-[10px]"
+                        data-testid="history-injection-badge"
+                      >
+                        {detail.injection.injected ? '已注入' : '未注入'}
+                      </Badge>
+                      {detail.injection.clientTools.map((tool) => (
+                        <Badge key={tool} variant="outline" className="px-1.5 py-0 font-mono text-[10px]">
+                          {tool}
+                        </Badge>
+                      ))}
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        upstreamMessageCount={detail.injection.upstreamMessageCount ?? '—'} · chain=
+                        {detail.injection.chain || '—'}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        · 采集于 {formatDateTime(detail.injection.at)}
+                      </span>
+                    </div>
+                    {injectionOpen ? (
+                      <div className="space-y-2 border-t p-2">
+                        <details
+                          className="rounded border bg-background/60 p-2"
+                          data-testid="history-injection-protocol"
+                        >
+                          <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">
+                            协议文本 protocolText（{detail.injection.protocolText.length} 字符，完整显示不截断）
+                          </summary>
+                          <pre className="mt-1.5 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 text-[11px]">
+                            {detail.injection.protocolText || '（空）'}
+                          </pre>
+                        </details>
+                        <details
+                          className="rounded border bg-background/60 p-2"
+                          data-testid="history-injection-first-user"
+                        >
+                          <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">
+                            实际发给上游的第一条 user（{detail.injection.firstUserContent.length} 字符，完整显示不截断）
+                          </summary>
+                          <pre className="mt-1.5 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 text-[11px]">
+                            {detail.injection.firstUserContent || '（空）'}
+                          </pre>
+                        </details>
+                        <p className="text-[10px] text-muted-foreground">
+                          upstreamMessageCount={detail.injection.upstreamMessageCount ?? '—'} · chain=
+                          {detail.injection.chain || '—'}
+                          {detail.injection.clientTools.length
+                            ? ` · 工具：${detail.injection.clientTools.join(', ')}`
+                            : ' · 无客户端工具'}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
                 {/* v2.37：与「连接测试」共用 ChatMessageBubble（工具调用 / 图片 / 思考 / 来源） */}
                 <div className="space-y-2" data-testid="history-messages">
@@ -414,6 +535,39 @@ export function HistoryPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* v2.48：上游请求调试 Dialog（GET /admin/api/history/:id/upstream，JSON 已脱敏） */}
+      <Dialog open={upstreamOpen} onOpenChange={setUpstreamOpen}>
+        <DialogContent className="max-w-3xl" data-testid="history-upstream-dialog">
+          <DialogHeader>
+            <DialogTitle>查看上游请求</DialogTitle>
+            <DialogDescription>
+              {upstream
+                ? `${UPSTREAM_SOURCE_LABEL[upstream.source ?? ''] || upstream.source || '无来源'} · ${
+                    upstream.messageCount
+                  } 条消息 · 会话 ${upstream.sessionKey || '—'} · 提示词注入=${
+                    upstream.injection?.injected ? '已注入' : '未注入'
+                  }`
+                : '正在加载…'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            仅本地调试；图片 base64 已脱敏为 [image data ...]。
+          </div>
+          <pre
+            className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/30 p-3 font-mono text-[11px]"
+            data-testid="history-upstream-json"
+          >
+            {upstream ? JSON.stringify(upstream.messages, null, 2) : '加载中…'}
+          </pre>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUpstreamOpen(false)}>
+              关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

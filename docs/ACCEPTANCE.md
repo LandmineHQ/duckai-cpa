@@ -528,3 +528,12 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 4 | 真实上游验证 | ✅ | Chat 会话：记住 24680 → 第二轮答 24680 → delta 第三轮答 24681；冲突 409；Responses 链：13579；图片链：回放后答“红色” |
 | 5 | 存储/清理 | ✅ | 新表 `conversation_state`；`responses`/`conversation_state` 按 30 分钟清理过期记录；`store:false` 不保存 |
 | 6 | 回归 | ✅ | `npm test` **456/456**、`build-check` 16/16、`page-check` 22/22 |
+## 2.41 v2.48 提示词注入可观测 + 手动压缩工具轨迹
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 会话历史显示完整提示词注入 | ✅ | `history.injection_json` + 详情 `injection`（protocolText / firstUserContent / clientTools / chain）；历史详情页可展开查看 |
+| 2 | 日志体现注入 | ✅ | upstream 日志字段 `clientTools/protocolInjected/upstreamMessageCount/conversationChain`；日志页显示工具协议徽章 |
+| 3 | 上游请求调试视图 | ✅ | `GET /admin/api/history/:id/upstream` 返回真实 upstream messages；图片 base64 脱敏为 `[image data ...]` |
+| 4 | 手动压缩保留工具轨迹 | ✅ | `/v1/compact` 的 `normalizeCompactMessages` 编码 `[tool_call]` / `[tool_result]`，图片标记 `[图片 xN]` |
+| 5 | 回归 | ✅ | `npm test` **460/460**、`build-check` 16/16、`page-check` 22/22 |

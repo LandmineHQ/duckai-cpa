@@ -8,6 +8,7 @@
  */
 
 import { OpenAIError } from './errors.js';
+import { formatToolCallsForHistory, formatToolResult } from './tool-protocol.js';
 import {
   COMPACTION_MODELS as DUCK_COMPACTION_MODELS,
   countPairs as duckCountPairs,
@@ -418,21 +419,47 @@ export function normalizeCompactMessages(rawMessages) {
     if (!message || typeof message !== 'object') continue;
     const role = String(message.role || '').toLowerCase();
     let text = '';
+    let imageCount = 0;
     if (typeof message.content === 'string') {
       text = message.content;
     } else if (Array.isArray(message.content)) {
-      text = message.content
-        .filter((part) => part && (part.type === 'text' || part.type === 'input_text' || part.type === 'output_text'))
-        .map((part) => String(part.text || ''))
-        .join('\n');
+      for (const part of message.content) {
+        if (!part || typeof part !== 'object') continue;
+        if (part.type === 'text' || part.type === 'input_text' || part.type === 'output_text') {
+          text += String(part.text || '');
+        } else if (part.type === 'image_url' || part.type === 'input_image') {
+          imageCount += 1;
+        }
+      }
     }
-    if (!text.trim()) continue;
+    if (Array.isArray(message.images)) imageCount += message.images.length;
+
+    // v2.48：手动压缩不再丢弃工具轨迹（assistant.tool_calls / role:"tool"）
+    if (role === 'tool' || role === 'function') {
+      const formatted = formatToolResult({ name: message.name, result: message.content });
+      if (formatted.trim()) messages.push({ role: 'user', content: formatted });
+      continue;
+    }
+    if (role === 'assistant') {
+      const toolText = formatToolCallsForHistory(message.tool_calls);
+      const combined = [text, toolText].filter((part) => part && String(part).trim()).join('\n');
+      if (!combined.trim() && !imageCount) continue;
+      messages.push({
+        role: 'assistant',
+        content: [combined, imageCount ? `[图片 x${imageCount}]` : ''].filter(Boolean).join('\n')
+      });
+      continue;
+    }
+    if (!text.trim() && !imageCount) continue;
     if (role === 'system' || role === 'developer') {
       systemParts.push(text.trim());
       continue;
     }
-    if (role !== 'user' && role !== 'assistant') continue;
-    messages.push({ role, content: text });
+    if (role !== 'user') continue;
+    messages.push({
+      role: 'user',
+      content: [text, imageCount ? `[图片 x${imageCount}]` : ''].filter(Boolean).join('\n')
+    });
   }
   return { messages, systemPrompt: systemParts.join('\n\n') };
 }

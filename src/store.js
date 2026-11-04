@@ -953,6 +953,20 @@ export function createStore(options = {}) {
         // v2.33：会话标识与请求 id，方便在日志里定位「哪个会话 / 哪次请求」用了哪个身份
         ...(entry.sessionKey ? { sessionKey: String(entry.sessionKey).slice(0, 200) } : {}),
         ...(entry.requestId ? { requestId: String(entry.requestId).slice(0, 64) } : {}),
+        // v2.48：工具协议注入元数据（日志页可验证）
+        ...(Array.isArray(entry.clientTools) && entry.clientTools.length
+          ? {
+              clientTools: entry.clientTools
+                .filter((name) => typeof name === 'string' && name)
+                .slice(0, 64)
+                .map((name) => name.slice(0, 64))
+            }
+          : {}),
+        ...(entry.protocolInjected === true ? { protocolInjected: true } : {}),
+        ...(Number.isFinite(Number(entry.upstreamMessageCount))
+          ? { upstreamMessageCount: Math.max(0, Math.trunc(Number(entry.upstreamMessageCount))) }
+          : {}),
+        ...(entry.conversationChain ? { conversationChain: String(entry.conversationChain).slice(0, 64) } : {}),
         ...(entry.tokens && typeof entry.tokens === 'object'
           ? {
               tokens: {

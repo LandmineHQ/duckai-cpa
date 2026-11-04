@@ -308,7 +308,32 @@ export function LogsPage() {
                     <TableCell className="max-w-[200px] truncate font-mono text-xs" title={item.endpoint}>
                       {item.endpoint}
                     </TableCell>
-                    <TableCell className="max-w-[150px] truncate font-mono text-xs">{item.model ?? '—'}</TableCell>
+                    <TableCell className="max-w-[150px]">
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        <span className="truncate font-mono text-xs">{item.model ?? '—'}</span>
+                        {item.protocolInjected ? (
+                          <Badge
+                            variant="info"
+                            className="w-fit max-w-full px-1.5 py-0 text-[9px] font-normal"
+                            title={[
+                              `工具协议注入${item.clientTools && item.clientTools.length ? `：${item.clientTools.join(', ')}` : ''}`,
+                              item.conversationChain ? `chain=${item.conversationChain}` : null,
+                              Number.isFinite(item.upstreamMessageCount)
+                                ? `upstreamMessageCount=${item.upstreamMessageCount}`
+                                : null
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                            data-testid={`log-protocol-${item.id ?? index}`}
+                          >
+                            <span className="truncate">
+                              工具协议
+                              {item.clientTools && item.clientTools.length ? ` · ${item.clientTools.join(',')}` : ''}
+                            </span>
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </TableCell>
                     <TableCell data-testid={`log-session-${item.id ?? index}`}>
                       <div className="flex max-w-[240px] flex-col gap-0.5">
                         <span

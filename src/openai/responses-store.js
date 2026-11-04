@@ -163,6 +163,23 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       };
     },
 
+    async getLatestBySession(sessionKey) {
+      if (!enabled || !db || typeof sessionKey !== 'string' || !sessionKey) return null;
+      let row;
+      try {
+        row = db.db
+          .prepare(
+            'SELECT id FROM responses WHERE session_key = ? ORDER BY created_at DESC LIMIT 1'
+          )
+          .get(sessionKey);
+      } catch (error) {
+        logger?.warn?.('responses store: getLatestBySession failed', { error: error.message });
+        return null;
+      }
+      if (!row) return null;
+      return this.get(row.id);
+    },
+
     async getConversation(sessionKey) {
       if (!enabled || !db || typeof sessionKey !== 'string' || !sessionKey) return null;
       let row;

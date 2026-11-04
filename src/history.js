@@ -56,6 +56,27 @@ function messageText(message) {
   return '';
 }
 
+function normalizeInjection(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const clientTools = Array.isArray(raw.clientTools)
+    ? raw.clientTools.filter((name) => typeof name === 'string' && name).slice(0, 64)
+    : [];
+  const protocolText = typeof raw.protocolText === 'string' ? raw.protocolText.slice(0, 30000) : '';
+  const firstUserContent =
+    typeof raw.firstUserContent === 'string' ? raw.firstUserContent.slice(0, 60000) : '';
+  return {
+    injected: raw.injected === true || Boolean(protocolText),
+    clientTools,
+    protocolText,
+    firstUserContent,
+    upstreamMessageCount: Number.isFinite(Number(raw.upstreamMessageCount))
+      ? Math.max(0, Math.trunc(Number(raw.upstreamMessageCount)))
+      : null,
+    chain: typeof raw.chain === 'string' && raw.chain ? raw.chain.slice(0, 64) : null,
+    at: Number.isFinite(raw.at) ? raw.at : Date.now()
+  };
+}
+
 function titleFrom(messages) {
   const firstUser = (messages || []).find((message) => message && message.role === 'user');
   const text = messageText(firstUser).replace(/\s+/g, ' ').trim();
@@ -160,6 +181,8 @@ export async function createHistoryStore({ dataDir = 'data', config = null, logg
           ? entry.systemPrompt.slice(0, MAX_MESSAGE_CHARS)
           : null;
       const model = typeof entry.model === 'string' && entry.model ? entry.model : null;
+      const injection = normalizeInjection(entry.injection);
+      const injectionJson = injection ? JSON.stringify(injection) : null;
 
       const existing = db.db
         .prepare('SELECT id, created_at FROM history WHERE identity_id IS ? AND session_key = ?')
@@ -168,14 +191,14 @@ export async function createHistoryStore({ dataDir = 'data', config = null, logg
       const createdAt = existing?.created_at || ts;
       db.db
         .prepare(
-          `INSERT INTO history(id, identity_id, session_key, title, model, system_prompt, messages_json, message_count, created_at, updated_at, size_bytes)
-           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO history(id, identity_id, session_key, title, model, system_prompt, messages_json, injection_json, message_count, created_at, updated_at, size_bytes)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              title = excluded.title, model = excluded.model, system_prompt = excluded.system_prompt,
-             messages_json = excluded.messages_json, message_count = excluded.message_count,
-             updated_at = excluded.updated_at, size_bytes = excluded.size_bytes`
+             messages_json = excluded.messages_json, injection_json = excluded.injection_json,
+             message_count = excluded.message_count, updated_at = excluded.updated_at, size_bytes = excluded.size_bytes`
         )
-        .run(id, identityId, sessionKey, title, model, systemPrompt, payload, normalized.length, createdAt, ts, sizeBytes);
+        .run(id, identityId, sessionKey, title, model, systemPrompt, payload, injectionJson, normalized.length, createdAt, ts, sizeBytes);
       // 更新身份标签快照
       if (identityId && typeof entry.identityLabel === 'string' && entry.identityLabel) {
         db.db.prepare('UPDATE history SET identity_id = ? WHERE id = ?').run(identityId, id);
@@ -236,6 +259,14 @@ export async function createHistoryStore({ dataDir = 'data', config = null, logg
         model: row.model,
         systemPrompt: row.system_prompt,
         messages: Array.isArray(messages) ? messages : [],
+        injection: (() => {
+          if (!row.injection_json) return null;
+          try {
+            return normalizeInjection(JSON.parse(row.injection_json));
+          } catch {
+            return null;
+          }
+        })(),
         messageCount: row.message_count,
         createdAt: row.created_at,
         updatedAt: row.updated_at,

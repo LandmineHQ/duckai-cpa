@@ -1463,3 +1463,51 @@ cooldownScope = entity | account
 - `conversation_state` 表：Chat Completions 会话（同结构）；
 - 精确前缀复用：旧消息逐字节不变；工具协议/图片压缩只处理一次；
 - 工具列表或 system prompt 变化时按 canonical 重建（cache miss 可接受）。
+## 42. 提示词注入可观测与上游调试视图（v2.48）
+
+### 42.1 会话历史注入元数据
+
+`GET /admin/api/history/:id` 的 `item.injection`：
+
+```json
+{
+  "injected": true,
+  "clientTools": ["read_file"],
+  "protocolText": "[工具调用协议]…",
+  "firstUserContent": "原始用户问题\n\n[工具调用协议]…",
+  "upstreamMessageCount": 3,
+  "chain": "prefix-reuse",
+  "at": 1790000000000
+}
+```
+
+- 注入文本只保存在 `history.injection_json`，不污染 `messages_json`；
+- 历史详情页会显示完整 `protocolText` / `firstUserContent`（可折叠）。
+
+### 42.2 上游请求调试视图
+
+`GET /admin/api/history/:id/upstream`：
+
+```json
+{
+  "ok": true,
+  "sessionKey": "sess_xxx",
+  "source": "conversation_state | response | null",
+  "updatedAt": 1790000000000,
+  "messageCount": 3,
+  "injection": { ... },
+  "messages": [ /* 真实 upstream messages，已脱敏 */ ]
+}
+```
+
+- 图片 data URL 替换为 `[image data image/png, N chars]`；字符串超过 20000 字符截断；
+- 仅本地管理 API（admin token）可访问，用于排查注入/图片/工具历史。
+
+### 42.3 日志字段
+
+upstream 日志新增：`clientTools`、`protocolInjected`、`upstreamMessageCount`、`conversationChain`。
+
+### 42.4 手动压缩
+
+`POST /v1/compact` 会把 `assistant.tool_calls` 编码为 `[tool_call] …`、`role:"tool"` 编码为 `[tool_result] …` 后再摘要，
+不再丢失工具轨迹；图片以 `[图片 xN]` 标记。

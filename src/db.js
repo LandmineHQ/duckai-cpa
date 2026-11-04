@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS history (
   model TEXT,
   system_prompt TEXT,
   messages_json TEXT NOT NULL,
+  injection_json TEXT,
   message_count INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
@@ -182,6 +183,12 @@ export async function openDatabase(options = {}) {
     }
     if (!responseColumns.has('tools_hash')) {
       db.exec('ALTER TABLE responses ADD COLUMN tools_hash TEXT');
+    }
+    const historyColumns = new Set(
+      db.prepare('PRAGMA table_info(history)').all().map((column) => column.name)
+    );
+    if (!historyColumns.has('injection_json')) {
+      db.exec('ALTER TABLE history ADD COLUMN injection_json TEXT');
     }
   } catch (error) {
     options.logger?.warn?.('[db] failed to init sqlite', { error: error.message });

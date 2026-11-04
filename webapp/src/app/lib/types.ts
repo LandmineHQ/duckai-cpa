@@ -99,6 +99,11 @@ export interface UpstreamLogItem {
   stream?: boolean;
   error?: string | null;
   rateLimited?: boolean;
+  /** v2.48：客户端工具协议注入信息（仅 upstream 日志）。 */
+  clientTools?: string[] | null;
+  protocolInjected?: boolean;
+  upstreamMessageCount?: number | null;
+  conversationChain?: string | null;
 }
 
 export interface AdminLogItem {
@@ -923,4 +928,33 @@ export interface LogRetentionInfo {
   maxAgeDays: number;
   upstreamCount: number;
   adminCount: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* v2.48 会话历史「提示词注入」与「查看上游请求」调试视图                   */
+/* ------------------------------------------------------------------ */
+
+/** 客户端工具协议注入快照（`GET /admin/api/history/:id` 的 `item.injection`）。 */
+export interface HistoryInjection {
+  injected: boolean;
+  clientTools: string[];
+  /** 实际注入到第一条 user 消息的协议文本（完整）。 */
+  protocolText: string;
+  /** 实际发给上游的第一条 user 内容（含协议文本，完整）。 */
+  firstUserContent: string;
+  upstreamMessageCount: number | null;
+  /** prefix-reuse / rebuild / stateless / new 等链路标记。 */
+  chain: string | null;
+  at: number;
+}
+
+/** `GET /admin/api/history/:id/upstream` 的响应（图片 base64 已脱敏）。 */
+export interface HistoryUpstreamResponse {
+  ok: boolean;
+  sessionKey: string | null;
+  source: 'conversation_state' | 'response' | null;
+  updatedAt: number | null;
+  messageCount: number;
+  injection: HistoryInjection | null;
+  messages: unknown[];
 }

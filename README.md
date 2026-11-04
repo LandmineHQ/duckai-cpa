@@ -55,6 +55,7 @@ It ships with a complete self-hosted control plane: identity pool management, su
 - **SQLite storage** (`data/duckai.db`, WAL) for identities, bindings, subscriptions, logs, usage events, session history, connection-test sessions, compaction summaries and stats. No JSON snapshots (only `config.json`, `identity.json`, `pairing.json` remain).
 - **Admin console** (React + Tailwind + Radix) with overview, live playground, identity pool, subscriptions, session history, logs, proxy, settings, model config, API keys and examples.
 - **Session history** saved to SQLite with tool calls, generated images, reasoning, sources and 30-day retention.
+- **Observability**: tool prompt-injection metadata (full protocol + injected first user) is stored per history entry; upstream logs expose tool names/injection flags; a local debug endpoint shows the redacted upstream messages actually sent to duck.ai.
 - **Structured logs** with session key, identity and request id for traceability.
 - **Optional HTTP/SOCKS proxy** for all upstream requests.
 - **Docker & docker-compose** deployment.
