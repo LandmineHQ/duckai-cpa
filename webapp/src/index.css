@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 30 33% 98%;
+    --foreground: 24 10% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 24 10% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 24 10% 12%;
+    --primary: 24.6 95% 53.1%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 30 20% 94%;
+    --secondary-foreground: 24 10% 20%;
+    --muted: 30 16% 94%;
+    --muted-foreground: 24 6% 45%;
+    --accent: 30 40% 94%;
+    --accent-foreground: 24 10% 18%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 24 12% 89%;
+    --input: 24 12% 89%;
+    --ring: 24.6 95% 53.1%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 24 10% 8%;
+    --foreground: 30 12% 94%;
+    --card: 24 8% 11%;
+    --card-foreground: 30 12% 94%;
+    --popover: 24 8% 11%;
+    --popover-foreground: 30 12% 94%;
+    --primary: 24.6 95% 58%;
+    --primary-foreground: 24 20% 8%;
+    --secondary: 24 6% 16%;
+    --secondary-foreground: 30 12% 92%;
+    --muted: 24 6% 16%;
+    --muted-foreground: 30 6% 62%;
+    --accent: 24 8% 18%;
+    --accent-foreground: 30 12% 92%;
+    --destructive: 0 62% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 24 6% 20%;
+    --input: 24 6% 22%;
+    --ring: 24.6 95% 58%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Inter", "DuckSansProduct", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+  }
+}

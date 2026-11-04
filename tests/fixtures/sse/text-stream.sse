@@ -1,0 +1,25 @@
+# 真实抓包回放：duck.ai 普通文本流（2026-11-01，Lead recon/TEAM-NOTES.md §1）
+# 每行一个 SSE 事件，空行分隔；事件内容与线上一致（逐 token 增量 + 伪事件）。
+data: [CHAT_TITLE:天空为什么是蓝色的]
+
+data: [PING]
+
+data: {"id":"msg_0192a1","action":"success","created":1793514943982,"model":"gpt-6-luna","role":"assistant","message":"光"}
+
+data: {"id":"msg_0192a1","action":"success","created":1793514943982,"model":"gpt-6-luna","role":"assistant","message":"被"}
+
+data: {"id":"msg_0192a1","action":"success","created":1793514943982,"model":"gpt-6-luna","role":"assistant","message":"大气"}
+
+data: {"id":"msg_0192a1","action":"success","created":1793514943982,"model":"gpt-6-luna","role":"assistant","message":"中的"}
+
+data: {"id":"msg_0192a1","action":"success","created":1793514943982,"model":"gpt-6-luna","role":"assistant","message":"分子"}
+
+data: {"id":"msg_0192a1","action":"success","created":1793514943982,"model":"gpt-6-luna","role":"assistant","message":"散射"}
+
+data: {"id":"msg_0192a1","action":"success","created":1793514943982,"model":"gpt-6-luna","role":"assistant","message":"蓝光"}
+
+data: {"id":"msg_0192a1","action":"success","created":1793514943982,"model":"gpt-6-luna","role":"assistant","message":"。"}
+
+data: [PING]
+
+data: [DONE]

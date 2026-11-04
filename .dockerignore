@@ -1,0 +1,34 @@
+# Docker 构建上下文忽略清单
+# 镜像只需要：package*.json、src/、web/（预构建产物）、config/config.example.json
+
+# ---------- 运行时数据与密钥（必须排除，避免把 token/日志打进镜像） ----------
+data/
+*.log
+.env
+.env.*
+
+# ---------- 本地依赖与缓存 ----------
+node_modules/
+.npm-cache/
+.pnpm-store/
+*.tsbuildinfo
+
+# ---------- 前端源码与构建工具链（镜像只复制已构建的 web/） ----------
+webapp/
+vite.config.*
+postcss.config.*
+tailwind.config.*
+
+# ---------- 开发 / 测试 / 侦察产物（不进入镜像） ----------
+tests/
+scripts/
+docs/
+recon-tmp/
+recon/
+solvetest/
+coverage/
+.DS_Store
+.git/
+.gitignore
+
+# 注意：不要忽略 web/、config/、src/、package*.json，它们是镜像运行所必需的。

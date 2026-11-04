@@ -1,0 +1,99 @@
+{
+    "server":  {
+                   "host":  "127.0.0.1",
+                   "port":  8787,
+                   "cors":  true
+               },
+    "auth":  {
+                 "apiKeys":  [
+
+                             ],
+                 "adminToken":  "change-me-admin-token"
+             },
+    "upstream":  {
+                     "rps":  1,
+                     "maxConcurrent":  1,
+                     "queueLimit":  50,
+                     "queueTimeoutMs":  300000
+                 },
+    "duck":  {
+                 "baseUrl":  "https://duck.ai",
+                 "userAgent":  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+                 "defaultModel":  "gpt-6-luna",
+                 "timeoutMs":  120000,
+                 "allowPaidModels":  false,
+                 "challenge":  {
+                                   "engine":  "jsdom",
+                                   "refreshAheadMs":  30000
+                               },
+                 "humanize":  {
+                                  "enabled":  false,
+                                  "minDelayMs":  0,
+                                  "maxDelayMs":  0,
+                                  "minIntervalMs":  0,
+                                  "concurrency":  1,
+                                  "maxRetries":  3,
+                                  "retryBaseDelayMs":  1000,
+                                  "rateLimitCooldownMs":  60000
+                              }
+             },
+    "prompts":  {
+                    "defaultSystemPrompt":  "",
+                    "mode":  "inline",
+                    "defaults":  {
+
+                                 }
+                },
+    "logging":  {
+                    "level":  "info",
+                    "maxEntries":  500
+                },
+    "models":  {
+                   "aliases":  {
+                                   "gpt-6":  "gpt-6-luna",
+                                   "gpt6":  "gpt-6-luna",
+                                   "duck":  "gpt-6-luna"
+                               }
+               },
+    "identity":  {
+                     "enabled":  true,
+                     "durableStream":  {
+                                           "enabled":  true
+                                       },
+                     "sync":  {
+                                  "enabled":  false
+                              },
+                     "deviceName":  null
+                 },
+    "proxy":  {
+                  "enabled":  false,
+                  "type":  "http",
+                  "host":  "127.0.0.1",
+                  "port":  10808,
+                  "username":  "",
+                  "password":  "",
+                  "noProxy":  [
+                                  "127.0.0.1",
+                                  "localhost"
+                              ],
+                  "testUrl":  "https://duck.ai/duckchat/v1/status",
+                  "ipCheckUrl":  "https://api.ipify.org?format=json"
+              },
+    "pool":  {
+                 "enabled":  true,
+                 "maxIdentities":  20,
+                 "strategy":  "hash",
+                 "queueLimit":  50,
+                 "queueTimeoutMs":  300000,
+                 "runtimeIdleMs":  600000
+             },
+    "context":  {
+                    "maxInputChars":  12000,
+                    "maxMessages":  40,
+                    "onLimit":  "trim"
+                },
+    "tools":  {
+                  "webSearch":  true,
+                  "imageGeneration":  true
+              }
+}

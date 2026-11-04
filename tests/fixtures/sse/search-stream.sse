@@ -1,0 +1,35 @@
+# 真实抓包回放：duck.ai WebSearch 流（2026-11-01，recon/TEAM-NOTES.md §2）
+# 覆盖：tool-invocation call/result、data.citations、role:"source"、正文内联 citation 标记。
+data: [PING]
+
+data: {"role":"tool-invocation","state":"call","toolName":"WebSearch","toolCallId":"call_8f2c1d4e","toolArguments":"{\"query\":\"New York City weather November 1 2026 temperature\",\"allowedDomains\":[\"open-web\"]}"}
+
+data: [PING]
+
+data: {"role":"tool-invocation","state":"result","toolCallId":"call_8f2c1d4e","result":"WebSearch completed. The result was used to generate the answer, but no longer included in the LLM context.","data":{"version":1,"markerFormat":"<citation src=\"N\"></citation>","urls":["https://www.accuweather.com/en/us/new-york-city/10007/weather-forecast/349727","https://weather.com/weather/today/l/10001:4:US"],"citations":[{"id":0,"url":"https://www.accuweather.com/en/us/new-york-city/10007/weather-forecast/349727","title":"New York City, NY Weather Forecast | AccuWeather","domain":"accuweather.com","root_domain":"accuweather.com","site_name":"AccuWeather","published":"2026-11-01T00:00:00Z","chunkIds":["c1"]},{"id":1,"url":"https://weather.com/weather/today/l/10001:4:US","title":"New York City Weather Today - The Weather Channel","domain":"weather.com","root_domain":"weather.com","site_name":"The Weather Channel","published":null,"chunkIds":["c2"]}]}}
+
+data: {"role":"source","source":{"url":"https://www.accuweather.com/en/us/new-york-city/10007/weather-forecast/349727","title":"New York City, NY Weather Forecast | AccuWeather","site":"AccuWeather"},"toolCallId":"call_8f2c1d4e"}
+
+data: {"role":"source","source":{"url":"https://weather.com/weather/today/l/10001:4:US","title":"New York City Weather Today - The Weather Channel","site":"The Weather Channel"},"toolCallId":"call_8f2c1d4e"}
+
+data: {"id":"msg_0192b1","action":"success","created":1793514944001,"model":"gpt-6-luna","role":"assistant","message":"今天"}
+
+data: {"id":"msg_0192b1","action":"success","created":1793514944001,"model":"gpt-6-luna","role":"assistant","message":"纽约"}
+
+data: {"id":"msg_0192b1","action":"success","created":1793514944001,"model":"gpt-6-luna","role":"assistant","message":"气温"}
+
+data: {"id":"msg_0192b1","action":"success","created":1793514944001,"model":"gpt-6-luna","role":"assistant","message":"约"}
+
+data: {"id":"msg_0192b1","action":"success","created":1793514944001,"model":"gpt-6-luna","role":"assistant","message":"12°C"}
+
+data: {"id":"msg_0192b1","action":"success","created":1793514944001,"model":"gpt-6-luna","role":"assistant","message":"<citation src=\"0\"></citation>"}
+
+data: {"id":"msg_0192b1","action":"success","created":1793514944001,"model":"gpt-6-luna","role":"assistant","message":"，局部"}
+
+data: {"id":"msg_0192b1","action":"success","created":1793514944001,"model":"gpt-6-luna","role":"assistant","message":"多云"}
+
+data: {"id":"msg_0192b1","action":"success","created":1793514944001,"model":"gpt-6-luna","role":"assistant","message":"<citation src=\"1\"></citation>"}
+
+data: {"id":"msg_0192b1","action":"success","created":1793514944001,"model":"gpt-6-luna","role":"assistant","message":"。"}
+
+data: [DONE]

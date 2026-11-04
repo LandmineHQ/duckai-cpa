@@ -1,0 +1,7 @@
+# 真实抓包回放：duck.ai SSE 内的错误事件（2026-11-01）
+# 来源：data/tmp/isolation.json + browser-flow.json 的上游错误体形态。
+data: [PING]
+
+data: {"action":"error","status":418,"type":"ERR_BN_LIMIT","message":"You appear to be using an unsupported entrypoint, please use https://duck.ai/ instead","overrideCode":"8e04","suppressErrorImpression":1}
+
+data: [DONE]
