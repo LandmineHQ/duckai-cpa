@@ -509,3 +509,12 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 4 | 真实图像上下文验证 | ✅ | 生成深蓝海报 → 仅回放图片并问「主要是什么颜色」→ 返回「深海军蓝色」；图片编辑追问 200（修复前 502/400） |
 | 5 | 配置/UI | ✅ | 设置 → 工具新增「客户端工具」开关（`settings-tool-client-tools`）；`tools.clientFunctionCalling.enabled` 默认 true 并已写入 `data/config.json` |
 | 6 | 回归 | ✅ | `npm test` **447/447**、`build-check` 16/16、`page-check` 22/22 |
+## 2.39 v2.45 工具协议稳定前缀（保证上游 prefix cache）
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 会话增量/前缀稳定 | ✅ | 工具协议从“最后一条 user”改为“第一条 user”（`injectProtocolIntoFirstUser`）；历史消息不再因下一轮协议消失而改变 |
+| 2 | 前缀逐字节一致 | ✅ | 新增测试：第二轮请求的 `messages[0..turn1.length)` 与第一轮 deepEqual；协议只出现一次 |
+| 3 | 模型仍能调用工具 | ✅ | 真实上游 `gpt-5.6-terra`：协议在第一条 user 时，第二轮仍输出 `read_file` tool_call；回传 role:tool 后得到最终回答 |
+| 4 | 不引入真实缓存依赖 | ✅ | `/v1/*` 仍无状态、发送完整历史；duck.ai 实测无跨请求上下文缓存（会话 A/B 数字记忆测试为“不知道”）；稳定前缀只是让上游 prefix cache 可复用 |
+| 5 | 回归 | ✅ | `npm test` **448/448**、`build-check` 16/16、`page-check` 22/22 |

@@ -195,6 +195,7 @@ Both protocols are auto-normalized — no manual allowlist needed:
 
 - `client` mode only: the model asks, **Codex/DSH executes locally**, and the result is sent back as `role:"tool"` (chat) or `function_call_output` (responses);
 - Streaming returns `delta.tool_calls` / `response.function_call_arguments.*` events;
+- **Stable prefix (v2.45)**: the tool protocol is attached to the **first** user message, so all historical messages stay byte-identical across turns and upstream prefix/prompt caches can be reused; do not move it to the last user message.
 - Disable with **Settings → Tools → 客户端工具** (`tools.clientFunctionCalling.enabled`); no MCP/auto execution exists.
 
 ## 📐 Architecture

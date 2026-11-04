@@ -30,7 +30,7 @@ import {
   recordUsageOnLog,
   normalizeContentParts,
   normalizeImagePart,
-  injectProtocolIntoLastUser
+  injectProtocolIntoFirstUser
 } from './chat.js';
 import {
   buildToolProtocol,
@@ -314,7 +314,7 @@ export async function handleResponses(req, res, ctx) {
   if (guarded.trimmed) ctx.log.contextTrimmed = true;
   let upstreamMessages = guarded.messages;
   if (clientTools.length) {
-    upstreamMessages = injectProtocolIntoLastUser(guarded.messages, buildToolProtocol(clientTools));
+    upstreamMessages = injectProtocolIntoFirstUser(guarded.messages, buildToolProtocol(clientTools));
   }
   const duckMessages = buildDuckMessages({
     systemPrompt,

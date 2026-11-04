@@ -269,3 +269,43 @@ test('关闭 tools.clientFunctionCalling 后不注入协议、不返回 tool_cal
     assert.ok(!prompt.includes('工具调用协议'));
   });
 });
+
+test('tools 稳定前缀：第二轮请求里的历史消息与第一轮逐字节一致（利于上游 prompt cache）', async () => {
+  const duck = newDuck();
+  duck.enqueueChat({ textDeltas: ['第一轮回答'] });
+  duck.enqueueChat({ textDeltas: ['第二轮回答'] });
+
+  await withServer({ duck }, async ({ baseUrl }) => {
+    const first = await v1Request(baseUrl, '/v1/chat/completions', {
+      method: 'POST',
+      body: { model: 'gpt-6-luna', messages: [{ role: 'user', content: '第一轮问题' }], tools: [READ_TOOL] }
+    });
+    assert.equal(first.status, 200, first.text);
+    const assistantText = JSON.parse(first.text).choices[0].message.content;
+    const turn1 = duck.calls.chat[0].params.messages;
+    assert.ok(JSON.stringify(turn1).includes('工具调用协议'), '协议应在第一条 user');
+
+    const second = await v1Request(baseUrl, '/v1/chat/completions', {
+      method: 'POST',
+      body: {
+        model: 'gpt-6-luna',
+        messages: [
+          { role: 'user', content: '第一轮问题' },
+          { role: 'assistant', content: assistantText },
+          { role: 'user', content: '第二轮问题' }
+        ],
+        tools: [READ_TOOL]
+      }
+    });
+    assert.equal(second.status, 200, second.text);
+    const turn2 = duck.calls.chat.at(-1).params.messages;
+
+    // 前缀必须完全一致（旧消息不被改写），否则 duck.ai 前缀缓存会失效
+    assert.deepEqual(
+      turn2.slice(0, turn1.length),
+      turn1,
+      '第二轮的历史前缀应与第一轮相同'
+    );
+    assert.equal(JSON.stringify(turn2).match(/工具调用协议/g).length, 1, '协议只注入一次（第一条 user）');
+  });
+});

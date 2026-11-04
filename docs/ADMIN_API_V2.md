@@ -1428,7 +1428,9 @@ cooldownScope = entity | account
 - Chat：`message.tool_calls` + `finish_reason:"tool_calls"`；Responses：`function_call` output item；
 - 回传：chat `role:"tool"`；responses `function_call_output`；
 - 流式：chat `delta.tool_calls`；responses `response.function_call_arguments.delta/done`；
-- 网关不执行工具、不接 MCP；`/v1/responses` 的 `image_generation_call` 回放保留真实图片。
+- 网关不执行工具、不接 MCP；`/v1/responses` 的 `image_generation_call` 回放保留真实图片；
+- **稳定前缀**：工具协议注入第一条 user（不是最后一条），保证历史消息逐字节不变、上游 prefix cache 可复用；
+  压缩摘要/context-guard 裁剪会改变前缀。
 
 ### 40.3 图片处理
 

@@ -1100,6 +1100,9 @@ Chat Completions 没有官方的 assistant 图片字段，采用主流 OpenAI �
 - `/v1/responses`：`tools:[{type:"function",name,description,parameters}]`；返回 `output` 里的 `function_call` item；下一轮 `function_call` + `function_call_output`。
 - 两种形状可混用（网关自动归一化）；流式返回 `delta.tool_calls` / `response.function_call_arguments.*`。
 - 仅 client 模式：工具由 Codex/DSH 本地执行；网关不执行、不接 MCP。
+- **稳定前缀（v2.45）**：工具协议固定在第一条 user 消息里；历史消息逐字节不变。这样 duck.ai 的
+  prompt/prefix cache 在后续轮次可以命中（工具列表不变时）。不要改回“只注入最后一条 user”：下一轮
+  该消息变成历史时协议会消失，历史文本变化会导致 cache miss。
 
 ### 图片输入 / 生图上下文
 

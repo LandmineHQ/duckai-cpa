@@ -114,10 +114,14 @@ data/                运行时数据（不入库；含敏感文件）
   `test_sessions`、`chat_summaries`、`meta.stats.*`、`meta.keys.managed`（旧 JSON 仅首启导入一次，随后可归档到 `data/legacy-json-archive/`）。
 - **session id 展示（v2.40）**：连接测试 header/列表与会话历史详情/列表都展示完整 session id（可复制）；无 X-Session-Id 的 v1 请求历史 key 为 `auto:<hash>`。
 - **Responses 生图（v2.40/v2.44）**：`/v1/responses` 只有图片时必须补 message item + output_text；下一轮 input 里的 `image_generation_call` 必须接受，并保留为真实 image part（v2.44 起不再转文本占位），JPEG 转 PNG ≤512px 后转发。
-- **客户端工具桥（v2.44）**：OpenAI `tools[].function` 重新支持，但**只做 client 模式**（Codex/DSH 本地执行，
+- **客户端工具桥（v2.44/v2.45）**：OpenAI `tools[].function` 重新支持，但**只做 client 模式**（Codex/DSH 本地执行，
   网关不执行、不接 MCP）。Completions 与 Responses 的 tools 形状由 `src/openai/tool-protocol.js` 自动归一化，
   输出分别映射为 `tool_calls` / `function_call`；下一轮接受 `role:"tool"` 与 `function_call_output`。
-  协议注入必须放在**最后一条 user 消息**（放 system/inline 前缀会被模型忽略）；配置 `tools.clientFunctionCalling.enabled`（默认 true）。
+  协议注入必须放在**第一条 user 消息**（v2.45 稳定前缀，保证旧消息逐字节不变、上游 prefix cache 可命中；
+  不要改回最后一条 user：下一轮协议消失会导致历史文本变化、cache miss）。配置 `tools.clientFunctionCalling.enabled`（默认 true）。
+- **上下文前缀稳定（v2.45）**：客户端工具协议固定在第一条 user；历史文本/工具调用/图片映射必须确定性序列化，
+  跨轮不改写旧消息。压缩摘要（`chat_summaries`）和 context-guard 裁剪会改变前缀，启用后无法保证 cache 命中；
+  `/v1/*` 仍是无状态（不支持 `previous_response_id`），客户端必须回放完整历史。
 - **图片上下文（v2.44）**：`image_generation_call` 回放不能退化成文本占位；必须转成真实 image part（挂到下一轮 user 消息）。
   上游图像输入只接受 PNG/WebP（JPEG 实测 400 sc22），`src/duck/image-convert.js`（jpeg-js + pngjs，纯 JS）统一转 PNG 并缩到 **512px**；
   `/v1/chat/completions` 的 `image_url` data URL、`/v1/responses` 的 `input_image` 同样支持。

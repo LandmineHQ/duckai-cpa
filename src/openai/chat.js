@@ -289,22 +289,20 @@ export function buildDuckMessages({ systemPrompt = '', conversation = [], prompt
 /* ------------------------------------------------------------------ */
 
 /**
- * v2.44：把客户端工具协议附加到最后一条 user 消息（system/inline 前缀模型会忽略）。
+ * v2.45：把客户端工具协议附加到“第一条 user 消息”（稳定前缀）。
+ *
+ * 为什么不是最后一条：协议若只加在当轮最后一条 user 上，下一轮该消息变成历史时协议会消失，
+ * 上游看到的历史文本发生变化 → 前缀缓存（duck.ai 的 prompt cache）失效。
+ * 固定在第一条 user 上，只要工具列表不变，每次请求的历史前缀逐字节一致。
  * @param {Array<{role:string, content:string}>} messages
  * @param {string} protocol
  */
-export function injectProtocolIntoLastUser(messages, protocol) {
+export function injectProtocolIntoFirstUser(messages, protocol) {
   if (!Array.isArray(messages) || !protocol) return messages;
-  let lastUserIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index] && messages[index].role === 'user') {
-      lastUserIndex = index;
-      break;
-    }
-  }
-  if (lastUserIndex < 0) return messages;
+  const firstUserIndex = messages.findIndex((message) => message && message.role === 'user');
+  if (firstUserIndex < 0) return messages;
   return messages.map((message, index) =>
-    index === lastUserIndex
+    index === firstUserIndex
       ? { ...message, content: `${message.content}\n\n${protocol}` }
       : message
   );
@@ -772,7 +770,7 @@ export async function handleChatCompletions(req, res, ctx) {
   if (guarded.trimmed) ctx.log.contextTrimmed = true;
   let upstreamMessages = guarded.messages;
   if (clientTools.length) {
-    upstreamMessages = injectProtocolIntoLastUser(guarded.messages, buildToolProtocol(clientTools));
+    upstreamMessages = injectProtocolIntoFirstUser(guarded.messages, buildToolProtocol(clientTools));
   }
   const duckMessages = buildDuckMessages({
     systemPrompt,
