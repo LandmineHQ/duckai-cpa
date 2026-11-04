@@ -491,3 +491,11 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 5 | 删除配置项 | ✅ | `tools.functionCalling.*` / `tools.mcp.*` 从默认配置、可编辑路径、校验、重启路径、`data/config.json` 全部移除 |
 | 6 | 保留内置 tools | ✅ | `tools.webSearch` / `tools.imageGeneration` / `tools.location` 与 `/v1` 的 web_search/image_generation 行为不变；function tool 默认静默丢弃、strict 400 `unsupported_tool` |
 | 7 | 回归 | ✅ | `npm test` **429/429**（删除 9 个 function calling/MCP 用例）、`build-check` 16/16、`page-check` 22/22 |
+## 2.37 v2.42 测试离线化（不再调用真实 API）
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 单测不得访问真实 duck.ai / duckduckgo.com | ✅ | 新增 `tests/helpers/no-external-network.js`：非 `127.0.0.1/localhost` 的 `fetch` 一律抛 `ERR_TEST_EXTERNAL_NETWORK_BLOCKED` 并记录；由 `tests/helpers/test-server.js` 导入即启用 |
+| 2 | 需要上游成功/失败路径时用 mock | ✅ | 新增 `tests/offline-network-v242.test.js`：`verifySubscriptionOnline({ fetchImpl })` 成功/不可达、`detectSyncTransport({ fetchImpl })` available/blocked 全部用假 fetch |
+| 3 | 全量测试无外网请求 | ✅ | `NODE_OPTIONS=--require ./recon-tmp/net-spy.cjs npm test`：429→434 用例全过；网络探针记录 **0** 条非本机请求（审计脚本仅本地使用，不提交） |
+| 4 | 回归 | ✅ | `npm test` **434/434**、`build-check` 16/16、`page-check` 22/22 |

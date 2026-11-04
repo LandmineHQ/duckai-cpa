@@ -18,6 +18,8 @@ import { createStore } from '../../src/store.js';
 import { normalizeConfig, PROJECT_ROOT } from '../../src/config.js';
 import { createNullLogger } from '../../src/logger.js';
 import { MockDuckClient } from './mock-duck.js';
+// v2.42：测试绝不发真实外网请求（duck.ai / duckduckgo.com 等统一拦截为 503）
+import './no-external-network.js';
 
 export const API_KEY = 'sk-duck-test-0123456789abcdef';
 export const ADMIN_TOKEN = 'test-admin-token-0123456789';

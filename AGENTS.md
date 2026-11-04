@@ -34,6 +34,10 @@ node scripts/proxy-live-check.mjs --with-proxy
 - 单跑某文件：`node --test --test-isolation=none tests/xxx.test.js`。
 - jsdom 用例挂载真实构建产物：先 `npm run build:web`，否则测试读的是旧 `web/index.html` 指向的 bundle。
   测试里登录 token 的 localStorage key 是 `duckai_cpa_admin_token`。
+- **测试必须离线（v2.42）**：`tests/helpers/no-external-network.js` 会全局拦截非 `127.0.0.1/localhost` 的
+  `fetch`（抛 `ERR_TEST_EXTERNAL_NETWORK_BLOCKED` 并记录到 `blocked`），测试套件**不允许**访问真实
+  `duck.ai` / `duckduckgo.com`。需要验证上游成功/失败路径时，用组件已有的 `fetchImpl` 参数注入 mock
+  （如 `verifySubscriptionOnline({ fetchImpl })`、`detectSyncTransport({ fetchImpl })`），不要依赖真实网络可达性。
 
 ## 3. 目录地图
 

@@ -287,6 +287,8 @@ node scripts/page-check.mjs --admin-token <token> --api-key <key>   # live gatew
 
 Test configuration: `tests/helpers/test-server.js` (`withServer`, `makeConfig`), `tests/helpers/mock-duck.js` (scripted DuckClient). All tests run with `--test-isolation=none --test-concurrency=1`.
 
+All tests run **fully offline**: `tests/helpers/no-external-network.js` blocks any non-local `fetch` (duck.ai, duckduckgo.com, …) and tests inject mock upstream responses via `fetchImpl` options instead of touching the real network.
+
 ---
 
 ## 📁 Project Layout
