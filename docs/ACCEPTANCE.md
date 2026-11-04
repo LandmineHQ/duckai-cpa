@@ -499,3 +499,13 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 2 | 需要上游成功/失败路径时用 mock | ✅ | 新增 `tests/offline-network-v242.test.js`：`verifySubscriptionOnline({ fetchImpl })` 成功/不可达、`detectSyncTransport({ fetchImpl })` available/blocked 全部用假 fetch |
 | 3 | 全量测试无外网请求 | ✅ | `NODE_OPTIONS=--require ./recon-tmp/net-spy.cjs npm test`：429→434 用例全过；网络探针记录 **0** 条非本机请求（审计脚本仅本地使用，不提交） |
 | 4 | 回归 | ✅ | `npm test` **434/434**、`build-check` 16/16、`page-check` 22/22 |
+## 2.38 v2.44 客户端工具桥（Completions ↔ Responses）+ 图片上下文修复
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | tools 协议自动转换，无需白名单维护 | ✅ | 新增 `src/openai/tool-protocol.js`：两种 tools 形状归一化为 CanonicalTool；chat 输出 `tool_calls`、responses 输出 `function_call`；下一轮接受 `role:"tool"` / `function_call_output` |
+| 2 | 真实上游工具调用 | ✅ | `gpt-5.6-terra` + `read_file`：chat 返回 `finish_reason:"tool_calls"`；回传 role:tool 后得到最终回答；responses 返回 `function_call` item（`read_file {"path":"package.json"}`） |
+| 3 | 生图后继续对话图像丢失 | ✅ 修复 | 根因：v2.40 把 `image_generation_call` 转成文本占位；现在回放为真实 image part（挂下一轮 user）。上游只收 PNG/WebP，新增 `image-convert.js` 把 JPEG 转 PNG 并缩到 512px |
+| 4 | 真实图像上下文验证 | ✅ | 生成深蓝海报 → 仅回放图片并问「主要是什么颜色」→ 返回「深海军蓝色」；图片编辑追问 200（修复前 502/400） |
+| 5 | 配置/UI | ✅ | 设置 → 工具新增「客户端工具」开关（`settings-tool-client-tools`）；`tools.clientFunctionCalling.enabled` 默认 true 并已写入 `data/config.json` |
+| 6 | 回归 | ✅ | `npm test` **447/447**、`build-check` 16/16、`page-check` 22/22 |

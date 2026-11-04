@@ -1390,7 +1390,7 @@ cooldownScope = entity | account
 有生成图片但上游没有给 GenerateImage 工具帧时，网关会自动补一条「图片生成」记录。
 ## 38. 网关级 function calling 与 MCP 工具（v2.39，**v2.42 已移除**）
 
-> v2.42 已删除 `tools.functionCalling.*`、`tools.mcp.*`、`src/openai/function-calling.js`、`src/tools/mcp-client.js` 与设置页对应卡片。保留内置工具 `tools.webSearch` / `tools.imageGeneration` / `tools.location`。
+> v2.42 删除旧 functionCalling/MCP；v2.44 以 **client 模式工具桥** 重新支持 `tools[].function`（`tools.clientFunctionCalling.enabled`，默认 true），两种协议自动转换；仍不提供 MCP/auto 执行。保留内置工具 `tools.webSearch` / `tools.imageGeneration` / `tools.location`。
 ## 39. 会话存储统一到 SQLite 与 session id 展示（v2.40）
 
 ### 39.1 存储
@@ -1414,3 +1414,24 @@ cooldownScope = entity | account
 
 - 输出：只有图片时补 `message` item + `output_text`（避免客户端显示空消息）；`image_generation_call.result` 仍是 base64。
 - 输入：下一轮 input 里的 `image_generation_call` item 会被接受并转成 assistant 占位文本（`[image_generation_call] 已生成图片（base64 已省略）`），不再 400。
+## 40. 客户端工具桥与图片输入（v2.44）
+
+### 40.1 客户端工具配置
+
+| 路径 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `tools.clientFunctionCalling.enabled` | boolean | true | 是否接受 OpenAI `tools[].function`（Completions/Responses 自动转换；仅 client 模式） |
+
+### 40.2 协议行为
+
+- 两种 tools 形状自动归一化，无需维护工具白名单；
+- Chat：`message.tool_calls` + `finish_reason:"tool_calls"`；Responses：`function_call` output item；
+- 回传：chat `role:"tool"`；responses `function_call_output`；
+- 流式：chat `delta.tool_calls`；responses `response.function_call_arguments.delta/done`；
+- 网关不执行工具、不接 MCP；`/v1/responses` 的 `image_generation_call` 回放保留真实图片。
+
+### 40.3 图片处理
+
+- 上游仅接受 PNG/WebP；JPEG 会返回 400 `ERR_BAD_REQUEST`（sc22）；
+- 网关统一转 PNG 并缩到 512px（`src/duck/image-convert.js`，jpeg-js/pngjs 纯 JS）；
+- 图片上下文通过真实 image part 回传，不再使用文本占位。

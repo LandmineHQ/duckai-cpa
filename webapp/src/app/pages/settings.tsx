@@ -45,6 +45,8 @@ interface FormState {
   imageGeneration: boolean;
   /** v2.36：允许上游使用「大致位置」（user-location），默认关闭 */
   location: boolean;
+  /** v2.44：客户端工具桥（Codex/DSH 文件工具） */
+  clientFunctionCalling: boolean;
   logLevel: string;
 }
 
@@ -69,6 +71,7 @@ const DEFAULT_FORM: FormState = {
   webSearch: true,
   imageGeneration: true,
   location: false,
+  clientFunctionCalling: true,
   logLevel: 'info'
 };
 
@@ -137,6 +140,7 @@ function formFromConfig(config: Config, _fallbackModel?: string): FormState {
     webSearch: config.tools?.webSearch !== false,
     imageGeneration: config.tools?.imageGeneration !== false,
     location: config.tools?.location === true,
+    clientFunctionCalling: config.tools?.clientFunctionCalling?.enabled !== false,
     logLevel: config.logging?.level || 'info'
   };
 }
@@ -242,7 +246,14 @@ export function SettingsPage() {
                 }
               }
             : card === 'tools'
-              ? { tools: { webSearch: form.webSearch, imageGeneration: form.imageGeneration, location: form.location } }
+              ? {
+                  tools: {
+                    webSearch: form.webSearch,
+                    imageGeneration: form.imageGeneration,
+                    location: form.location,
+                    clientFunctionCalling: { enabled: form.clientFunctionCalling }
+                  }
+                }
               : { logging: { level: form.logLevel } };
       const response = await apiPut<UpdateConfigResponse>('/config', body);
       if (response?.config) setForm(formFromConfig(response.config));
@@ -676,6 +687,22 @@ export function SettingsPage() {
                   data-testid="settings-tool-location"
                   checked={form.location}
                   onCheckedChange={(checked) => patch({ location: checked })}
+                />
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label htmlFor="settings-tool-client-tools">客户端工具 tools.clientFunctionCalling.enabled</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    允许 Codex/DSH 传 OpenAI tools[].function（文件读写等），网关自动转换 Completions/Responses
+                    协议并返回 tool_calls；工具由客户端本地执行，网关不执行、不接 MCP。
+                  </p>
+                </div>
+                <Switch
+                  id="settings-tool-client-tools"
+                  data-testid="settings-tool-client-tools"
+                  checked={form.clientFunctionCalling}
+                  onCheckedChange={(checked) => patch({ clientFunctionCalling: checked })}
                 />
               </div>
             </CardContent>

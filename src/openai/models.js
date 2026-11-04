@@ -641,6 +641,9 @@ export function parseTools(config, tools, { param = 'tools' } = {}) {
       result.webSearch = true;
     } else if (type === 'image_generation') {
       result.imageGeneration = true;
+    } else if (type === 'function') {
+      // v2.44：客户端工具（function calling 桥）由 ./tool-protocol.js 处理；
+      // 这里不算 unsupported，避免 strict 模式误报 400。
     } else {
       result.unsupported.push(type || '(missing type)');
     }

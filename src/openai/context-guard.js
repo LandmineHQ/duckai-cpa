@@ -47,14 +47,14 @@ export function guardConversation(conversation, systemPrompt = '', options = {})
     const nextChars = usedChars + content.length;
     if (nextCount > Math.max(MIN_MESSAGES, Math.floor(maxMessages))) break;
     if (selected.length > 0 && systemChars + nextChars > maxChars) break;
-    selected.push({ role: message.role, content });
+    selected.push({ ...message, role: message.role, content });
     usedChars = nextChars;
   }
   selected.reverse();
   // Always keep at least the most recent message even if it alone exceeds the char budget.
   if (selected.length === 0 && source.length > 0) {
     const last = source[source.length - 1];
-    selected.push({ role: last.role, content: typeof last.content === 'string' ? last.content : '' });
+    selected.push({ ...last, role: last.role, content: typeof last.content === 'string' ? last.content : '' });
     usedChars = selected[0].content.length;
   }
 

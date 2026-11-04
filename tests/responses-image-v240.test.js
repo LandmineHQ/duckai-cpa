@@ -54,9 +54,18 @@ test('/v1/responses：下一轮 input 带上一轮 image_generation_call item �
     assert.equal(res.status, 200, res.text);
     const payload = JSON.parse(res.text);
     assert.equal(payload.output_text, '这只猫是橘色的。');
-    // 上游消息里应包含图片占位文本（不把 base64 塞进提示词）
+    // v2.44：消息里应保留真实图片（而不是把图像变成文本占位）
     const lastCall = duck.calls.chat.at(-1);
     const promptText = JSON.stringify(lastCall.params.messages);
-    assert.ok(promptText.includes('image_generation_call'), '应包含生图占位文本');
+    assert.ok(promptText.includes('"images"'), '应包含 images 字段');
+    assert.ok(promptText.includes('data:image/png;base64,'), '应包含图片 data URL');
+    // 再验证 DuckClient 的 buildUpstreamMessages 会把图片转成上游 image part
+    const { buildUpstreamMessages } = await import('../src/duck/index.js');
+    const upstream = buildUpstreamMessages(lastCall.params.messages);
+    const userWithImage = upstream.find((message) => Array.isArray(message.content) && message.content.some((part) => part.type === 'image'));
+    assert.ok(userWithImage, '上游消息应包含 {type:"image"} part');
+    const imagePart = userWithImage.content.find((part) => part.type === 'image');
+    assert.equal(imagePart.mimeType, 'image/png');
+    assert.ok(imagePart.image.startsWith('data:image/png;base64,'));
   });
 });

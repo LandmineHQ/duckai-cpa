@@ -32,6 +32,8 @@ It ships with a complete self-hosted control plane: identity pool management, su
 - **Responses API** with official event sequence (`response.created` → deltas → `response.completed`).
 - **Web search** as `tools:[{"type":"web_search"}]`: citation markers are cleaned, `annotations[].url_citation` and `sources[]` are returned.
 - **Image generation** via `GenerateImage` (OpenAI Images format + chat `message.images` data-URI extension; JPEG/PNG auto-detected).
+- **Image context across turns**: replayed `image_generation_call` / `image_url` inputs are sent upstream as real image parts (JPEG automatically converted to PNG ≤512px), so follow-up prompts like “modify the previous image” keep visual context instead of degrading to text.
+- **Client tool bridge**: OpenAI `tools[].function` is accepted on both Chat Completions and Responses, auto-normalized between protocols, and returned as native `tool_calls` / `function_call` items. File tools run **client-side** (Codex/DSH); the gateway never executes them.
 
 ### Identity & routing
 
@@ -180,6 +182,21 @@ curl -N http://127.0.0.1:8787/v1/chat/completions \
 
 ---
 
+### Client tools (Codex / DSH file tools)
+
+Both protocols are auto-normalized — no manual allowlist needed:
+
+```json
+// /v1/chat/completions shape
+{"tools":[{"type":"function","function":{"name":"read_file","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]}
+// /v1/responses shape
+{"tools":[{"type":"function","name":"read_file","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}]}
+```
+
+- `client` mode only: the model asks, **Codex/DSH executes locally**, and the result is sent back as `role:"tool"` (chat) or `function_call_output` (responses);
+- Streaming returns `delta.tool_calls` / `response.function_call_arguments.*` events;
+- Disable with **Settings → Tools → 客户端工具** (`tools.clientFunctionCalling.enabled`); no MCP/auto execution exists.
+
 ## 📐 Architecture
 
 ```mermaid
@@ -191,11 +208,12 @@ flowchart LR
     Duck --> Upstream["duck.ai /duckchat/v1/chat"]
     API --> Admin["Admin API /admin/api/*"]
     Admin --> Web["React Admin Console (web/)"]
+    API --> Tools["Client tool bridge<br/>(Completions ↔ Responses)"]
     API --> DB[("SQLite<br/>data/duckai.db")]
     Admin --> DB
 ```
 
-- **Node.js native http**: no Express; small dependency surface (`jsdom`, `undici`, `socks`).
+- **Node.js native http**: no Express; small dependency surface (`jsdom`, `undici`, `socks`, and pure-JS `jpeg-js`/`pngjs` for image conversion).
 - **Challenge solver**: `X-VQD-Hash-1` rolling challenges executed via jsdom with browser-shaped stacks/signals.
 - **SSE normalization**: strict protocol mode; unknown frames abort the request instead of silently degrading.
 - **Continuation support**: tool approvals (web-search / image generation / approximate location) are resumed automatically with browser-identical payloads.
@@ -239,6 +257,7 @@ Frequently used settings:
 | `pool.quotaCooldownMinutes` | `1440` | Quota cooldown fallback |
 | `tools.webSearch` / `imageGeneration` | `true` | Built-in tools |
 | `tools.location` | `false` | Approximate location (user-location) |
+| `tools.clientFunctionCalling.enabled` | `true` | Client tool bridge (Codex/DSH file tools) |
 | `history.retentionDays` | `30` | Session history retention |
 | `prompts.source` | `duckai` | Prompt generator source (`duckai`/`custom`/`none`) |
 

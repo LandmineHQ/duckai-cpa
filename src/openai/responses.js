@@ -27,8 +27,19 @@ import {
   createCitationFilter,
   createFirstEventGate,
   resolveToolFlags,
-  recordUsageOnLog
+  recordUsageOnLog,
+  normalizeContentParts,
+  normalizeImagePart,
+  injectProtocolIntoLastUser
 } from './chat.js';
+import {
+  buildToolProtocol,
+  formatToolCallsForHistory,
+  formatToolResult,
+  normalizeToolDefinitions,
+  parseToolCalls,
+  stripToolCallText
+} from './tool-protocol.js';
 import { resolveModel, resolveReasoningEffort } from './models.js';
 import { guardConversation } from './context-guard.js';
 import { normalizeToolCalls, recordHistoryOnLog } from './chat.js';
@@ -43,8 +54,6 @@ import {
 } from './errors.js';
 
 const IGNORED_INPUT_ITEM_TYPES = new Set([
-  'function_call',
-  'function_call_output',
   'item_reference',
   'computer_call',
   'computer_call_output',
@@ -63,9 +72,9 @@ const IGNORED_INPUT_ITEM_TYPES = new Set([
 /* Input normalization                                                 */
 /* ------------------------------------------------------------------ */
 
-function pushContentItem(item, systemParts, conversation) {
+function pushContentItem(item, systemParts, conversation, state = { pendingImages: [] }) {
   if (typeof item === 'string') {
-    conversation.push({ role: 'user', content: item });
+    conversation.push({ role: 'user', content: item, ...(state.pendingImages.length ? { images: state.pendingImages.splice(0) } : {}) });
     return 'user';
   }
   if (!item || typeof item !== 'object') {
@@ -76,32 +85,55 @@ function pushContentItem(item, systemParts, conversation) {
 
   // Content parts passed directly (some SDK helpers do this).
   if (type === 'input_text' || type === 'text' || type === 'output_text') {
-    const text = typeof item.text === 'string' ? item.text : '';
-    conversation.push({ role: 'user', content: text });
+    const normalized = normalizeContentParts(item);
+    conversation.push({ role: 'user', content: normalized.text });
     return 'user';
   }
-  if (type === 'input_image' || type === 'input_file') return null;
-  // v2.40：上一轮生图的 output item 会被客户端原样放进下一轮 input，不能 400；
-  // 用一条 assistant 文本占位（不包含 base64），模型仍知道“之前生成过图片”。
+  if (type === 'input_image') {
+    // v2.44：图像输入 → 真实 image part（data URL），交给上游多模态
+    const image = normalizeImagePart(item);
+    if (image) state.pendingImages.push(image);
+    return null;
+  }
+  if (type === 'input_file') return null;
+  // v2.44：上一轮 image_generation_call → 保留真实图片，挂到下一轮 user 消息上。
   if (type === 'image_generation_call') {
-    conversation.push({ role: 'assistant', content: '[image_generation_call] 已生成图片（base64 已省略）' });
+    const format = typeof item.output_format === 'string' && item.output_format ? item.output_format : 'png';
+    const b64 = typeof item.result === 'string' ? item.result : '';
+    if (b64) {
+      const mime = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : `image/${format.replace(/^image\//, '')}`;
+      state.pendingImages.push({ mimeType: mime, dataUrl: `data:${mime};base64,${b64}` });
+    }
+    return 'image';
+  }
+  // v2.44：客户端工具历史回放
+  if (type === 'function_call') {
+    const name = typeof item.name === 'string' ? item.name : 'tool';
+    const args = typeof item.arguments === 'string' ? item.arguments : '{}';
+    conversation.push({ role: 'assistant', content: formatToolCallsForHistory([{ name, arguments: args }]) });
     return 'assistant';
+  }
+  if (type === 'function_call_output') {
+    conversation.push({ role: 'user', content: formatToolResult({ result: item.output }) });
+    return 'user';
   }
   if (IGNORED_INPUT_ITEM_TYPES.has(type)) return null;
 
   if (type === 'message' || (!type && (item.role || item.content !== undefined))) {
     const role = typeof item.role === 'string' ? item.role.toLowerCase() : 'user';
-    const content = normalizeContent(item.content);
+    const normalized = normalizeContentParts(item.content);
+    const content = normalized.text;
+    const images = normalized.images;
     if (role === 'system' || role === 'developer') {
       if (content.trim()) systemParts.push(content);
       return 'system';
     }
     if (role === 'user') {
-      conversation.push({ role: 'user', content });
+      conversation.push({ role: 'user', content, ...(images.length || state.pendingImages.length ? { images: [...state.pendingImages.splice(0), ...images] } : {}) });
       return 'user';
     }
     if (role === 'assistant') {
-      conversation.push({ role: 'assistant', content });
+      conversation.push({ role: 'assistant', content, ...(images.length ? { images } : {}) });
       return 'assistant';
     }
     throw badRequest(`Unsupported input message role "${role}"`, 'input');
@@ -116,16 +148,22 @@ function pushContentItem(item, systemParts, conversation) {
 export function normalizeResponsesInput(input) {
   const systemParts = [];
   const conversation = [];
+  const state = { pendingImages: [] };
 
   if (typeof input === 'string') {
     if (input.trim()) conversation.push({ role: 'user', content: input });
   } else if (Array.isArray(input)) {
-    for (const item of input) pushContentItem(item, systemParts, conversation);
+    for (const item of input) pushContentItem(item, systemParts, conversation, state);
+    if (state.pendingImages.length) {
+      conversation.push({ role: 'user', content: '（上一轮生成的图片）', images: state.pendingImages.splice(0) });
+    }
   } else {
     throw badRequest('"input" must be a string or an array of message items', 'input');
   }
 
-  const hasUserText = conversation.some((message) => message.role === 'user' && message.content.trim());
+  const hasUserText =
+    conversation.some((message) => message.role === 'user' && message.content.trim()) ||
+    conversation.some((message) => message.role === 'user' && Array.isArray(message.images) && message.images.length);
   if (!hasUserText) {
     throw badRequest('"input" must contain at least one non-empty user message', 'input');
   }
@@ -158,6 +196,17 @@ function buildMessageItem(id, text, annotations, status = 'completed') {
     status,
     role: 'assistant',
     content: status === 'completed' ? [part] : []
+  };
+}
+
+function buildFunctionCallItem(id, call, status = 'completed') {
+  return {
+    id,
+    type: 'function_call',
+    status,
+    call_id: call.id,
+    name: call.function && call.function.name ? call.function.name : call.name || 'tool',
+    arguments: status === 'completed' ? (call.function ? call.function.arguments : call.arguments) || '{}' : ''
   };
 }
 
@@ -252,6 +301,10 @@ export async function handleResponses(req, res, ctx) {
     { param: 'reasoning.effort' }
   );
   const flags = resolveToolFlags(ctx.config, resolved.model, body);
+  // v2.44：客户端工具（Responses 形状自动归一化）
+  const clientTools =
+    ctx.config?.tools?.clientFunctionCalling?.enabled === false ? [] : normalizeToolDefinitions(body.tools);
+  if (clientTools.length) ctx.log.clientTools = clientTools.map((tool) => tool.name);
 
   const systemPrompt = composeSystemPrompt(ctx.config, resolved, [
     typeof body.instructions === 'string' ? body.instructions : '',
@@ -259,9 +312,13 @@ export async function handleResponses(req, res, ctx) {
   ]);
   const guarded = guardConversation(input.conversation, systemPrompt, ctx.config?.context || {});
   if (guarded.trimmed) ctx.log.contextTrimmed = true;
+  let upstreamMessages = guarded.messages;
+  if (clientTools.length) {
+    upstreamMessages = injectProtocolIntoLastUser(guarded.messages, buildToolProtocol(clientTools));
+  }
   const duckMessages = buildDuckMessages({
     systemPrompt,
-    conversation: guarded.messages,
+    conversation: upstreamMessages,
     promptMode: ctx.config?.prompts?.mode
   });
   if (typeof ctx.selectIdentity === 'function') {
@@ -292,6 +349,9 @@ export async function handleResponses(req, res, ctx) {
     duckMessages,
     systemPrompt,
     conversation: guarded.messages,
+    upstreamMessages,
+    historyMessages: guarded.messages,
+    clientTools,
     contextTrimmed: guarded.trimmed,
     promptChars: input.promptChars
   };
@@ -367,19 +427,30 @@ async function collectResponse(ctx, params) {
 
   if (collected.error && !collected.content && !result) throw collected.error;
 
-  const content = cleanCitationText(
-    typeof result?.content === 'string' && result.content ? result.content : collected.content
-  );
+  const rawContent =
+    typeof result?.content === 'string' && result.content ? result.content : collected.content;
+  const clientTools = Array.isArray(params.clientTools) ? params.clientTools : [];
+  const toolCalls = clientTools.length ? parseToolCalls(rawContent, clientTools) : [];
+  let content = stripToolCallText(cleanCitationText(rawContent), toolCalls.length > 0);
+  if (toolCalls.length && /^```|^\{|^<tool_call>/i.test(String(rawContent || '').trim())) content = '';
   const reasoningText = cleanCitationText(
     typeof result?.reasoning === 'string' && result.reasoning ? result.reasoning : collected.reasoning
   );
   const sources = mergeSources(collected.sources, result?.sources);
   const images = mergeImages(collected.images, result?.images);
-  return { content, reasoningText, sources, images, usage: collected.usage, finishReason: result?.finishReason };
+  return {
+    content,
+    reasoningText,
+    sources,
+    images,
+    usage: collected.usage,
+    finishReason: toolCalls.length ? 'tool_calls' : result?.finishReason,
+    toolCalls
+  };
 }
 
 async function completeResponse(ctx, params) {
-  const { content, reasoningText, sources, images, usage: upstreamUsage } = await collectResponse(ctx, params);
+  const { content, reasoningText, sources, images, usage: upstreamUsage, toolCalls } = await collectResponse(ctx, params);
   const annotations = buildAnnotations(sources);
   const output = [];
   // v2.40：只有图片时补一条文字说明（Codex 等只渲染 message 的客户端不会显示空消息）
@@ -391,8 +462,11 @@ async function completeResponse(ctx, params) {
 
   if (reasoningText) output.push(buildReasoningItem(genId('rs_'), reasoningText));
   if (content || annotations.length || images.length === 0 || fallbackText) {
-    output.push(buildMessageItem(genId('msg_'), outputText, annotations));
+    if (content || annotations.length || !toolCalls.length) {
+      output.push(buildMessageItem(genId('msg_'), outputText, annotations));
+    }
   }
+  for (const call of toolCalls) output.push(buildFunctionCallItem(genId('fc_'), call));
   for (const image of images) output.push(buildImageItem(genId('ig_'), image));
 
   const usage = buildEstimatedUsage({
@@ -427,18 +501,218 @@ async function completeResponse(ctx, params) {
   if (ctx.log.contextTrimmed) payload.context_trimmed = true;
   // v2.33：/v1/responses 也写入会话历史（此前只有 chat/completions 记录）
   recordHistoryOnLog(ctx, {
-    messages: params.conversation,
+    messages: params.historyMessages || params.conversation,
     assistantText: content || '',
     reasoning: reasoningText,
     images,
     sources,
-    toolCalls: [],
+    toolCalls: toolCalls.map((call) => ({
+      name: call.function?.name || call.name,
+      args: call.function?.arguments,
+      result: '等待客户端执行'
+    })),
     model: params.resolved.id
   });
   ctx.json(200, payload);
 }
 
+/**
+ * v2.44：带客户端工具的 Responses 流式响应。
+ * 工具调用需要完整 JSON，所以先收集再按官方事件序列回放（文本/工具/图片）。
+ */
+async function streamResponseWithTools(ctx, params) {
+  const collected = await collectResponse(ctx, params);
+  const responseId = genId('resp_');
+  const createdAt = nowSec();
+  const writer = ctx.openSSE();
+  let sequence = 0;
+  const emit = (type, data = {}) => {
+    const event = { type, sequence_number: sequence, ...data };
+    sequence += 1;
+    if (!writer.closed) writer.event(type, event);
+  };
+
+  const { content, reasoningText, sources, images, toolCalls, usage: upstreamUsage } = collected;
+  const annotations = buildAnnotations(sources);
+  const output = [];
+  if (reasoningText) output.push(buildReasoningItem(genId('rs_'), reasoningText));
+  const fallbackText =
+    !content && images.length
+      ? `已生成 ${images.length} 张图片（base64 位于 image_generation_call.result 字段）。`
+      : '';
+  const outputText = content || fallbackText;
+  if (content || annotations.length || (!toolCalls.length && !images.length) || fallbackText) {
+    output.push(buildMessageItem(genId('msg_'), outputText, annotations));
+  }
+  for (const call of toolCalls) output.push(buildFunctionCallItem(genId('fc_'), call));
+  for (const image of images) output.push(buildImageItem(genId('ig_'), image));
+
+  const usage = buildEstimatedUsage({
+    promptChars: params.promptChars,
+    completionChars: content.length,
+    reasoningChars: reasoningText.length,
+    upstreamUsage
+  });
+  recordUsageOnLog(ctx, usage);
+  const responsesUsage = {
+    input_tokens: usage.prompt_tokens,
+    output_tokens: usage.completion_tokens,
+    total_tokens: usage.total_tokens,
+    estimated: true,
+    estimation: usage.estimation
+  };
+  const payload = makeResponseObject({
+    id: responseId,
+    createdAt,
+    model: params.resolved.id,
+    status: 'completed',
+    output,
+    outputText,
+    usage: responsesUsage,
+    annotations,
+    body: params.body,
+    reasoningEffort: params.reasoning.effort,
+    reasoningText
+  });
+
+  const inProgress = { ...payload, status: 'in_progress' };
+  emit('response.created', { response: inProgress });
+  emit('response.in_progress', { response: inProgress });
+
+  let outputIndex = 0;
+  if (reasoningText) {
+    const item = output[outputIndex];
+    emit('response.output_item.added', { response_id: responseId, output_index: outputIndex, item });
+    emit('response.reasoning_summary_part.added', {
+      response_id: responseId,
+      item_id: item.id,
+      output_index: outputIndex,
+      summary_index: 0,
+      part: { type: 'summary_text', text: '' }
+    });
+    emit('response.reasoning_summary_text.delta', {
+      response_id: responseId,
+      item_id: item.id,
+      output_index: outputIndex,
+      summary_index: 0,
+      delta: reasoningText
+    });
+    emit('response.reasoning_summary_text.done', {
+      response_id: responseId,
+      item_id: item.id,
+      output_index: outputIndex,
+      summary_index: 0,
+      text: reasoningText
+    });
+    emit('response.reasoning_summary_part.done', {
+      response_id: responseId,
+      item_id: item.id,
+      output_index: outputIndex,
+      summary_index: 0,
+      part: { type: 'summary_text', text: reasoningText }
+    });
+    emit('response.output_item.done', { response_id: responseId, output_index: outputIndex, item });
+    outputIndex += 1;
+  }
+
+  const messageItem = output.find((item) => item.type === 'message');
+  if (messageItem) {
+    emit('response.output_item.added', { response_id: responseId, output_index: outputIndex, item: { ...messageItem, status: 'in_progress', content: [] } });
+    emit('response.content_part.added', {
+      response_id: responseId,
+      item_id: messageItem.id,
+      output_index: outputIndex,
+      content_index: 0,
+      part: { type: 'output_text', text: '', annotations: [] }
+    });
+    if (outputText) {
+      emit('response.output_text.delta', {
+        response_id: responseId,
+        item_id: messageItem.id,
+        output_index: outputIndex,
+        content_index: 0,
+        delta: outputText,
+        logprobs: []
+      });
+    }
+    emit('response.output_text.done', {
+      response_id: responseId,
+      item_id: messageItem.id,
+      output_index: outputIndex,
+      content_index: 0,
+      text: outputText
+    });
+    emit('response.content_part.done', {
+      response_id: responseId,
+      item_id: messageItem.id,
+      output_index: outputIndex,
+      content_index: 0,
+      part: messageItem.content[0]
+    });
+    emit('response.output_item.done', { response_id: responseId, output_index: outputIndex, item: messageItem });
+    outputIndex += 1;
+  }
+
+  for (const call of toolCalls) {
+    const item = output.find((entry) => entry.type === 'function_call' && entry.call_id === call.id);
+    if (!item) continue;
+    emit('response.output_item.added', {
+      response_id: responseId,
+      output_index: outputIndex,
+      item: { ...item, status: 'in_progress', arguments: '' }
+    });
+    emit('response.function_call_arguments.delta', {
+      response_id: responseId,
+      item_id: item.id,
+      output_index: outputIndex,
+      delta: item.arguments
+    });
+    emit('response.function_call_arguments.done', {
+      response_id: responseId,
+      item_id: item.id,
+      output_index: outputIndex,
+      arguments: item.arguments
+    });
+    emit('response.output_item.done', { response_id: responseId, output_index: outputIndex, item });
+    outputIndex += 1;
+  }
+
+  for (const image of images) {
+    const item = output.find((entry) => entry.type === 'image_generation_call' && entry.result === image.b64);
+    if (!item) continue;
+    emit('response.output_item.added', { response_id: responseId, output_index: outputIndex, item });
+    emit('response.image_generation_call.completed', {
+      response_id: responseId,
+      item_id: item.id,
+      output_index: outputIndex,
+      result: image.b64
+    });
+    emit('response.output_item.done', { response_id: responseId, output_index: outputIndex, item });
+    outputIndex += 1;
+  }
+
+  recordHistoryOnLog(ctx, {
+    messages: params.historyMessages || params.conversation,
+    assistantText: content || '',
+    reasoning: reasoningText,
+    images,
+    sources,
+    toolCalls: toolCalls.map((call) => ({
+      name: call.function?.name || call.name,
+      args: call.function?.arguments,
+      result: '等待客户端执行'
+    })),
+    model: params.resolved.id
+  });
+  emit('response.completed', { response: payload });
+  writer.end();
+}
+
 async function streamResponse(ctx, params) {
+  if (Array.isArray(params.clientTools) && params.clientTools.length > 0) {
+    return streamResponseWithTools(ctx, params);
+  }
+
   const responseId = genId('resp_');
   const createdAt = nowSec();
   const model = params.resolved.id;

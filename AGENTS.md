@@ -103,8 +103,8 @@ data/                运行时数据（不入库；含敏感文件）
   `/duckchat/v1/capabilities` 只在启动与手动刷新时读（仅 flags/实验）。
 - **工具策略**（v2.22–v2.23）：只能开关上游支持的 tool（`web_search` / `image_generation`）；
   不可用 tool 默认**静默清理**（`config.models.tools.dropUnsupported=true`），设为 `false` 时才 400
-  （`unsupported_tool` / `tool_not_supported` / `tool_disabled`）。OpenAI function calling
-  **不支持**（duck.ai 无 tools 通道）。模型配置页是**防抖自动保存**（无保存按钮）、
+  （`unsupported_tool` / `tool_not_supported` / `tool_disabled`）。OpenAI `tools[].function` 由 **client 工具桥**支持
+  （v2.44，网关不执行、不接 MCP；见下）。模型配置页是**防抖自动保存**（无保存按钮）、
   每个参数可单独重置，底部「危险 / 高级操作」卡片放静默清理开关与「重置全部模型配置」。
 - **压缩**：只对白名单模型自动压缩；触发按 pair / `activationTargetPairCount`（不按字符）；
   `gpt-6-luna` 等不自动压缩（会话上限时只能新会话，见 `docs/CONTEXT-TOKENS.md`）。
@@ -113,11 +113,14 @@ data/                运行时数据（不入库；含敏感文件）
   `data/identity.json`（全局身份密钥）、`data/pairing.json`（恢复码）。连接测试会话/压缩摘要/统计/managed keys 已分别写入
   `test_sessions`、`chat_summaries`、`meta.stats.*`、`meta.keys.managed`（旧 JSON 仅首启导入一次，随后可归档到 `data/legacy-json-archive/`）。
 - **session id 展示（v2.40）**：连接测试 header/列表与会话历史详情/列表都展示完整 session id（可复制）；无 X-Session-Id 的 v1 请求历史 key 为 `auto:<hash>`。
-- **Responses 生图（v2.40）**：`/v1/responses` 只有图片时必须补 message item + output_text；下一轮 input 里的 `image_generation_call` 必须接受（转 assistant 占位文本），否则 Codex 继续对话会 400。
-- **自定义 tools 已移除（v2.42）**：v2.39 引入的网关级 function calling（`tools.functionCalling.*`）与 MCP 工具
-  （`tools.mcp.*`、`src/tools/mcp-client.js`、`src/openai/function-calling.js`）已全部删除。保留内置工具
-  `tools.webSearch` / `tools.imageGeneration` / `tools.location`；OpenAI `tools[].function` 重新视为不支持的 tool
-  （默认静默丢弃，`models.tools.dropUnsupported=false` 时 400 `unsupported_tool`），`role:"tool"` 消息返回 400。
+- **Responses 生图（v2.40/v2.44）**：`/v1/responses` 只有图片时必须补 message item + output_text；下一轮 input 里的 `image_generation_call` 必须接受，并保留为真实 image part（v2.44 起不再转文本占位），JPEG 转 PNG ≤512px 后转发。
+- **客户端工具桥（v2.44）**：OpenAI `tools[].function` 重新支持，但**只做 client 模式**（Codex/DSH 本地执行，
+  网关不执行、不接 MCP）。Completions 与 Responses 的 tools 形状由 `src/openai/tool-protocol.js` 自动归一化，
+  输出分别映射为 `tool_calls` / `function_call`；下一轮接受 `role:"tool"` 与 `function_call_output`。
+  协议注入必须放在**最后一条 user 消息**（放 system/inline 前缀会被模型忽略）；配置 `tools.clientFunctionCalling.enabled`（默认 true）。
+- **图片上下文（v2.44）**：`image_generation_call` 回放不能退化成文本占位；必须转成真实 image part（挂到下一轮 user 消息）。
+  上游图像输入只接受 PNG/WebP（JPEG 实测 400 sc22），`src/duck/image-convert.js`（jpeg-js + pngjs，纯 JS）统一转 PNG 并缩到 **512px**；
+  `/v1/chat/completions` 的 `image_url` data URL、`/v1/responses` 的 `input_image` 同样支持。
 - **消息组件统一（v2.37）**：「连接测试」与「会话历史」共用 `webapp/src/app/components/chat-message.tsx` 的
   `ChatMessageBubble`（+`ToolCallList`）：助手气泡/思考折叠/来源/图片/工具调用徽章一致；会话历史只读（不传 onRetry）。
   后端用 `src/openai/chat.js` 的 `normalizeToolCalls({toolCalls, approvals, images})` 统一生成 toolCalls，

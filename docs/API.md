@@ -964,9 +964,10 @@ v2 有三类 429，处理方式不同：
 
 ### 支持 function calling / 自定义工具吗？
 
-不支持（v2.39 曾实验性支持，v2.42 已移除）。仅支持 `web_search` 与 `image_generation` 两种**内置工具**；
-OpenAI `tools[].function` 默认会被静默丢弃（`models.tools.dropUnsupported=false` 时返回 `400 unsupported_tool`）。
-需要函数调用请在客户端自行实现「把工具结果拼回 prompt」。
+支持 **client 模式**（v2.44）：客户端（Codex/DSH）传 OpenAI `tools[].function`，网关解析模型输出并返回
+`tool_calls`（chat）或 `function_call`（responses），工具由客户端本地执行；下一轮用 `role:"tool"` /
+`function_call_output` 回传结果。**网关不执行工具、不接 MCP**。Completions 与 Responses 两种 tools 形状自动归一化。
+仍保留内置 `web_search` / `image_generation` / `location`。
 
 ### 模型别名与 `duck-` 前缀
 
@@ -1091,8 +1092,18 @@ Chat Completions 没有官方的 assistant 图片字段，采用主流 OpenAI �
 
 图片以 OpenAI Responses 官方格式返回：`output` 中的 `image_generation_call` 项，
 `result` 为 base64，`output_format` 为真实格式（`jpeg`/`png`/`webp`）。
-## v2.42：自定义 tools 已移除
+## v2.44：客户端工具桥 + 图片上下文
 
-v2.39 的网关级 function calling（`tools.functionCalling.*`）与 MCP 工具（`tools.mcp.*`）已全部删除。
-现在只保留 duck.ai 原生内置工具：`web_search`、`image_generation`、`location`（设置 → 工具）。
-OpenAI `tools[].function` 视为不支持的 tool：默认静默丢弃；`models.tools.dropUnsupported=false` 时返回 `400 unsupported_tool`。
+### 客户端工具（Completions / Responses 自动转换）
+
+- `/v1/chat/completions`：`tools:[{type:"function",function:{name,description,parameters}}]`；返回 `message.tool_calls` + `finish_reason:"tool_calls"`；下一轮 `assistant.tool_calls` + `role:"tool"`。
+- `/v1/responses`：`tools:[{type:"function",name,description,parameters}]`；返回 `output` 里的 `function_call` item；下一轮 `function_call` + `function_call_output`。
+- 两种形状可混用（网关自动归一化）；流式返回 `delta.tool_calls` / `response.function_call_arguments.*`。
+- 仅 client 模式：工具由 Codex/DSH 本地执行；网关不执行、不接 MCP。
+
+### 图片输入 / 生图上下文
+
+- `/v1/chat/completions`：user content 支持 `{type:"image_url",image_url:{url:"data:image/png;base64,..."}}`。
+- `/v1/responses`：支持 `input_image`；上一轮 `image_generation_call` item 原样回传时，网关保留真实图片并挂到下一轮 user 消息（不再变文本）。
+- 上游图像输入只接受 PNG/WebP（JPEG 返回 400 sc22）：网关用 `jpeg-js` + `pngjs` 统一转 PNG 并缩到 **512px**；超过限制的图片会被压缩。
+- 仅图片的响应仍补 `message` + `output_text` 兜底，避免客户端显示空消息。

@@ -31,6 +31,14 @@ import {
 import { guardConversation } from './context-guard.js';
 import { detectImageFormat, normalizeFormat, imageDataUri, imageMimeType } from '../duck/image-format.js';
 import {
+  buildToolProtocol,
+  formatToolCallsForHistory,
+  formatToolResult,
+  normalizeToolDefinitions,
+  parseToolCalls,
+  stripToolCallText
+} from './tool-protocol.js';
+import {
   buildCompactedSystemPrompt,
   evaluateCompactionTrigger,
   getCompactConfig,
@@ -117,11 +125,21 @@ const TEXT_PART_TYPES = new Set(['text', 'input_text', 'output_text']);
  * ignored because the duck.ai text chat is the only upstream capability.
  */
 export function normalizeContent(content) {
-  if (typeof content === 'string') return content;
-  if (content == null) return '';
-  if (typeof content === 'number' || typeof content === 'boolean') return String(content);
-  if (!Array.isArray(content)) return '';
+  return normalizeContentParts(content).text;
+}
+
+/**
+ * v2.44：文本 + 图片 part 一起归一化（图片用于上游多模态输入 / 生图回放）。
+ * 仅接受 data:image/*；远程 URL 不在这里下载（避免 SSRF/额外网络）。
+ * @returns {{ text: string, images: Array<{mimeType:string,dataUrl:string}> }}
+ */
+export function normalizeContentParts(content) {
+  if (typeof content === 'string') return { text: content, images: [] };
+  if (content == null) return { text: '', images: [] };
+  if (typeof content === 'number' || typeof content === 'boolean') return { text: String(content), images: [] };
+  if (!Array.isArray(content)) return { text: '', images: [] };
   const parts = [];
+  const images = [];
   for (const part of content) {
     if (typeof part === 'string') {
       parts.push(part);
@@ -132,10 +150,29 @@ export function normalizeContent(content) {
     if (TEXT_PART_TYPES.has(type)) {
       const text = typeof part.text === 'string' ? part.text : typeof part.content === 'string' ? part.content : '';
       if (text) parts.push(text);
+      continue;
     }
-    // image_url / input_image / file parts are intentionally ignored.
+    if (type === 'image_url' || type === 'input_image' || type === 'image') {
+      const image = normalizeImagePart(part);
+      if (image) images.push(image);
+    }
   }
-  return parts.join('\n');
+  return { text: parts.join('\n'), images };
+}
+
+/** @returns {{mimeType:string,dataUrl:string}|null} */
+export function normalizeImagePart(part) {
+  if (!part || typeof part !== 'object') return null;
+  let raw = '';
+  if (typeof part.image_url === 'string') raw = part.image_url;
+  else if (part.image_url && typeof part.image_url === 'object' && typeof part.image_url.url === 'string') raw = part.image_url.url;
+  else if (typeof part.image === 'string') raw = part.image;
+  else if (typeof part.url === 'string') raw = part.url;
+  raw = raw.trim();
+  if (!raw.startsWith('data:image/')) return null;
+  const match = raw.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/);
+  if (!match) return null;
+  return { mimeType: match[1], dataUrl: raw };
 }
 
 /**
@@ -156,25 +193,33 @@ export function normalizeChatMessages(rawMessages) {
       throw badRequest(`messages[${index}] must be an object`, 'messages');
     }
     const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
-    const content = normalizeContent(message.content);
+    const normalized = normalizeContentParts(message.content);
+    const content = normalized.text;
+    const images = normalized.images;
     if (role === 'system' || role === 'developer') {
       if (content.trim()) systemParts.push(content);
       return;
     }
     if (role === 'user') {
       userMessages += 1;
-      conversation.push({ role: 'user', content });
+      conversation.push({ role: 'user', content, ...(images.length ? { images } : {}) });
       return;
     }
     if (role === 'assistant') {
-      conversation.push({ role: 'assistant', content });
+      // v2.44：客户端回放 tool_calls 时编码成文本（duck.ai 没有 tool role）
+      const toolText = formatToolCallsForHistory(message.tool_calls);
+      const merged = [content, toolText].filter(Boolean).join('\n');
+      conversation.push({ role: 'assistant', content: merged, ...(images.length ? { images } : {}) });
       return;
     }
     if (role === 'tool' || role === 'function') {
-      throw badRequest(
-        `messages[${index}].role "${role}" is not supported: this gateway does not proxy function/tool calls`,
-        'messages'
-      );
+      // v2.44：客户端执行完工具后回传 role:"tool" → 编码为上游可读 user 文本
+      const name = typeof message.name === 'string' ? message.name : '';
+      conversation.push({
+        role: 'user',
+        content: formatToolResult({ name, result: message.content })
+      });
+      return;
     }
     throw badRequest(`messages[${index}].role "${role || '(missing)'}" is not supported`, 'messages');
   });
@@ -214,7 +259,11 @@ export function composeSystemPrompt(config, resolvedModel, parts = []) {
  */
 export function buildDuckMessages({ systemPrompt = '', conversation = [], promptMode = 'system' } = {}) {
   const messages = [];
-  const history = conversation.map((message) => ({ role: message.role, content: message.content }));
+  const history = conversation.map((message) => ({
+    role: message.role,
+    content: message.content,
+    ...(Array.isArray(message.images) && message.images.length ? { images: message.images } : {})
+  }));
   if (systemPrompt && systemPrompt.trim()) {
     if (promptMode === 'inline') {
       const firstUser = history.findIndex((message) => message.role === 'user');
@@ -222,6 +271,7 @@ export function buildDuckMessages({ systemPrompt = '', conversation = [], prompt
         history.unshift({ role: 'user', content: `[系统指令] ${systemPrompt}` });
       } else {
         history[firstUser] = {
+          ...history[firstUser],
           role: 'user',
           content: `[系统指令] ${systemPrompt}\n\n[用户] ${history[firstUser].content}`
         };
@@ -237,6 +287,28 @@ export function buildDuckMessages({ systemPrompt = '', conversation = [], prompt
 /* ------------------------------------------------------------------ */
 /* Tools                                                               */
 /* ------------------------------------------------------------------ */
+
+/**
+ * v2.44：把客户端工具协议附加到最后一条 user 消息（system/inline 前缀模型会忽略）。
+ * @param {Array<{role:string, content:string}>} messages
+ * @param {string} protocol
+ */
+export function injectProtocolIntoLastUser(messages, protocol) {
+  if (!Array.isArray(messages) || !protocol) return messages;
+  let lastUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index] && messages[index].role === 'user') {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  if (lastUserIndex < 0) return messages;
+  return messages.map((message, index) =>
+    index === lastUserIndex
+      ? { ...message, content: `${message.content}\n\n${protocol}` }
+      : message
+  );
+}
 
 /**
  * Resolve capability flags from the request (`tools` array + `web_search` /
@@ -568,13 +640,16 @@ export function buildChatCompletion({
   sources,
   images,
   finishReason,
-  usage
+  usage,
+  toolCalls
 }) {
+  const hasToolCalls = Array.isArray(toolCalls) && toolCalls.length > 0;
   const message = {
     role: 'assistant',
-    content: content || '',
+    content: hasToolCalls && !content ? null : content || '',
     refusal: null
   };
+  if (hasToolCalls) message.tool_calls = toolCalls;
   if (reasoning) message.reasoning_content = reasoning;
   if (sources && sources.length) {
     message.annotations = buildAnnotations(sources);
@@ -591,7 +666,7 @@ export function buildChatCompletion({
         index: 0,
         message,
         logprobs: null,
-        finish_reason: normalizeFinishReason(finishReason)
+        finish_reason: hasToolCalls ? 'tool_calls' : normalizeFinishReason(finishReason)
       }
     ],
     usage,
@@ -624,6 +699,10 @@ export async function handleChatCompletions(req, res, ctx) {
   const reasoning = resolveReasoningEffort(resolved.model, body.reasoning_effort ?? body.reasoning?.effort);
   const flags = resolveToolFlags(ctx.config, resolved.model, body);
   if (flags.dropped && flags.dropped.length) ctx.log.droppedTools = flags.dropped;
+  // v2.44：客户端工具（Codex/DSH 文件工具）——Completions 形状自动归一化
+  const clientTools =
+    ctx.config?.tools?.clientFunctionCalling?.enabled === false ? [] : normalizeToolDefinitions(body.tools);
+  if (clientTools.length) ctx.log.clientTools = clientTools.map((tool) => tool.name);
   let systemPrompt = composeSystemPrompt(ctx.config, resolved, messages.systemParts);
   // v2.11: routed identity is needed before compaction (summary is an upstream call).
   if (typeof ctx.selectIdentity === 'function') {
@@ -691,9 +770,13 @@ export async function handleChatCompletions(req, res, ctx) {
   const historyMessages = guarded.messages;
   ctx.historyMessages = historyMessages;
   if (guarded.trimmed) ctx.log.contextTrimmed = true;
+  let upstreamMessages = guarded.messages;
+  if (clientTools.length) {
+    upstreamMessages = injectProtocolIntoLastUser(guarded.messages, buildToolProtocol(clientTools));
+  }
   const duckMessages = buildDuckMessages({
     systemPrompt,
-    conversation: guarded.messages,
+    conversation: upstreamMessages,
     promptMode: ctx.config?.prompts?.mode
   });
 
@@ -707,9 +790,10 @@ export async function handleChatCompletions(req, res, ctx) {
     flags,
     duckMessages,
     systemPrompt,
-    conversation: guarded.messages,
-    guardedMessages: guarded.messages,
+    conversation: upstreamMessages,
+    guardedMessages: upstreamMessages,
     historyMessages,
+    clientTools,
     promptChars: messages.promptChars,
     contextTrimmed: guarded.trimmed,
     compactedInfo,
@@ -820,15 +904,18 @@ async function resolveChatCompletion(ctx, params) {
   const { collected, result } = outcome;
   if (collected.error && !collected.content && !result) throw collected.error;
 
-  const content = cleanCitationText(
-    typeof result?.content === 'string' && result.content ? result.content : collected.content
-  );
+  const rawContent =
+    typeof result?.content === 'string' && result.content ? result.content : collected.content;
+  const clientTools = Array.isArray(params.clientTools) ? params.clientTools : [];
+  const toolCalls = clientTools.length ? parseToolCalls(rawContent, clientTools) : [];
+  let content = stripToolCallText(cleanCitationText(rawContent), toolCalls.length > 0);
+  if (toolCalls.length && /^```|^\{|^<tool_call>/i.test(String(rawContent || '').trim())) content = '';
   const reasoningText = cleanCitationText(
     typeof result?.reasoning === 'string' && result.reasoning ? result.reasoning : collected.reasoning
   );
   const sources = mergeSources(collected.sources, result?.sources);
   const images = mergeImages(collected.images, result?.images);
-  const finishReason = result?.finishReason || collected.finishReason;
+  const finishReason = toolCalls.length ? 'tool_calls' : result?.finishReason || collected.finishReason;
   const usage = buildEstimatedUsage({
     promptChars: params.promptChars,
     completionChars: content.length,
@@ -842,6 +929,11 @@ async function resolveChatCompletion(ctx, params) {
     images,
     usage,
     finishReason,
+    toolCalls: toolCalls.map((call) => ({
+      id: call.id,
+      type: 'function',
+      function: { name: call.name, arguments: call.arguments }
+    })),
     collected,
     result
   };
@@ -849,7 +941,7 @@ async function resolveChatCompletion(ctx, params) {
 
 async function completeChatCompletion(ctx, params) {
   const resolved = await resolveChatCompletion(ctx, params);
-  const { content, reasoningText, sources, images, finishReason } = resolved;
+  const { content, reasoningText, sources, images, finishReason, toolCalls } = resolved;
   const model = params.resolved.id;
 
   // v2.31：写入会话历史（附 function calls）
@@ -859,11 +951,14 @@ async function completeChatCompletion(ctx, params) {
     reasoning: reasoningText,
     images,
     sources,
-    toolCalls: normalizeToolCalls({
-      toolCalls: [...(resolved.collected.toolCalls || []), ...((resolved.result && resolved.result.toolCalls) || [])],
-      approvals: (resolved.result && resolved.result.approvals) || [],
-      images
-    }),
+    toolCalls: [
+      ...normalizeToolCalls({
+        toolCalls: [...(resolved.collected.toolCalls || []), ...((resolved.result && resolved.result.toolCalls) || [])],
+        approvals: (resolved.result && resolved.result.approvals) || [],
+        images
+      }),
+      ...toolCalls.map((call) => ({ name: call.function?.name || call.name, args: call.function?.arguments, result: '等待客户端执行' }))
+    ],
     model
   });
   recordUsageOnLog(ctx, resolved.usage);
@@ -877,7 +972,8 @@ async function completeChatCompletion(ctx, params) {
     sources,
     images,
     finishReason,
-    usage: resolved.usage
+    usage: resolved.usage,
+    toolCalls
   });
   if (ctx.log.contextTrimmed) payload.context_trimmed = true;
   if (params.compactedInfo) {
@@ -926,11 +1022,66 @@ function sendStreamError(ctx, writer, error) {
   writer.end();
 }
 
+/**
+ * v2.44：带客户端工具的流式响应——先完整解析（需要工具 JSON），再按 OpenAI chunk 回放。
+ */
+async function streamChatCompletionWithTools(ctx, params) {
+  const resolved = await resolveChatCompletion(ctx, params);
+  const { content, reasoningText, sources, images, finishReason, toolCalls } = resolved;
+  const base = {
+    id: genId('chatcmpl-'),
+    object: 'chat.completion.chunk',
+    created: nowSec(),
+    model: params.resolved.id,
+    system_fingerprint: null
+  };
+  const writer = ctx.openSSE();
+  const emit = (delta, finish = null) => {
+    if (!writer.closed) writer.data({ ...base, choices: [{ index: 0, delta, logprobs: null, finish_reason: finish }] });
+  };
+  emit({ role: 'assistant', content: '' });
+  if (reasoningText) {
+    for (let index = 0; index < reasoningText.length; index += 200) {
+      emit({ reasoning_content: reasoningText.slice(index, index + 200) });
+    }
+  }
+  if (toolCalls.length) {
+    toolCalls.forEach((call, index) =>
+      emit({
+        tool_calls: [{
+          index,
+          id: call.id,
+          type: 'function',
+          function: { name: call.function.name, arguments: call.function.arguments }
+        }]
+      })
+    );
+    emit({}, 'tool_calls');
+  } else {
+    const text = content || '';
+    for (let index = 0; index < text.length; index += 120) {
+      emit({ content: text.slice(index, index + 120) });
+    }
+    if (sources.length) emit({ annotations: buildAnnotations(sources), sources });
+    if (images.length) emit({ images: images.map(toChatImage) });
+    emit({}, finishReason);
+  }
+  if (params.streamOptions?.include_usage === true) {
+    writer.data({ ...base, choices: [], usage: resolved.usage });
+  }
+  writer.data('[DONE]');
+  writer.end();
+}
+
 async function streamChatCompletion(ctx, params) {
   const id = genId('chatcmpl-');
   const created = nowSec();
   const model = params.resolved.id;
   const base = { id, object: 'chat.completion.chunk', created, model, system_fingerprint: null };
+
+  if (Array.isArray(params.clientTools) && params.clientTools.length > 0) {
+    return streamChatCompletionWithTools(ctx, params);
+  }
 
   let writer = null;
   const pendingChoices = [];

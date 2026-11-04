@@ -127,7 +127,9 @@ export const DEFAULT_CONFIG = Object.freeze({
   tools: {
     webSearch: true,
     imageGeneration: true,
-    location: false
+    location: false,
+    // v2.44：客户端工具桥（Codex/DSH 文件工具）——仅 client 模式，网关不执行工具
+    clientFunctionCalling: { enabled: true }
   }
 });
 
@@ -190,7 +192,9 @@ export const ADMIN_EDITABLE_PATHS = Object.freeze([
   'tools.webSearch',
   'tools.imageGeneration',
   // v2.36：是否允许上游使用「大致位置」（user-location）。默认不允许。
-  'tools.location'
+  'tools.location',
+  // v2.44：客户端工具桥（Completions / Responses 自动转换）
+  'tools.clientFunctionCalling.enabled'
 ]);
 
 /** Editable by prefix (arbitrary keys below the prefix). */
@@ -680,7 +684,11 @@ export function normalizeConfig(raw = {}) {
       webSearch: toBoolean(tools.webSearch, true),
       imageGeneration: toBoolean(tools.imageGeneration, true),
       // v2.36：定位能力（对应 duck.ai bundle 的 canUseApproxLocation）；默认不允许
-      location: toBoolean(tools.location, false)
+      location: toBoolean(tools.location, false),
+      // v2.44：客户端工具桥（默认开启；网关只解析/转发 tool_calls，不执行工具）
+      clientFunctionCalling: {
+        enabled: toBoolean(tools.clientFunctionCalling?.enabled, true)
+      }
     }
   };
 }
@@ -739,6 +747,7 @@ function assertEditableValue(dotted, value) {
     case 'tools.webSearch':
     case 'tools.imageGeneration':
     case 'tools.location':
+    case 'tools.clientFunctionCalling.enabled':
     case 'duck.allowPaidModels':
     case 'identity.enabled':
     case 'identity.durableStream.enabled':

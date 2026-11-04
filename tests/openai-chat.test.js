@@ -511,7 +511,7 @@ test('工具校验：默认策略丢弃不可用工具；dropUnsupported=false �
     }
   );
 
-  // 5) strict：OpenAI function tool（v2.39 曾支持，v2.42 已移除）→ 400 unsupported_tool
+  // 5) v2.44：function tool 由客户端工具桥支持（不再 400；MockDuck 返回普通文本）
   const duck5 = newDuck();
   await withServer(
     { duck: duck5, config: makeConfig({ ...ADMIN, models: { tools: { dropUnsupported: false } } }) },
@@ -521,15 +521,15 @@ test('工具校验：默认策略丢弃不可用工具；dropUnsupported=false �
         body: {
           model: 'gpt-6-luna',
           messages: [{ role: 'user', content: 'x' }],
-          tools: [{ type: 'function', function: { name: 'f' } }]
+          tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object', properties: {} } } }]
         }
       });
-      assert.equal(res.status, 400);
-      assert.equal(res.json.error.code, 'unsupported_tool');
+      assert.equal(res.status, 200, res.text);
+      assert.equal(duck5.calls.chat.length, 1);
     }
   );
 
-  // 6) 默认：function tool 被静默丢弃（不触达上游工具开关），请求仍 200
+  // 6) function tool 与内置 web_search 混用 → 两者都保留
   const duck6 = newDuck();
   await withServer({ duck: duck6, config: makeConfig({ ...ADMIN }) }, async ({ baseUrl }) => {
     const res = await v1Request(baseUrl, '/v1/chat/completions', {
@@ -537,7 +537,7 @@ test('工具校验：默认策略丢弃不可用工具；dropUnsupported=false �
       body: {
         model: 'gpt-6-luna',
         messages: [{ role: 'user', content: 'x' }],
-        tools: [{ type: 'function', function: { name: 'f' } }, { type: 'web_search' }]
+        tools: [{ type: 'function', function: { name: 'read_file' } }, { type: 'web_search' }]
       }
     });
     assert.equal(res.status, 200, res.text);

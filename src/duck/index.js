@@ -25,6 +25,7 @@ import { DUCK_MODELS, DEFAULT_MODEL, MODEL_ALIASES, findModel, getApiModelCatalo
 import { IdentityStore, IdentityError, MemoryIdentityStore, createIdentityStore } from './identity.js';
 import { ProxyManager, ProxyError, createProxyManager } from './proxy.js';
 import { detectImageFormat, normalizeFormat } from './image-format.js';
+import { toUpstreamPngDataUrl } from './image-convert.js';
 
 /** Reasoning effort ordering used for clamping unsupported tiers. */
 export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high'];
@@ -304,18 +305,19 @@ export function buildUpstreamMessages(messages, options = {}) {
   /** @type {Array<Record<string, any>>} */
   const out = [];
   const systemTexts = [];
-  /** @type {Array<{ role: 'system'|'user'|'assistant', text: string }>} */
+  /** @type {Array<{ role: 'system'|'user'|'assistant', text: string, images: Array<Record<string, any>> }>} */
   const normalized = [];
 
   for (const message of Array.isArray(messages) ? messages : []) {
     if (!message) continue;
     const role = message.role === 'developer' ? 'developer' : message.role === 'system' ? 'system' : message.role === 'assistant' ? 'assistant' : 'user';
-    const text = extractMessageText(message.content);
+    const messageText = extractMessageText(message.content);
+    const images = extractMessageImages(message);
     if (role === 'system' || role === 'developer') {
-      if (text) systemTexts.push(text);
+      if (messageText) systemTexts.push(messageText);
       continue;
     }
-    normalized.push({ role, text });
+    normalized.push({ role, text: messageText, images });
   }
 
   const injectedSystem = options.systemPrompt ? String(options.systemPrompt).trim() : '';
@@ -325,12 +327,24 @@ export function buildUpstreamMessages(messages, options = {}) {
     out.push({ role: systemMode, content: [{ type: 'text', text: systemTexts.join('\n\n') }] });
   }
 
+  // v2.44：assistant 历史里的图片（上一轮生成图）挂到紧随其后的 user 消息，
+  // 这样模型在“继续修改这张图”时能真正看到图片而不是文本占位。
+  let pendingImages = [];
   for (const item of normalized) {
     if (item.role === 'assistant') {
       out.push({ role: 'assistant', content: '', parts: [{ type: 'text', text: item.text }] });
+      if (item.images.length) pendingImages.push(...item.images);
     } else {
-      out.push({ role: 'user', content: [{ type: 'text', text: item.text }] });
+      const content = [{ type: 'text', text: item.text }];
+      if (item.images.length || pendingImages.length) {
+        content.push(...pendingImages, ...item.images);
+        pendingImages = [];
+      }
+      out.push({ role: 'user', content });
     }
+  }
+  if (pendingImages.length) {
+    out.push({ role: 'user', content: [{ type: 'text', text: '（上一轮生成的图片）' }, ...pendingImages] });
   }
 
   if (systemTexts.length && systemMode === 'prefix') {
@@ -338,7 +352,8 @@ export function buildUpstreamMessages(messages, options = {}) {
     const firstUser = out.find((message) => message.role === 'user');
     if (firstUser) {
       const existing = firstUser.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n');
-      firstUser.content = [{ type: 'text', text: `[系统指令]\n${prefix}\n\n[用户]\n${existing}` }];
+      const imageParts = firstUser.content.filter((part) => part.type !== 'text');
+      firstUser.content = [{ type: 'text', text: `[系统指令]\n${prefix}\n\n[用户]\n${existing}` }, ...imageParts];
     } else {
       out.unshift({ role: 'user', content: [{ type: 'text', text: `[系统指令]\n${prefix}` }] });
     }
@@ -352,6 +367,36 @@ export function buildUpstreamMessages(messages, options = {}) {
  * @param {unknown} content
  * @returns {string}
  */
+/**
+ * v2.44：把网关内部图片（{mimeType,dataUrl} / {b64,format}）转换为上游 image part。
+ * 上游 user content 支持：{ type:"image", mimeType, image:"data:<mime>;base64,..." }
+ */
+function toUpstreamImagePart(image) {
+  if (!image || typeof image !== 'object') return null;
+  // v2.44：上游图像输入只接受 PNG/WebP（JPEG 实测返回 400 ERR_BAD_REQUEST sc22），
+  // 统一转 PNG 并缩到 512（所有模型的保守上限）。
+  const converted = toUpstreamPngDataUrl(image, { maxDimension: 512 });
+  if (converted) {
+    return { type: 'image', mimeType: converted.mimeType, image: converted.dataUrl };
+  }
+  let dataUrl = typeof image.dataUrl === 'string' ? image.dataUrl.trim() : '';
+  if (!dataUrl && typeof image.b64 === 'string' && image.b64) {
+    const format = typeof image.format === 'string' && image.format ? image.format.toLowerCase().replace(/^image\//, '') : 'png';
+    const mime = format === 'jpg' ? 'image/jpeg' : `image/${format}`;
+    dataUrl = `data:${mime};base64,${image.b64}`;
+  }
+  if (!dataUrl.startsWith('data:image/')) return null;
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/);
+  const mimeType = match ? match[1] : 'image/png';
+  return { type: 'image', mimeType, image: dataUrl };
+}
+
+/** 读取 conversation message 上携带的图片（OpenAI 层已归一化为 {mimeType,dataUrl}）。 */
+function extractMessageImages(message) {
+  const images = Array.isArray(message?.images) ? message.images : [];
+  return images.map(toUpstreamImagePart).filter(Boolean);
+}
+
 function extractMessageText(content) {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {

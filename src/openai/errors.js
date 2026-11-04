@@ -312,7 +312,12 @@ export function toOpenAIError(error) {
     if (retryAfter) headers['Retry-After'] = String(retryAfter);
     if (Number.isFinite(Number(error.retryAt))) headers['X-Duckai-Retry-At'] = String(Math.trunc(Number(error.retryAt)));
     if (Object.keys(headers).length > 0) converted.headers = headers;
-    if (error.errorDetail && typeof error.errorDetail === 'object') converted.errorDetail = error.errorDetail;
+    // v2.44：上游协议错误（尤其 400）在日志里保留 redact 后的响应体，便于排查
+    converted.errorDetail = {
+      upstreamType: typeof error.upstreamType === 'string' ? error.upstreamType : null,
+      transportStatus: Number.isInteger(error.transportStatus) ? error.transportStatus : null,
+      upstreamBody: typeof error.body === 'string' ? error.body : null
+    };
     return converted;
   }
 
