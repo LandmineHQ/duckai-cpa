@@ -237,7 +237,7 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       try {
         row = db.db
           .prepare(
-            'SELECT session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, compression_json, context_pdf_scope, compacted_at, updated_at, expires_at FROM conversation_state WHERE session_key = ?'
+            'SELECT session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, compression_json, context_pdf_scope, compacted_at, images_json, updated_at, expires_at FROM conversation_state WHERE session_key = ?'
           )
           .get(sessionKey);
       } catch (error) {
@@ -271,6 +271,12 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       } catch {
         compression = null;
       }
+      let images = [];
+      try {
+        images = row.images_json ? JSON.parse(row.images_json) : [];
+      } catch {
+        images = [];
+      }
       return {
         sessionKey: row.session_key,
         model: row.model || null,
@@ -282,6 +288,7 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
         compression: compression && typeof compression === 'object' ? compression : null,
         contextPdfScope: row.context_pdf_scope || null,
         compactedAt: Number.isFinite(row.compacted_at) ? row.compacted_at : null,
+        images: Array.isArray(images) ? images.filter((image) => image && typeof image.b64 === 'string' && image.b64) : [],
         updatedAt: row.updated_at,
         expiresAt: row.expires_at
       };
@@ -297,7 +304,8 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       toolsHash = null,
       compression = null,
       contextPdfScope = null,
-      compactedAt = null
+      compactedAt = null,
+      images = null
     }) {
       if (!enabled || !db || typeof sessionKey !== 'string' || !sessionKey) return null;
       const now = Date.now();
@@ -305,6 +313,26 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       const canonicalJson = JSON.stringify(safeJson(canonical, []));
       const upstreamJson = JSON.stringify(safeJson(upstream, []));
       const compressionJson = compression && typeof compression === 'object' ? JSON.stringify(compression) : null;
+      let imagesToSave = null;
+      if (Array.isArray(images)) {
+        const seen = new Set();
+        imagesToSave = [];
+        for (const image of images) {
+          const b64 = typeof image?.b64 === 'string' ? image.b64 : '';
+          if (!b64 || seen.has(b64)) continue;
+          seen.add(b64);
+          imagesToSave.push({
+            b64,
+            format: typeof image.format === 'string' && image.format ? image.format : 'png',
+            ...(typeof image.mimeType === 'string' && image.mimeType ? { mimeType: image.mimeType } : {}),
+            ...(typeof image.model === 'string' && image.model ? { model: image.model } : {}),
+            ...(typeof image.source === 'string' && image.source ? { source: image.source } : {}),
+            ...(Number.isFinite(image.createdAt) ? { createdAt: image.createdAt } : { createdAt: now })
+          });
+          if (imagesToSave.length >= 8) break;
+        }
+      }
+      const imagesJson = imagesToSave ? JSON.stringify(imagesToSave) : null;
       const bytes = Buffer.byteLength(canonicalJson, 'utf8') + Buffer.byteLength(upstreamJson, 'utf8');
       if (bytes > MAX_RECORD_BYTES) {
         logger?.warn?.('responses store: conversation too large; not stored', { sessionKey, bytes, limit: MAX_RECORD_BYTES });
@@ -313,13 +341,14 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       try {
         db.db
           .prepare(
-            `INSERT INTO conversation_state(session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, compression_json, context_pdf_scope, compacted_at, updated_at, expires_at)
-             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO conversation_state(session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, compression_json, context_pdf_scope, compacted_at, images_json, updated_at, expires_at)
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(session_key) DO UPDATE SET
                model=excluded.model, mode=excluded.mode, system_prompt=excluded.system_prompt,
                canonical_json=excluded.canonical_json, upstream_json=excluded.upstream_json,
                tools_hash=excluded.tools_hash, compression_json=excluded.compression_json,
                context_pdf_scope=excluded.context_pdf_scope, compacted_at=excluded.compacted_at,
+               images_json=COALESCE(excluded.images_json, conversation_state.images_json),
                updated_at=excluded.updated_at, expires_at=excluded.expires_at`
           )
           .run(
@@ -333,6 +362,7 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
             compressionJson,
             contextPdfScope,
             Number.isFinite(compactedAt) ? compactedAt : null,
+            imagesJson,
             now,
             expiresAt
           );

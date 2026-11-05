@@ -655,3 +655,25 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 - 历史 context PDF 的 `files[].text` 保留摘要全文（供 chip 弹窗查看），但 **messages 正文**不含旧 user/摘要；
 - 真正压缩后同一 session 的 canonical/hot 只保留 marker 之后消息；旧完整上下文仅存在于压缩前的自动溢出 PDF（已被覆盖）；
 - 自动溢出路径（>20k、无 marker）仍为完整上下文 PDF，本轮回归通过，未被真正压缩逻辑影响。
+
+## 2.51 v2.58 图片-only 输出 + 跨轮图片上下文回归（task-77/78）
+
+> 复审对象：图片-only 响应（responses / chat）、跨轮占位文本回放、连续图片持久化。
+> 新增测试：`tests/image-only-context-v258.test.js`（6 项）；全程 `MockDuckClient`，不访问真实 duck.ai。
+> 回归：`npm test` **483 / 483 PASS**（此前 477，新增 6 项）。
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | responses 图片-only（非流式）：image_generation_call.result + 文本都在 | ✅ | output 同时含 `message` 与 `image_generation_call`（result=PNG base64）；`output_text` 非空；history assistant images 保留 |
+| 2 | responses 图片-only（流式） | ✅ | SSE 含 `response.image_generation_call.in_progress/completed`、`response.output_item.added`、`response.completed`；completed output 有 image item |
+| 3 | chat/completions 图片-only：message.images 真实 data URI + history images | ✅ | `message.images[0].image_url.url=data:image/png;base64,...` 且 b64_json 可解码；history assistant images 有记录 |
+| 4 | 同 session 下一轮只回占位文本：上游仍带真实 image part | ✅ | 占位文本被替换「（上一轮生成的图片）」；`duck.calls.chat.messages` user.images 含 data URI（buildUpstreamMessages 生成 image part） |
+| 5 | 跨轮 history 不把图片降级成普通文本 | ✅ | 修复前 history user 仅文字标记（已报 api-core 修复 `recordHistoryOnLog`）；修复后 history user 消息保留 `images:[{b64,format}]` |
+| 6 | 连续两轮图片不丢 | ✅ | 第 2 轮再生成 B；第 3 轮上游同时带 A（1×1）+ B（2×2）image part；history 保留两张 b64 |
+| 7 | 全程离线 mock | ✅ | 无真实请求；测试网络护栏未触发 |
+
+### 2.51.1 观察项
+
+- 上游会对输入图片重新编码（PNG 尺寸/压缩可能变化），测试按**图片尺寸/像素**区分两张图而不是 base64 字面量；
+- 占位文本识别规则：`已生成 N 张图片` 或 `base64 位于 image_generation_call.result`；
+- `conversation_state.images_json` 去重最多 8 张；history 每消息最多 4 张。

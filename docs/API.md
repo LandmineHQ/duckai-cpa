@@ -1112,6 +1112,21 @@ Chat Completions 没有官方的 assistant 图片字段，采用主流 OpenAI �
 - `/v1/responses`：支持 `input_image`；上一轮 `image_generation_call` item 原样回传时，网关保留真实图片并挂到下一轮 user 消息（不再变文本）。
 - 上游图像输入只接受 PNG/WebP（JPEG 返回 400 sc22）：网关用 `jpeg-js` + `pngjs` 统一转 PNG 并缩到 **512px**；超过限制的图片会被压缩。
 - 仅图片的响应仍补 `message` + `output_text` 兜底，避免客户端显示空消息。
+
+## v2.58：图片-only 跨轮上下文持久化
+
+- **持久化**：稳定 session 的生成图片保存到 `conversation_state.images_json`
+  （`[{b64,format,mimeType?,model?,source?,createdAt}]`，去重最多 8 张）；chat/responses 都保存，
+  `/v1/responses` 即使 `store:false` 也保存会话状态（`store` 只控制 `responses` 表/`previous_response_id`）。
+- **图片-only 输出**：`/v1/responses` 保留标准 `image_generation_call`（`result` 为 base64，`output_format` 为 png/jpeg）
+  + 非空 message/output_text 兜底；流式有 `response.image_generation_call.completed` 与最终 output item。
+  chat/completions 保持 `message.images=[{type:'image_url',image_url:{url:data URI},b64_json,format,mime_type}]`。
+- **下一轮补图**：客户端只回放占位文本（匹配 `已生成 N 张图片` / `base64 位于 image_generation_call.result`）时，
+  从 `conversation_state.images_json` 取出真实图片，替换占位文本为「（上一轮生成的图片）」并挂到最后一条 user 消息（真实 image part）；
+  任何稳定 session 标识（X-Session-Id / conversation_id / prompt_cache_key / previous_response_id / 自动哈希）都生效。
+- **history**：assistant 消息保留 `images`（b64/format/model），图片-only 的占位文本不写入历史正文；跨轮占位回放后 user 消息也保留 `images`（b64/format，≤4 张），前端可按图片渲染。
+- 连续图片：每次生成追加到 session images/canonical assistant，最多保留最近 8 张，旧图仍以 image part 留在 canonical 历史中。
+
 ## v2.47：服务端会话与精确前缀
 
 ### Responses：`previous_response_id`

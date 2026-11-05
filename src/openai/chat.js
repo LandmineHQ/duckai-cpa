@@ -70,6 +70,7 @@ import {
   resolveConversationSessionKey,
   COMPACTION_MARKER
 } from './conversation-compact.js';
+import { isImagePlaceholderText, mergeStoredImages, replaySessionImages } from './image-context.js';
 
 const MAX_SOURCES = 50;
 
@@ -443,12 +444,42 @@ export function recordHistoryOnLog(
               ...(typeof file.text === 'string' && file.text ? { text: file.text.slice(0, 200000) } : {})
             }))
         : [];
-      if (!content && !files.length) continue;
-      normalized.push({ role: String(message.role), content, ...(files.length ? { files } : {}) });
+      const messageImages = (Array.isArray(message.images) ? message.images : [])
+        .map((image) => {
+          if (!image || typeof image !== 'object') return null;
+          let b64 = typeof image.b64 === 'string' ? image.b64 : '';
+          let format = typeof image.format === 'string' ? image.format.toLowerCase().replace(/^image\//, '') : '';
+          if (!b64 && typeof image.dataUrl === 'string') {
+            const match = image.dataUrl.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/);
+            if (match) {
+              format = match[1].toLowerCase();
+              b64 = match[2];
+            }
+          }
+          if (!b64) return null;
+          return {
+            b64,
+            format: format || 'png',
+            ...(typeof image.model === 'string' && image.model ? { model: image.model } : {})
+          };
+        })
+        .filter(Boolean)
+        .slice(0, 4);
+      if (!content && !files.length && !messageImages.length) continue;
+      normalized.push({
+        role: String(message.role),
+        content,
+        ...(messageImages.length ? { images: messageImages } : {}),
+        ...(files.length ? { files } : {})
+      });
     }
     // v2.36：助手消息附带工具调用（位置/生图/联网）、生成图片与思考过程，供「会话历史」只读展示。
     if (assistantText || images.length || toolCalls.length) {
-      const assistant = { role: 'assistant', content: String(assistantText || '') };
+      // v2.58：只有图片时不要把占位文本当普通回复写入历史；历史用 images 渲染。
+      const rawAssistantText = String(assistantText || '');
+      const historyText =
+        Array.isArray(images) && images.length && isImagePlaceholderText(rawAssistantText) ? '' : rawAssistantText;
+      const assistant = { role: 'assistant', content: historyText };
       if (reasoning) assistant.reasoning = String(reasoning);
       if (Array.isArray(images) && images.length) {
         assistant.images = images
@@ -750,6 +781,10 @@ export async function handleChatCompletions(req, res, ctx) {
   let manualCompaction = null;
   if (responseStore?.enabled && conversationSessionKey) {
     conversationState = await responseStore.getConversation(conversationSessionKey).catch(() => null);
+    // v2.58：客户端只回放占位文本时，从 session 状态恢复真实图片。
+    if (conversationState?.images?.length) {
+      messages.conversation = replaySessionImages(messages.conversation, conversationState.images);
+    }
   }
   if (manualMarker) {
     const manualScope = pdfScopeKey({
@@ -1194,11 +1229,7 @@ export async function handleChatCompletions(req, res, ctx) {
   ctx.log.clientToolsPdf = hasPdfMode && clientTools.length > 0;
   ctx.log.upstreamMessageCount = duckMessages.length;
   ctx.chatSession = {
-    enabled: Boolean(
-      responseStore?.enabled &&
-        conversationSessionKey &&
-        (conversationMode === 'server' || manualCompaction || ctx.sessionKey || ctx.conversationKey)
-    ),
+    enabled: Boolean(responseStore?.enabled && conversationSessionKey),
     store: responseStore,
     sessionKey: conversationSessionKey || null,
     mode: conversationMode,
@@ -1208,7 +1239,8 @@ export async function handleChatCompletions(req, res, ctx) {
     upstreamBeforeResponse: duckMessages,
     compression: manualCompaction?.compression || conversationState?.compression || null,
     contextPdfScope: manualCompaction?.scopeKey || conversationState?.contextPdfScope || null,
-    compactedAt: manualCompaction ? Date.now() : conversationState?.compactedAt || null
+    compactedAt: manualCompaction ? Date.now() : conversationState?.compactedAt || null,
+    images: conversationState?.images || []
   };
 
   const stream = body.stream === true;
@@ -1240,10 +1272,15 @@ export async function handleChatCompletions(req, res, ctx) {
   // v2.47：保存服务端会话（canonical + 精确 upstream 前缀），供下一轮增量/前缀复用
   const session = ctx.chatSession;
   if (session?.enabled && session.store && ctx.chatFinal) {
+    const finalImages = mergeStoredImages(ctx.chatFinal.images);
     const assistantCanonical =
       Array.isArray(ctx.chatFinal.toolCalls) && ctx.chatFinal.toolCalls.length
-        ? { role: 'assistant', content: null, tool_calls: ctx.chatFinal.toolCalls }
-        : { role: 'assistant', content: String(ctx.chatFinal.content || '') };
+        ? { role: 'assistant', content: null, tool_calls: ctx.chatFinal.toolCalls, ...(finalImages.length ? { images: finalImages } : {}) }
+        : {
+            role: 'assistant',
+            content: String(ctx.chatFinal.content || ''),
+            ...(finalImages.length ? { images: finalImages } : {})
+          };
     const assistantUpstream =
       Array.isArray(ctx.chatFinal.toolCalls) && ctx.chatFinal.toolCalls.length
         ? { role: 'assistant', content: formatToolCallsForHistory(ctx.chatFinal.toolCalls) }
@@ -1259,7 +1296,8 @@ export async function handleChatCompletions(req, res, ctx) {
         toolsHash: session.toolsHash,
         compression: session.compression || null,
         contextPdfScope: session.contextPdfScope || null,
-        compactedAt: session.compactedAt || null
+        compactedAt: session.compactedAt || null,
+        images: mergeStoredImages(session.images, finalImages)
       });
       ctx.log.conversationState = 'saved';
     } catch (error) {
@@ -1443,7 +1481,7 @@ async function completeChatCompletion(ctx, params) {
     usage: resolved.usage,
     toolCalls
   });
-  ctx.chatFinal = { content, toolCalls };
+  ctx.chatFinal = { content, toolCalls, images };
   if (ctx.log.contextTrimmed) payload.context_trimmed = true;
   if (params.compactedInfo) {
     payload.compacted = true;
@@ -1504,7 +1542,7 @@ async function streamChatCompletionWithTools(ctx, params) {
     model: params.resolved.id,
     system_fingerprint: null
   };
-  ctx.chatFinal = { content, toolCalls };
+  ctx.chatFinal = { content, toolCalls, images };
   const writer = ctx.openSSE();
   const emit = (delta, finish = null) => {
     if (!writer.closed) writer.data({ ...base, choices: [{ index: 0, delta, logprobs: null, finish_reason: finish }] });
@@ -1536,7 +1574,7 @@ async function streamChatCompletionWithTools(ctx, params) {
     if (images.length) emit({ images: images.map(toChatImage) });
     emit({}, finishReason);
   }
-  ctx.chatFinal = { content, toolCalls };
+  ctx.chatFinal = { content, toolCalls, images };
   if (params.streamOptions?.include_usage === true) {
     writer.data({ ...base, choices: [], usage: resolved.usage });
   }
@@ -1756,7 +1794,7 @@ async function streamChatCompletion(ctx, params) {
     model: params.resolved.id
   });
     emitDelta({}, finishReason);
-    ctx.chatFinal = { content: collected.content, toolCalls: [] };
+    ctx.chatFinal = { content: collected.content, toolCalls: [], images: collected.images || [] };
 
     // v2.24：流式请求也要统计 token（无论是否 include_usage）
     streamUsage = buildEstimatedUsage({

@@ -52,6 +52,7 @@ import {
   resolveConversationSessionKey,
   COMPACTION_MARKER
 } from './conversation-compact.js';
+import { mergeStoredImages, replaySessionImages } from './image-context.js';
 import {
   badRequest,
   OpenAIError,
@@ -413,6 +414,10 @@ export async function handleResponses(req, res, ctx) {
   let conversationState = null;
   if (responseStore?.enabled && conversationSessionKey) {
     conversationState = await responseStore.getConversation(conversationSessionKey).catch(() => null);
+    // v2.58：客户端只回放图片占位文本时，用 session 保存的真实图片补回上下文。
+    if (conversationState?.images?.length) {
+      chainedConversation = replaySessionImages(chainedConversation, conversationState.images);
+    }
   }
   let manualCompaction = null;
   if (manualMarker) {
@@ -778,22 +783,31 @@ export async function handleResponses(req, res, ctx) {
       output: payload.output
     });
   }
-  // v2.51：persist canonical conversation + compression record for the stable session.
-  if (responseStore?.enabled && (manualCompaction || conversationState)) {
+  // v2.58：稳定 session 始终保存 canonical（含图片）；storeResponse 只控制 responses 表（previous_response_id）。
+  if (payload && responseStore?.enabled) {
     const stateKey = conversationSessionKey || ctx.historySessionKey || ctx.sessionKey || null;
     if (stateKey) {
       try {
+        const assistantCanonical = outputItemsToConversation(payload.output);
+        const outputImages = (Array.isArray(payload.output) ? payload.output : [])
+          .filter((item) => item && item.type === 'image_generation_call' && typeof item.result === 'string' && item.result)
+          .map((item) => ({
+            b64: item.result,
+            format: item.output_format || 'png',
+            ...(item.model ? { model: item.model } : {})
+          }));
         await responseStore.saveConversation({
           sessionKey: stateKey,
           model: resolved.id,
           mode: 'responses',
           systemPrompt,
-          canonical: canonicalConversation,
-          upstream: duckMessages,
+          canonical: [...canonicalConversation, ...assistantCanonical],
+          upstream: [...duckMessages, ...outputItemsToConversation(payload.output)],
           toolsHash,
           compression: manualCompaction?.compression || conversationState?.compression || null,
           contextPdfScope: manualCompaction?.scopeKey || conversationState?.contextPdfScope || null,
-          compactedAt: manualCompaction ? Date.now() : conversationState?.compactedAt || null
+          compactedAt: manualCompaction ? Date.now() : conversationState?.compactedAt || null,
+          images: mergeStoredImages(conversationState?.images, outputImages)
         });
       } catch (error) {
         ctx.logger?.warn?.('failed to save responses canonical conversation state', { error: error.message });

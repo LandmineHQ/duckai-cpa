@@ -1591,3 +1591,34 @@ Marker 文本（role=user，位于旧历史之后、新 user 之前）：
   `mode='compact'`、`canonical`=kept_messages、`compression={trigger:'compact',summaryHash,summaryChars,summaryText,coveredMessageCount,hotMessageCount,contextPdf,contextPdfScope,reused,createdAt}`、`context_pdf_scope`、`compacted_at`；后续请求可复用摘要 PDF。
 - 手动 marker / `/v1/compact` 的 `conversation-context.pdf` **不再包含旧对话全文**；历史 chip 的 `files[].text` 保存摘要文本（不是旧完整上下文）。
 - auto spill 逻辑不变（完整上下文 PDF）；`context_pdf_capacity_exceeded` 仍为 413。
+
+---
+
+## 46. 图片-only 与跨轮图片上下文（v2.58）
+
+### 46.1 持久化
+
+- `conversation_state` 新增 `images_json`（迁移自动加列）：
+  `[{b64,format,mimeType?,model?,source?,createdAt}]`，去重、最多 8 张。
+- 保存时机：
+  - `/v1/chat/completions`：稳定 session 下每次成功响应都保存 canonical（含 assistant `images`）。
+  - `/v1/responses`：每次成功响应都保存 canonical（含 `image_generation_call` 还原的 assistant images）；
+    **`store:false` 仍保存 conversation_state**，`store` 只控制 `responses` 表/`previous_response_id`。
+- 生成图片同时写 history assistant `images`（b64/format/model）；图片-only 的占位文本不写入历史正文（历史按图片渲染）。
+
+### 46.2 输出形状
+
+- `/v1/responses`：保留标准 `output` item `{type:'image_generation_call',status:'completed',result:<base64>,output_format:'png'|'jpeg'}`，
+  并保留非空 `message`/`output_text` 兜底（避免只渲染 message 的客户端空消息）；流式含
+  `response.image_generation_call.in_progress/completed` + 最终 `response.completed` output。
+- `/v1/chat/completions`：`message.images=[{type:'image_url',image_url:{url:'data:image/...;base64,...'},b64_json,format,mime_type}]`。
+
+### 46.3 下一轮补图
+
+客户端只回放图片占位文本（`已生成 N 张图片` / `base64 位于 image_generation_call.result`）时：
+
+1. 从同 session `conversation_state.images_json` 取出图片；
+2. 占位文本替换为「（上一轮生成的图片）」；
+3. 真实 image part 挂到**最后一条 user 消息**（canonical/upstream 都生效）；history 中该 user 消息也保留 `images`（b64/format，≤4 张），前端可按用户图片渲染；
+4. 仍可用 `X-Session-Id`、`conversation_id`、`prompt_cache_key`、`previous_response_id` 或稳定自动哈希触发；
+5. 连续生成图片会合并保存在 images（最多 8 张），旧图仍以 image part 保留在 canonical 历史中。

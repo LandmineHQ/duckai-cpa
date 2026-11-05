@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS conversation_state (
   compression_json TEXT,
   context_pdf_scope TEXT,
   compacted_at INTEGER,
+  images_json TEXT,
   updated_at INTEGER NOT NULL,
   expires_at INTEGER
 );
@@ -219,6 +220,7 @@ export async function openDatabase(options = {}) {
     if (!conversationColumns.has('compression_json')) db.exec('ALTER TABLE conversation_state ADD COLUMN compression_json TEXT');
     if (!conversationColumns.has('context_pdf_scope')) db.exec('ALTER TABLE conversation_state ADD COLUMN context_pdf_scope TEXT');
     if (!conversationColumns.has('compacted_at')) db.exec('ALTER TABLE conversation_state ADD COLUMN compacted_at INTEGER');
+    if (!conversationColumns.has('images_json')) db.exec('ALTER TABLE conversation_state ADD COLUMN images_json TEXT');
   } catch (error) {
     options.logger?.warn?.('[db] failed to init sqlite', { error: error.message });
     throw error;
