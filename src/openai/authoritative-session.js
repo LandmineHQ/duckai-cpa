@@ -64,6 +64,52 @@ export function normalizeClientMessages(messages = []) {
   return result;
 }
 
+const AUXILIARY_TITLE_RE = /Generate the session title from this JSON array of human messages/i;
+
+function collectStrings(value, out = [], depth = 0) {
+  if (depth > 5 || value == null) return out;
+  if (typeof value === 'string') { out.push(value); return out; }
+  if (Array.isArray(value)) { for (const item of value) collectStrings(item, out, depth + 1); return out; }
+  if (typeof value === 'object') { for (const item of Object.values(value)) collectStrings(item, out, depth + 1); }
+  return out;
+}
+
+export function isEphemeralTitleRequest(body) {
+  const lastUser = (() => {
+    const messages = Array.isArray(body?.messages) ? body.messages : Array.isArray(body?.input) ? body.input : null;
+    if (!messages) return '';
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message && typeof message === 'object' && String(message.role || '').toLowerCase() === 'user') {
+        return normalizeContent(message.content);
+      }
+      if (typeof message === 'string') return message;
+    }
+    return '';
+  })();
+  if (lastUser && AUXILIARY_TITLE_RE.test(lastUser)) return true;
+  return typeof body?.input === 'string' && AUXILIARY_TITLE_RE.test(body.input);
+}
+
+/** DSH 标题生成等内部请求不应写入用户 canonical。 */
+export function stripAuxiliaryMessages(messages = []) {
+  const source = Array.isArray(messages) ? messages : [];
+  const out = [];
+  for (let index = 0; index < source.length; index += 1) {
+    const message = source[index];
+    if (!message || typeof message !== 'object') continue;
+    const role = String(message.role || '').toLowerCase();
+    const text = normalizeContent(message.content);
+    if (role === 'user' && AUXILIARY_TITLE_RE.test(text)) {
+      const next = source[index + 1];
+      if (next && String(next.role || '').toLowerCase() === 'assistant') index += 1;
+      continue;
+    }
+    out.push(message);
+  }
+  return out;
+}
+
 function samePrefix(a, b) {
   if (a.length > b.length) return false;
   try {
@@ -94,7 +140,7 @@ export class SessionHistoryMismatchError extends Error {
  * @returns {{canonical:any[], newMessages:any[], clientView:any[], epoch:number, mode:string, appended:number}}
  */
 export function diffSession({ state = null, incoming = [], requestedEpoch = null, fork = false } = {}) {
-  const rawIncoming = Array.isArray(incoming) ? incoming : [];
+  const rawIncoming = stripAuxiliaryMessages(Array.isArray(incoming) ? incoming : []);
   const incomingView = normalizeClientMessages(rawIncoming);
   if (!state) {
     return { canonical: rawIncoming, newMessages: rawIncoming, clientView: incomingView, epoch: 0, mode: 'new', appended: incomingView.length };
@@ -111,8 +157,11 @@ export function diffSession({ state = null, incoming = [], requestedEpoch = null
       appended: incomingView.length
     };
   }
-  const canonical = Array.isArray(state.canonical) ? state.canonical : [];
-  const savedClientRaw = Array.isArray(state.client) ? state.client : [];
+  const canonicalRaw = Array.isArray(state.canonical) ? state.canonical : [];
+  const clientRaw0 = Array.isArray(state.client) ? state.client : [];
+  const canonical = stripAuxiliaryMessages(canonicalRaw);
+  const savedClientRaw = stripAuxiliaryMessages(clientRaw0.length ? clientRaw0 : canonicalRaw);
+  const stateRepaired = canonical.length !== canonicalRaw.length || savedClientRaw.length !== (clientRaw0.length || canonicalRaw.length);
   const savedClient = savedClientRaw.length ? normalizeClientMessages(savedClientRaw) : normalizeClientMessages(canonical);
   let newRaw = rawIncoming;
   let newView = incomingView;
@@ -158,7 +207,8 @@ export function diffSession({ state = null, incoming = [], requestedEpoch = null
     clientView: incomingView,
     epoch: stateEpoch,
     mode,
-    appended: newView.length
+    appended: newView.length,
+    stateRepaired
   };
 }
 
@@ -195,6 +245,8 @@ export function resolveEpochFlags(ctx, body, { headerName = 'x-session-epoch' } 
 
 export default {
   normalizeClientMessages,
+  isEphemeralTitleRequest,
+  stripAuxiliaryMessages,
   diffSession,
   clientViewOf,
   firstUserHash,

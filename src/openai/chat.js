@@ -76,7 +76,8 @@ import {
   diffSession,
   firstUserHash,
   normalizeClientMessages,
-  resolveEpochFlags
+  resolveEpochFlags,
+  isEphemeralTitleRequest
 } from './authoritative-session.js';
 
 const MAX_SOURCES = 50;
@@ -768,6 +769,8 @@ export async function handleChatCompletions(req, res, ctx) {
 
   const resolved = resolveModel(ctx.config, body.model);
   ctx.log.model = resolved.id;
+  const ephemeralRequest = isEphemeralTitleRequest(body);
+  if (ephemeralRequest) ctx.log.ephemeralRequest = true;
 
   const messages = normalizeChatMessages(body.messages);
   ctx.log.promptChars = messages.promptChars;
@@ -785,6 +788,7 @@ export async function handleChatCompletions(req, res, ctx) {
   ctx.chatConversationKey = conversationSessionKey;
   ctx.historySessionKey = ctx.sessionKey || ctx.conversationKey || conversationSessionKey;
   let conversationState = null;
+  let sessionStateRepaired = false;
   let manualCompaction = null;
   if (responseStore?.enabled && conversationSessionKey) {
     conversationState = await responseStore.getConversation(conversationSessionKey).catch(() => null);
@@ -863,7 +867,7 @@ export async function handleChatCompletions(req, res, ctx) {
 
   // v2.59：authoritative session —— 客户端旧历史只用于 diff，canonical 由网关维护。
   let authoritativeDiff = null;
-  if (!manualCompaction && conversationState) {
+  if (!manualCompaction && conversationState && !ephemeralRequest) {
     const epochFlags = resolveEpochFlags(ctx, body);
     // v2.58/v2.59：先按 state.images 回放占位图片，再用于 authoritative diff（否则 canonical 丢图）。
     const replayedIncoming = conversationState?.images?.length
@@ -894,6 +898,10 @@ export async function handleChatCompletions(req, res, ctx) {
     ctx.log.sessionMode = authoritativeDiff.mode;
     ctx.log.sessionEpoch = authoritativeDiff.epoch;
     ctx.log.sessionAppended = authoritativeDiff.appended;
+    if (authoritativeDiff.stateRepaired) {
+      sessionStateRepaired = true;
+      ctx.log.sessionRepaired = true;
+    }
   } else if (manualCompaction) {
     const sameCompression =
       conversationState?.compression?.summaryHash &&
@@ -947,7 +955,7 @@ export async function handleChatCompletions(req, res, ctx) {
     );
   }
   let storedConversation = null;
-  if (!manualCompaction && authoritativeDiff && conversationState && authoritativeDiff.mode !== 'fork') {
+  if (!manualCompaction && authoritativeDiff && conversationState && !sessionStateRepaired && authoritativeDiff.mode !== 'fork') {
     storedConversation = {
       canonical: conversationState.canonical || [],
       upstream: conversationState.upstream || [],
@@ -1374,7 +1382,7 @@ export async function handleChatCompletions(req, res, ctx) {
 
   // v2.47：保存服务端会话（canonical + 精确 upstream 前缀），供下一轮增量/前缀复用
   const session = ctx.chatSession;
-  if (session?.enabled && session.store && ctx.chatFinal) {
+  if (session?.enabled && session.store && ctx.chatFinal && !ephemeralRequest) {
     const finalImages = mergeStoredImages(ctx.chatFinal.images);
     const assistantCanonical =
       Array.isArray(ctx.chatFinal.toolCalls) && ctx.chatFinal.toolCalls.length

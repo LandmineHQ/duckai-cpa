@@ -140,6 +140,8 @@ data/                运行时数据（不入库；含敏感文件）
   会话历史详情可查看完整协议与注入后的第一条 user；upstream 日志新增 `clientTools/protocolInjected/upstreamMessageCount/conversationChain`；
   `GET /admin/api/history/:id/upstream` 返回脱敏后的真实 upstream messages（图片 base64 替换为 `[image data ...]`）。
   手动 `/v1/compact` 现在会把 assistant.tool_calls / role:"tool" 编码成文本再摘要，不再丢工具轨迹。
+- **DSH 辅助请求（v2.61）**：DSH 的「Generate the session title...」标题生成请求虽复用同一 session，但**不得**写入 canonical/history；网关按“最后一条 user 是否标题提示”识别为 ephemeral，仍正常返回但跳过 diff/save。
+  旧 canonical 若已混入标题请求/回复，下一轮自动 strip（同时 strip incoming）并标记 `stateRepaired`、重建 upstream 前缀；因此 `session_history_mismatch` 的 DSH 会话重试即可恢复，不需要手动建新 session。
 - **工具调用容错（v2.60）**：上游可能返回被截断、少一个闭合括号的 `{"tool_call":...}` JSON；`parseToolCalls` 必须做括号/字符串补齐再解析，绝不能把原始 JSON 字符串当 assistant 正文发给客户端。
 - **Authoritative session（v2.59，BREAKING）**：网关是唯一会话所有者。稳定 session（X-Session-Id/conversation_id/prompt_cache_key/previous_response_id 链）下：
   客户端历史只用于 diff，canonical 由网关维护；`conversation_state.client_json` 保存上次完整客户端视图，第二轮回放只 append suffix，

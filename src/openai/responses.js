@@ -57,7 +57,8 @@ import {
   clientViewOf,
   diffSession,
   firstUserHash,
-  resolveEpochFlags
+  resolveEpochFlags,
+  isEphemeralTitleRequest
 } from './authoritative-session.js';
 import {
   badRequest,
@@ -371,6 +372,8 @@ export async function handleResponses(req, res, ctx) {
 
   const resolved = resolveModel(ctx.config, body.model);
   ctx.log.model = resolved.id;
+  const ephemeralRequest = isEphemeralTitleRequest(body);
+  if (ephemeralRequest) ctx.log.ephemeralRequest = true;
 
   if (body.instructions != null && typeof body.instructions !== 'string') {
     throw badRequest('"instructions" must be a string', 'instructions');
@@ -484,7 +487,7 @@ export async function handleResponses(req, res, ctx) {
   }
   // v2.59：authoritative session —— 旧 input 只用于 diff，canonical 由网关维护。
   let authoritativeDiff = null;
-  if (!manualCompaction && conversationState) {
+  if (!manualCompaction && conversationState && !ephemeralRequest) {
     const epochFlags = resolveEpochFlags(ctx, body);
     authoritativeDiff = diffSession({
       state: conversationState,
@@ -516,6 +519,11 @@ export async function handleResponses(req, res, ctx) {
     ctx.log.sessionMode = authoritativeDiff.mode;
     ctx.log.sessionEpoch = authoritativeDiff.epoch;
     ctx.log.sessionAppended = authoritativeDiff.appended;
+    if (authoritativeDiff.stateRepaired) {
+      previousRecord = null;
+      chainedConversation = authoritativeDiff.canonical;
+      ctx.log.sessionRepaired = true;
+    }
   } else if (manualCompaction) {
     const sameCompression =
       conversationState?.compression?.summaryHash &&
@@ -834,7 +842,7 @@ export async function handleResponses(req, res, ctx) {
   };
 
   const payload = stream ? await streamResponse(ctx, params) : await completeResponse(ctx, params);
-  if (payload && storeResponse && responseStore && responseStore.enabled !== false) {
+  if (payload && storeResponse && responseStore && responseStore.enabled !== false && !ephemeralRequest) {
     await responseStore.save({
       id: payload.id,
       previousId: previousResponseId,
@@ -848,7 +856,7 @@ export async function handleResponses(req, res, ctx) {
     });
   }
   // v2.58：稳定 session 始终保存 canonical（含图片）；storeResponse 只控制 responses 表（previous_response_id）。
-  if (payload && responseStore?.enabled) {
+  if (payload && responseStore?.enabled && !ephemeralRequest) {
     const stateKey = conversationSessionKey || ctx.historySessionKey || ctx.sessionKey || null;
     if (stateKey) {
       try {
