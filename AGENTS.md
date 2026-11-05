@@ -140,6 +140,7 @@ data/                运行时数据（不入库；含敏感文件）
   会话历史详情可查看完整协议与注入后的第一条 user；upstream 日志新增 `clientTools/protocolInjected/upstreamMessageCount/conversationChain`；
   `GET /admin/api/history/:id/upstream` 返回脱敏后的真实 upstream messages（图片 base64 替换为 `[image data ...]`）。
   手动 `/v1/compact` 现在会把 assistant.tool_calls / role:"tool" 编码成文本再摘要，不再丢工具轨迹。
+- **工具调用容错（v2.60）**：上游可能返回被截断、少一个闭合括号的 `{"tool_call":...}` JSON；`parseToolCalls` 必须做括号/字符串补齐再解析，绝不能把原始 JSON 字符串当 assistant 正文发给客户端。
 - **Authoritative session（v2.59，BREAKING）**：网关是唯一会话所有者。稳定 session（X-Session-Id/conversation_id/prompt_cache_key/previous_response_id 链）下：
   客户端历史只用于 diff，canonical 由网关维护；`conversation_state.client_json` 保存上次完整客户端视图，第二轮回放只 append suffix，
   只发最新 user/tool 输入视为 delta；无前缀的短历史/冲突返回 **409 `session_history_mismatch`**，显式 `X-Session-Fork`/`session_epoch` 才新 epoch。

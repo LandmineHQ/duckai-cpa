@@ -100,6 +100,25 @@ test('chat tools（流式）：delta.tool_calls + finish_reason=tool_calls', asy
   });
 });
 
+test('chat tools：上游截断少一个闭合括号时仍转换 tool_calls，不把 JSON 字符串当正文', async () => {
+  const duck = newDuck();
+  const truncated = '{"tool_call":{"name":"read_file","arguments":{"path":"src/index.js"}}';
+  duck.enqueueChat({ textDeltas: [truncated] });
+  await withServer({ duck }, async ({ baseUrl }) => {
+    const res = await v1Request(baseUrl, '/v1/chat/completions', {
+      method: 'POST',
+      body: { model: 'gpt-6-luna', messages: [{ role: 'user', content: '读文件' }], tools: [READ_TOOL] }
+    });
+    assert.equal(res.status, 200, res.text);
+    const payload = JSON.parse(res.text);
+    const message = payload.choices[0].message;
+    assert.equal(message.tool_calls?.length, 1, JSON.stringify(message));
+    assert.equal(message.tool_calls[0].function.name, 'read_file');
+    assert.equal(message.tool_calls[0].function.arguments, '{"path":"src/index.js"}');
+    assert.ok(!String(message.content || '').includes('tool_call'), '不应把原始 tool_call JSON 当正文');
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* Responses                                                           */
 /* ------------------------------------------------------------------ */

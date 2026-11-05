@@ -202,7 +202,47 @@ function extractJsonObjects(text) {
       }
     }
   }
+  if (out.length === 0) {
+    // v2.60：上游可能截断/少一个闭合括号。只对明确以 tool_call/tool_calls 开头的片段做容错修复。
+    for (const marker of ['{"tool_call"', '{"tool_calls"']) {
+      const index = text.indexOf(marker);
+      if (index < 0) continue;
+      const repaired = repairTruncatedJson(text.slice(index));
+      if (repaired) {
+        out.push(repaired);
+        break;
+      }
+    }
+  }
   return out;
+}
+
+/** 补齐被截断 JSON 的字符串/括号；仅用于 tool_call 容错。 */
+function repairTruncatedJson(text) {
+  const source = String(text || '');
+  const stack = [];
+  let inString = false;
+  let escape = false;
+  for (const char of source) {
+    if (inString) {
+      if (escape) escape = false;
+      else if (char === '\\') escape = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+    } else if (char === '{' || char === '[') {
+      stack.push(char === '{' ? '}' : ']');
+    } else if (char === '}' || char === ']') {
+      if (stack.length && stack[stack.length - 1] === char) stack.pop();
+    }
+  }
+  if (!stack.length && !inString) return source;
+  let repaired = source;
+  if (inString) repaired += '"';
+  while (stack.length) repaired += stack.pop();
+  return repaired;
 }
 
 /**

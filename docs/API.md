@@ -1183,3 +1183,7 @@ Chat Completions 没有官方的 assistant 图片字段，采用主流 OpenAI �
 ### usage
 
 估算改为 tokenizer；chat 返回 `prompt_tokens/completion_tokens/total_tokens`，responses 返回 `input_tokens/output_tokens/total_tokens`。
+
+## v2.60 工具调用容错
+
+上游返回被截断的 `{"tool_call":...}`（少闭合括号）时，网关会补齐 JSON 后解析为 `tool_calls` / `function_call`，不会把原始 JSON 字符串作为 assistant 正文透传给客户端。
