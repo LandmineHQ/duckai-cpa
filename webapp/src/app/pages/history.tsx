@@ -56,10 +56,20 @@ interface HistoryToolCall {
   result?: string;
 }
 
+interface HistoryFile {
+  filename: string;
+  mimeType: string;
+  pages?: number;
+  bytes?: number;
+  textChars?: number;
+}
+
 interface HistoryMessage {
   role: string;
   content: string;
   ts: number;
+  /** v2.49：PDF/文件附件元数据（历史只存元数据） */
+  files?: HistoryFile[];
   /** v2.36：思考过程 / 生成图片 / 工具调用（位置、生图、联网） */
   reasoning?: string;
   images?: HistoryImage[];
@@ -524,7 +534,8 @@ export function HistoryPage() {
                           reasoning: message.reasoning,
                           toolCalls: message.toolCalls,
                           sources: message.sources,
-                          images: message.images
+                          images: message.images,
+                          files: message.files
                         } satisfies SessionMessage}
                       />
                     </div>

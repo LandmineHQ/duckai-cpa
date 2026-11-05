@@ -1,4 +1,4 @@
-import { AlertTriangle, Bot, ExternalLink, Loader2, RefreshCw, User, Wrench } from 'lucide-react';
+import { AlertTriangle, Bot, ExternalLink, FileText, Loader2, RefreshCw, User, Wrench } from 'lucide-react';
 import type { SessionMessage, ToolCallInfo } from '@/app/lib/types';
 import { dataUrlForImage, formatDateTime, formatDuration, formatQueueWait } from '@/app/lib/format';
 import { Badge } from '@/components/ui/badge';
@@ -26,8 +26,36 @@ const TOOL_LABELS: Record<string, string> = {
   image_generation: '图片生成',
   'generate-image': '图片生成',
   WebSearch: '联网搜索',
-  web_search: '联网搜索'
+  web_search: '联网搜索',
+  ReadDocument: '文档读取',
+  read_document: '文档读取',
+  FindInDocument: '文档检索',
+  ReadDocumentSelection: '文档片段读取'
 };
+
+/** v2.49：PDF/文件附件 chip（会话历史只存元数据）。 */
+function FileAttachmentList({ files }: { files?: Array<{ filename: string; mimeType: string; pages?: number; bytes?: number }> }) {
+  if (!files || files.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5" data-testid="message-files">
+      {files.map((file, index) => {
+        const kb = Number.isFinite(Number(file.bytes)) ? Math.max(1, Math.round(Number(file.bytes) / 1024)) : null;
+        return (
+          <span
+            key={`${file.filename}-${index}`}
+            className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground"
+            title={`${file.filename} · ${file.mimeType}${file.pages ? ` · ${file.pages} 页` : ''}`}
+          >
+            <FileText className="h-3 w-3 shrink-0" />
+            <span className="truncate">{file.filename}</span>
+            {file.pages ? <span className="shrink-0">· {file.pages} 页</span> : null}
+            {kb ? <span className="shrink-0">· {kb} KB</span> : null}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 function toolLabel(name: string): string {
   return TOOL_LABELS[name] || name || '工具调用';
@@ -102,9 +130,12 @@ export function ChatMessageBubble({
     return (
       <div className="flex justify-end gap-2">
         <div className="flex max-w-[85%] flex-col items-end gap-1">
-          <div className="whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-primary px-3.5 py-2.5 text-sm text-primary-foreground">
-            {message.content}
-          </div>
+          {message.files && message.files.length ? <FileAttachmentList files={message.files} /> : null}
+          {message.content ? (
+            <div className="whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-primary px-3.5 py-2.5 text-sm text-primary-foreground">
+              {message.content}
+            </div>
+          ) : null}
           <span className="pr-1 text-[11px] text-muted-foreground">{formatDateTime(message.ts)}</span>
         </div>
         <div className="mt-0.5 hidden h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary sm:flex">

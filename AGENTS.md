@@ -125,6 +125,7 @@ data/                运行时数据（不入库；含敏感文件）
   把除当前 user 以外的全部历史渲染成会话 PDF（≤15 页，每页最多 250 行；250 是 duck.ai PDF 解析实测上限），
   当前 user 保留文本并把 PDF 作为 `file` part 附带；图片嵌入 PDF。手动 `/v1/compact` 仍是真正的摘要压缩。
   15 页是 Free 实测硬限制；超过时返回 413 `context_pdf_capacity_exceeded`，不静默丢内容。
+  会话历史只保存 PDF 元数据（filename/pages/bytes），前端 `ChatMessageBubble` 渲染 PDF chip；`ReadDocument` 等工具显示为「文档读取」。
   token 用量改用 gpt-tokenizer（`src/openai/tokens.js`），PDF/图片也计入；chat 返回 prompt/completion tokens，responses 返回 input/output tokens。
 - **提示词注入可观测（v2.48）**：工具协议注入是上游临时消息，不写进会话历史的 messages；
   但 `history` 表新增 `injection_json`（`{injected,clientTools,protocolText,firstUserContent,upstreamMessageCount,chain}`），

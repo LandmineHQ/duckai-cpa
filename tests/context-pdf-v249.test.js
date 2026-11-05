@@ -5,7 +5,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { withServer, v1Request } from './helpers/test-server.js';
+import { withServer, v1Request, adminRequest } from './helpers/test-server.js';
+import { createHistoryStore } from '../src/history.js';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs/promises';
 import { MockDuckClient } from './helpers/mock-duck.js';
 import { spillMessagesToPdf } from '../src/openai/context-spill.js';
 import { createContextPdf } from '../src/openai/context-pdf.js';
@@ -117,4 +121,37 @@ test('PDF 生成：文本分页 + 图片嵌入', async () => {
   assert.ok(result.pages >= 2);
   assert.equal(result.imageCount, 1);
   assert.ok(result.buffer.includes(Buffer.from('/Subtype /Image')));
+});
+
+
+test('历史记录包含 PDF 附件元数据（前端可渲染 chip）', async () => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'qa-v249-pdf-history-'));
+  const history = await createHistoryStore({ dataDir, config: { history: { retentionDays: 30 } }, logger: null });
+  const duck = new MockDuckClient();
+  duck.enqueueChat({ textDeltas: ['ok'] });
+  await withServer({ duck, dataDir, history }, async ({ baseUrl }) => {
+    const res = await v1Request(baseUrl, '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'x-session-id': 'sess-v249-pdf-history' },
+      body: {
+        model: 'gpt-6-luna',
+        messages: [
+          { role: 'user', content: BIG },
+          { role: 'assistant', content: 'old answer' },
+          { role: 'user', content: '当前问题' }
+        ]
+      }
+    });
+    assert.equal(res.status, 200, res.text);
+    const list = await adminRequest(baseUrl, '/admin/api/history');
+    const item = (list.json.groups || []).flatMap((group) => group.items).find((entry) => entry.sessionKey === 'sess-v249-pdf-history');
+    assert.ok(item);
+    const detail = await adminRequest(baseUrl, `/admin/api/history/${item.id}`);
+    const user = detail.json.item.messages.find((message) => message.role === 'user');
+    assert.ok(user.files && user.files.length === 1, '历史 user 消息应带 files 元数据');
+    assert.equal(user.files[0].mimeType, 'application/pdf');
+    assert.ok(user.files[0].pages >= 1);
+    assert.ok(!JSON.stringify(detail.json.item.messages).includes('JVBERi0'), '历史不应存 PDF base64');
+  });
+  await fs.rm(dataDir, { recursive: true, force: true }).catch(() => {});
 });

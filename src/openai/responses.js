@@ -450,6 +450,8 @@ export async function handleResponses(req, res, ctx) {
     await ctx.selectIdentity({ paidModel });
   }
 
+  let displayHistoryMessages = canonicalConversation;
+  let spillDisplay = null;
   if (pdfSpillConfig.enabled !== false) {
     try {
       const spill = await spillMessagesToPdf(duckMessages, {
@@ -458,6 +460,7 @@ export async function handleResponses(req, res, ctx) {
       });
       if (spill) {
         duckMessages = spill.messages;
+        spillDisplay = spill.messages;
         ctx.log.contextPdf = spill.pdf;
         ctx.log.contextPdfMoved = spill.movedMessages;
       }
@@ -475,6 +478,13 @@ export async function handleResponses(req, res, ctx) {
   }
 
   const protocolText = clientTools.length ? buildToolProtocol(clientTools) : '';
+  displayHistoryMessages = spillDisplay
+    ? spillDisplay.map((message) => ({
+        ...message,
+        content: String(message.content || '').replace(protocolText, '').trim(),
+        files: message.files
+      }))
+    : canonicalConversation;
   const firstInjectedUser = duckMessages.find((message) => message && message.role === 'user');
   ctx.historyInjection = {
     injected: Boolean(protocolText),
@@ -510,7 +520,7 @@ export async function handleResponses(req, res, ctx) {
     systemPrompt,
     conversation: canonicalConversation,
     upstreamMessages: duckMessages,
-    historyMessages: canonicalConversation,
+    historyMessages: displayHistoryMessages,
     clientTools,
     toolsHash,
     contextTrimmed: Boolean(ctx.log.contextTrimmed),
@@ -1380,7 +1390,7 @@ async function streamResponse(ctx, params) {
       .filter((entry) => entry.kind === 'image' && entry.item && entry.item.result)
       .map((entry) => ({ b64: entry.item.result, format: entry.item.output_format || 'jpeg', model: entry.item.model || null }));
     recordHistoryOnLog(ctx, {
-      messages: params.conversation,
+      messages: params.historyMessages || params.conversation,
       assistantText: content || '',
       reasoning: reasoningText,
       images: historyImages,

@@ -410,8 +410,19 @@ export function recordHistoryOnLog(
           .filter(Boolean)
           .join('\n');
       }
-      if (!content) continue;
-      normalized.push({ role: String(message.role), content });
+      const files = Array.isArray(message.files)
+        ? message.files
+            .filter((file) => file && (file.filename || file.mimeType))
+            .slice(0, 4)
+            .map((file) => ({
+              filename: String(file.filename || 'attachment'),
+              mimeType: String(file.mimeType || 'application/octet-stream'),
+              ...(Number.isFinite(Number(file.pages)) ? { pages: Number(file.pages) } : {}),
+              ...(Number.isFinite(Number(file.bytes)) ? { bytes: Number(file.bytes) } : {})
+            }))
+        : [];
+      if (!content && !files.length) continue;
+      normalized.push({ role: String(message.role), content, ...(files.length ? { files } : {}) });
     }
     // v2.36：助手消息附带工具调用（位置/生图/联网）、生成图片与思考过程，供「会话历史」只读展示。
     if (assistantText || images.length || toolCalls.length) {
@@ -889,6 +900,7 @@ export async function handleChatCompletions(req, res, ctx) {
     retryConversation = guarded.messages;
     ctx.log.conversationChain = storedConversation ? 'rebuild' : 'stateless';
   }
+  let spillDisplay = null;
   if (pdfSpillConfig.enabled !== false) {
     try {
       const spill = await spillMessagesToPdf(duckMessages, {
@@ -897,6 +909,7 @@ export async function handleChatCompletions(req, res, ctx) {
       });
       if (spill) {
         duckMessages = spill.messages;
+        spillDisplay = spill.messages;
         ctx.log.contextPdf = spill.pdf;
         ctx.log.contextPdfMoved = spill.movedMessages;
       }
@@ -912,8 +925,15 @@ export async function handleChatCompletions(req, res, ctx) {
       ctx.logger?.warn?.('context PDF spill failed; continuing without spill', { error: error.message });
     }
   }
-  ctx.historyMessages = historyMessages;
   const protocolText = clientTools.length ? buildToolProtocol(clientTools) : '';
+  const historyForDisplay = spillDisplay
+    ? spillDisplay.map((message) => ({
+        ...message,
+        content: String(message.content || '').replace(protocolText, '').trim(),
+        files: message.files
+      }))
+    : historyMessages;
+  ctx.historyMessages = historyForDisplay;
   const firstInjectedUser = duckMessages.find((message) => message && message.role === 'user');
   ctx.historyInjection = {
     injected: Boolean(protocolText),
@@ -948,7 +968,7 @@ export async function handleChatCompletions(req, res, ctx) {
     systemPrompt,
     conversation: canonicalForSave,
     guardedMessages: retryConversation,
-    historyMessages,
+    historyMessages: historyForDisplay,
     clientTools,
     promptChars: messages.promptChars,
     contextTrimmed: Boolean(ctx.log.contextTrimmed),

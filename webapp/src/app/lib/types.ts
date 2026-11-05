@@ -230,10 +230,20 @@ export interface ToolCallInfo {
   result?: string;
 }
 
+export interface FileAttachment {
+  filename: string;
+  mimeType: string;
+  pages?: number;
+  bytes?: number;
+  textChars?: number;
+}
+
 export interface SessionMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  /** v2.49：PDF/文件附件元数据（会话历史只存元数据，不存 base64）。 */
+  files?: FileAttachment[];
   reasoning?: string;
   /** v2.37：工具调用（位置 / 生图 / 联网），连接测试与会话历史共用 */
   toolCalls?: ToolCallInfo[];

@@ -139,6 +139,20 @@ export async function createHistoryStore({ dataDir = 'data', config = null, logg
             }));
           if (images.length) entry.images = images;
         }
+        // v2.49：PDF/文件附件（只存元数据，不存 base64）
+        if (message && Array.isArray(message.files) && message.files.length) {
+          const files = message.files
+            .filter((file) => file && (file.filename || file.mimeType))
+            .slice(0, 4)
+            .map((file) => ({
+              filename: String(file.filename || 'attachment').slice(0, 200),
+              mimeType: String(file.mimeType || 'application/octet-stream').slice(0, 100),
+              ...(Number.isFinite(Number(file.pages)) ? { pages: Math.max(0, Math.trunc(Number(file.pages))) } : {}),
+              ...(Number.isFinite(Number(file.bytes)) ? { bytes: Math.max(0, Math.trunc(Number(file.bytes))) } : {}),
+              ...(Number.isFinite(Number(file.textChars)) ? { textChars: Math.max(0, Math.trunc(Number(file.textChars))) } : {})
+            }));
+          if (files.length) entry.files = files;
+        }
         if (message && Array.isArray(message.toolCalls) && message.toolCalls.length) {
           const toolCalls = message.toolCalls.slice(0, MAX_TOOL_CALLS_PER_MESSAGE).map((call) => {
             const name = call && call.name ? String(call.name) : 'tool';

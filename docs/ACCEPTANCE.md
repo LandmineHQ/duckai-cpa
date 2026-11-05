@@ -549,3 +549,4 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 6 | 手动压缩保留 | ✅ | 自动压缩在 PDF 溢出路径跳过；`/v1/compact` 仍是真正摘要 |
 | 7 | 回归 | ✅ | `npm test` **465/465**、build-check 16/16、page-check 22/22 |
 | 8 | 图片嵌入 PDF | ✅ | 历史图片转 PDF 后真实上游回答「红色」；`createContextPdf` 单测包含 `/Subtype /Image` |
+| 9 | 历史 PDF 展示 | ✅ | 溢出请求的历史记录只保存当前 user + PDF 元数据（不存 base64）；前端显示 `conversation-context.pdf · 2 页` chip；`ReadDocument` 显示「文档读取」 |
