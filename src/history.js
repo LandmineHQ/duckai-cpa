@@ -58,7 +58,10 @@ function messageText(message) {
 }
 
 function stripPdfInstruction(text) {
-  return String(text || '').replace(/\s*\[系统提示\] 附件包含 client-tools\.pdf[\s\S]*$/, '').trim();
+  return String(text || '')
+    .replace(/\s*\[系统提示\] 附件包含 client-tools\.pdf[\s\S]*$/, '')
+    .replace(/\s*\[系统提示\] 附件 client-tools\.pdf 是本次会话的客户端工具说明[\s\S]*$/, '')
+    .trim();
 }
 
 function normalizeInjection(raw) {
@@ -79,6 +82,12 @@ function normalizeInjection(raw) {
       : null,
     chain: typeof raw.chain === 'string' && raw.chain ? raw.chain.slice(0, 64) : null,
     protocolKind: raw.protocolKind === 'client-tools-pdf' ? 'client-tools-pdf' : 'text',
+    toolsPdf: raw.toolsPdf && typeof raw.toolsPdf === 'object'
+      ? {
+          pages: Number.isFinite(Number(raw.toolsPdf.pages)) ? Number(raw.toolsPdf.pages) : null,
+          bytes: Number.isFinite(Number(raw.toolsPdf.bytes)) ? Number(raw.toolsPdf.bytes) : null
+        }
+      : null,
     contextPdf: raw.contextPdf && typeof raw.contextPdf === 'object'
       ? {
           pages: Number.isFinite(Number(raw.contextPdf.pages)) ? Number(raw.contextPdf.pages) : null,

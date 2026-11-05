@@ -403,6 +403,7 @@ export async function handleResponses(req, res, ctx) {
   const clientTools =
     ctx.config?.tools?.clientFunctionCalling?.enabled === false ? [] : normalizeToolDefinitions(body.tools);
   if (clientTools.length) ctx.log.clientTools = clientTools.map((tool) => tool.name);
+  const useClientToolsPdf = clientTools.length > 0 && ctx.config?.context?.pdfSpill?.enabled !== false;
   const toolsHash = crypto.createHash('sha1').update(JSON.stringify(clientTools)).digest('hex');
 
   let systemPrompt;
@@ -472,7 +473,7 @@ export async function handleResponses(req, res, ctx) {
     if (guarded.trimmed) ctx.log.contextTrimmed = true;
     canonicalConversation = guarded.messages;
     let upstreamMessages = guarded.messages;
-    if (clientTools.length && !pdfSpillPlanned && !pdfReuse) {
+    if (clientTools.length && !useClientToolsPdf) {
       upstreamMessages = injectProtocolIntoFirstUser(guarded.messages, buildToolProtocol(clientTools));
     }
     duckMessages = buildDuckMessages({
@@ -565,6 +566,41 @@ export async function handleResponses(req, res, ctx) {
     }
   }
 
+  if (useClientToolsPdf && !ctx.log.contextPdf && !ctx.log.contextPdfReused) {
+    const already = duckMessages.some(
+      (message) => Array.isArray(message.files) && message.files.some((file) => file.filename === 'client-tools.pdf')
+    );
+    if (!already) {
+      try {
+        const toolsPdf = await createToolsPdf({
+          toolProtocol: buildToolProtocol(clientTools),
+          toolNames: clientTools.map((tool) => tool.name),
+          maxPages: 1,
+          includeContext: false
+        });
+        duckMessages = attachPdfFile(duckMessages, {
+          mimeType: 'application/pdf',
+          filename: 'client-tools.pdf',
+          b64: toolsPdf.buffer.toString('base64'),
+          pages: toolsPdf.pages,
+          bytes: toolsPdf.buffer.length,
+          textChars: toolsPdf.textChars,
+          text: toolsPdf.text
+        });
+        const firstUser = duckMessages.find((message) => message.role === 'user');
+        if (firstUser) {
+          const instruction = '\n\n[系统提示] 附件 client-tools.pdf 是本次会话的客户端工具说明，请先阅读再按需调用工具。';
+          duckMessages = duckMessages.map((message) =>
+            message === firstUser ? { ...message, content: String(message.content || '') + instruction } : message
+          );
+        }
+        spillDisplay = duckMessages;
+        ctx.log.toolsPdf = { pages: toolsPdf.pages, bytes: toolsPdf.buffer.length };
+      } catch (error) {
+        ctx.logger?.warn?.('client tools PDF generation failed', { error: error.message });
+      }
+    }
+  }
   const protocolText = clientTools.length ? buildToolProtocol(clientTools) : '';
   displayHistoryMessages = spillDisplay
     ? spillDisplay.map((message) => ({
@@ -575,20 +611,23 @@ export async function handleResponses(req, res, ctx) {
     : canonicalConversation;
   const firstInjectedUser = duckMessages.find((message) => message && message.role === 'user');
   const hasContextPdf = Boolean(ctx.log.contextPdf);
-  const historyProtocolText = hasContextPdf ? PDF_PURPOSE_TEXT : protocolText;
+  const hasToolsPdf = Boolean(ctx.log.toolsPdf);
+  const hasPdfMode = hasContextPdf || hasToolsPdf;
+  const historyProtocolText = hasPdfMode ? PDF_PURPOSE_TEXT : protocolText;
   ctx.historyInjection = {
     injected: Boolean(historyProtocolText),
     clientTools: clientTools.map((tool) => tool.name),
     protocolText: historyProtocolText,
-    protocolKind: hasContextPdf ? 'client-tools-pdf' : 'text',
+    protocolKind: hasPdfMode ? 'client-tools-pdf' : 'text',
     firstUserContent: firstInjectedUser && typeof firstInjectedUser.content === 'string' ? firstInjectedUser.content : '',
     upstreamMessageCount: duckMessages.length,
     chain: ctx.log.conversationChain || null,
     contextPdf: ctx.log.contextPdf || null,
+    toolsPdf: ctx.log.toolsPdf || null,
     contextPdfReused: ctx.log.contextPdfReused === true
   };
-  ctx.log.protocolInjected = Boolean(protocolText && !hasContextPdf);
-  ctx.log.clientToolsPdf = hasContextPdf && clientTools.length > 0;
+  ctx.log.protocolInjected = Boolean(protocolText && !hasPdfMode);
+  ctx.log.clientToolsPdf = hasPdfMode && clientTools.length > 0;
   ctx.log.upstreamMessageCount = duckMessages.length;
 
   const stream = body.stream === true;

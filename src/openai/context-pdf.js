@@ -266,7 +266,7 @@ export default { createContextPdf, PdfCapacityError };
 
 
 /** v2.50：独立的 client tools 说明 PDF（第一页工具说明，避免占用 context PDF 页数）。 */
-export async function createToolsPdf({ toolProtocol = '', toolNames = [], maxPages = 1 } = {}) {
+export async function createToolsPdf({ toolProtocol = '', toolNames = [], maxPages = 1, includeContext = true } = {}) {
   const doc = await PDFDocument.create();
   doc.setTitle('DuckAI client tools');
   const fontInfo = readFont();
@@ -280,8 +280,9 @@ export async function createToolsPdf({ toolProtocol = '', toolNames = [], maxPag
     'CLIENT TOOLS / 客户端工具说明',
     '',
     '本 PDF 说明本次会话可用的客户端工具。',
-    '另一个 PDF（context）是会话历史上下文。',
-    '请读取 context PDF 的全部页面，不要只读第一页/摘要。',
+    ...(includeContext
+      ? ['另一个 PDF（context）是会话历史上下文。', '请读取 context PDF 的全部页面，不要只读第一页/摘要。']
+      : ['本次没有单独的 context PDF；历史上下文在对话文本中。', '请阅读本 PDF 后按需调用工具。']),
     ''
   ];
   if (toolNames.length) lines.push('可用工具：' + toolNames.join(', '));

@@ -283,7 +283,8 @@ test('tools 稳定前缀：第二轮请求里的历史消息与第一轮逐字�
     assert.equal(first.status, 200, first.text);
     const assistantText = JSON.parse(first.text).choices[0].message.content;
     const turn1 = duck.calls.chat[0].params.messages;
-    assert.ok(JSON.stringify(turn1).includes('工具调用协议'), '协议应在第一条 user');
+    assert.ok(JSON.stringify(turn1).includes('client-tools.pdf'), '工具协议应通过 client-tools.pdf 发送');
+    assert.ok(!turn1.map((message) => String(message.content || '')).join('').includes('工具调用协议'), '不应再注入文本协议');
 
     const second = await v1Request(baseUrl, '/v1/chat/completions', {
       method: 'POST',
@@ -306,6 +307,6 @@ test('tools 稳定前缀：第二轮请求里的历史消息与第一轮逐字�
       turn1,
       '第二轮的历史前缀应与第一轮相同'
     );
-    assert.equal(JSON.stringify(turn2).match(/工具调用协议/g).length, 1, '协议只注入一次（第一条 user）');
+    assert.equal(turn2.map((message) => String(message.content || '')).join('').includes('工具调用协议'), false, '文本中不应再有协议');
   });
 });

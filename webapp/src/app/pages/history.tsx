@@ -471,6 +471,11 @@ export function HistoryPage() {
                       >
                         {detail.injection.injected ? '已注入' : '未注入'}
                       </Badge>
+                      {detail.injection.toolsPdf && !detail.injection.contextPdf ? (
+                        <Badge variant="info" className="px-1.5 py-0 text-[10px]" data-testid="history-tools-pdf-badge">
+                          工具说明 PDF{detail.injection.toolsPdf.pages ? ` · ${detail.injection.toolsPdf.pages} 页` : ''}
+                        </Badge>
+                      ) : null}
                       {detail.injection.contextPdf ? (
                         <Badge variant="info" className="px-1.5 py-0 text-[10px]" data-testid="history-context-pdf-badge">
                           {detail.injection.contextPdf.reused ? '上下文 PDF 复用' : '已生成上下文 PDF'}

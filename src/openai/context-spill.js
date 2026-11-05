@@ -53,11 +53,17 @@ export function pdfFileFromState(state) {
 }
 
 /** 把已存储的 PDF 挂到第一条 user 消息上（上下文 PDF 固定在会话顶部，不随每轮移动）。 */
-export function attachPdfFile(messages = [], file) {
+export function attachPdfFile(messages = [], file, position = 'first') {
   if (!file || !Array.isArray(messages) || !messages.length) return messages;
   let index = -1;
-  for (let i = 0; i < messages.length; i++) {
-    if (messages[i] && messages[i].role === 'user') { index = i; break; }
+  if (position === 'last') {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i] && messages[i].role === 'user') { index = i; break; }
+    }
+  } else {
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i] && messages[i].role === 'user') { index = i; break; }
+    }
   }
   if (index < 0) return messages;
   return messages.map((message, i) =>
@@ -68,7 +74,10 @@ export function attachPdfFile(messages = [], file) {
 }
 
 export function stripSpillInstruction(text) {
-  return String(text || '').replace(/\s*\[系统提示\] 附件包含 client-tools\.pdf[\s\S]*$/, '').trim();
+  return String(text || '')
+    .replace(/\s*\[系统提示\] 附件包含 client-tools\.pdf[\s\S]*$/, '')
+    .replace(/\s*\[系统提示\] 附件 client-tools\.pdf 是本次会话的客户端工具说明[\s\S]*$/, '')
+    .trim();
 }
 
 export function messageTextChars(messages = []) {

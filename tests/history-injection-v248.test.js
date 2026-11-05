@@ -54,10 +54,14 @@ test('历史详情 / 日志 / 上游调试视图包含完整工具协议注入',
     assert.ok(injection);
     assert.equal(injection.injected, true);
     assert.deepEqual(injection.clientTools, ['read_file']);
-    assert.match(injection.protocolText, /工具调用协议/);
-    assert.match(injection.protocolText, /read_file/);
+    assert.equal(injection.protocolKind, 'client-tools-pdf');
+    assert.match(injection.protocolText, /PDF 用途说明/);
     assert.match(injection.firstUserContent, /帮我读 package.json/);
-    assert.match(injection.firstUserContent, /工具调用协议/);
+    assert.ok(!injection.firstUserContent.includes('工具调用协议'), '文本 first user 不应再含工具协议');
+    const file = detail.json.item.messages.find((message) => message.role === 'user')?.files?.find((entry) => entry.filename === 'client-tools.pdf');
+    assert.ok(file, '历史应包含 client-tools.pdf');
+    assert.match(file.text || '', /工具调用协议/);
+    assert.match(file.text || '', /read_file/);
     assert.ok(injection.upstreamMessageCount >= 1);
 
     // 上游调试视图（脱敏 JSON）
@@ -66,13 +70,13 @@ test('历史详情 / 日志 / 上游调试视图包含完整工具协议注入',
     assert.equal(upstream.json.source, 'conversation_state');
     assert.ok(Array.isArray(upstream.json.messages));
     assert.ok(upstream.json.messageCount >= 1);
-    assert.match(JSON.stringify(upstream.json.messages), /工具调用协议/);
+    assert.match(JSON.stringify(upstream.json.messages), /client-tools\.pdf/);
 
     // 日志元数据
     const logs = await adminRequest(baseUrl, '/admin/api/logs?kind=upstream&limit=50');
     const log = (logs.json.items || []).find((entry) => entry.endpoint === 'POST /v1/chat/completions');
     assert.ok(log);
-    assert.equal(log.protocolInjected, true);
+    assert.notEqual(log.protocolInjected, true);
     assert.deepEqual(log.clientTools, ['read_file']);
     assert.ok(log.upstreamMessageCount >= 1);
   });

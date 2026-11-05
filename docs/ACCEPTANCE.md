@@ -596,3 +596,13 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 3 | 系统消息解析错误 | ✅ | history 跳过 system/developer；前端过滤；auto:14cd 不再出现巨大 system pill |
 | 4 | 测试默认离线 | ✅ | page-check 默认跳过真实 `/test/sessions/messages`；469 单测离线通过 |
 | 5 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |
+## 2.48 v2.55 客户端工具始终生成 tools PDF + 会话标识
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 短请求也生成 client-tools.pdf | ✅ | session 01a 重发：无 context PDF 但生成 client-tools.pdf（1 页/468 字符），上游返回 tool_calls=1 |
+| 2 | 不再注入 9,864 字符协议文本 | ✅ | 历史 protocolKind=client-tools-pdf，protocolText=143 字符 PDF 用途说明 |
+| 3 | 工具 PDF 无 context 时说明正确 | ✅ | `includeContext=false`：说明“本次没有单独 context PDF，请阅读工具后调用” |
+| 4 | 会话标识 | ✅ | 支持 X-Session-Id / conversation_id / prompt_cache_key；真实 pc-test 两轮同一历史 |
+| 5 | 系统消息解析 | ✅ | history 跳过 system/developer，前端过滤；无巨大 compact pill |
+| 6 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |
