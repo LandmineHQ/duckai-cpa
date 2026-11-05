@@ -54,7 +54,7 @@ export function ConsoleLayout({
           {children}
         </main>
         <footer className="px-4 pb-6 text-center text-[11px] text-muted-foreground sm:px-6 lg:px-8">
-          DuckAI CPA v{data?.service?.version ?? '0.1.0'} · 仅供学习与私有部署 · 遵守 duck.ai 服务条款
+          DuckAI CPA v{data?.service?.version ?? '—'} · 仅供学习与私有部署 · 遵守 duck.ai 服务条款
         </footer>
       </div>
     </div>

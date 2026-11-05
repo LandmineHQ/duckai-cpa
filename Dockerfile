@@ -31,9 +31,12 @@ RUN npm ci --omit=dev --no-audit --no-fund
 # ---------- 运行层 ----------
 FROM node:24-alpine
 
+ARG APP_VERSION=""
+ENV DUCKAI_CPA_VERSION=${APP_VERSION}
+
 LABEL org.opencontainers.image.title="duckai-cpa" \
       org.opencontainers.image.description="Duck.ai -> OpenAI-compatible gateway with admin dashboard" \
-      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.licenses="MIT"
 
 # 容器内必须监听 0.0.0.0，端口映射才能生效

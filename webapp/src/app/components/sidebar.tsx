@@ -127,7 +127,7 @@ export function Sidebar({
               <span className={cn('h-2 w-2 shrink-0 rounded-full', status.dot)} aria-hidden="true" />
               <span className={cn('truncate', status.tone)}>{status.label}</span>
               <span className="ml-auto truncate text-[10px] text-muted-foreground">
-                v{data?.service?.version ?? '0.1.0'}
+                v{data?.service?.version ?? '—'}
               </span>
             </div>
             <div className="mt-1 flex items-center gap-1 text-[10.5px] text-muted-foreground">

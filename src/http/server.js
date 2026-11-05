@@ -94,6 +94,8 @@ export function getPackageMeta() {
 }
 
 export function getServiceVersion() {
+  const envVersion = typeof process.env.DUCKAI_CPA_VERSION === 'string' ? process.env.DUCKAI_CPA_VERSION.trim() : '';
+  if (envVersion) return envVersion.slice(0, 100);
   return getPackageMeta().version || '0.1.0';
 }
 

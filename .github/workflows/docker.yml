@@ -62,6 +62,13 @@ jobs:
           test -f release/web/index.html
           du -sh release
 
+      - name: Read artifact package version
+        id: package_version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./release/package.json').version")
+          echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Compute lowercase image name
         id: image
         shell: bash
@@ -87,6 +94,8 @@ jobs:
           file: ./Dockerfile.release
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            APP_VERSION=${{ inputs.version }}
           tags: |
             ${{ steps.image.outputs.name }}:${{ inputs.version }}
           labels: |
@@ -104,6 +113,7 @@ jobs:
             echo ""
             echo "- image: \`${{ steps.image.outputs.name }}:${{ inputs.version }}\`"
             echo "- source build run id: \`${{ inputs.run_id }}\`"
+            echo "- artifact package version: \`${{ steps.package_version.outputs.value }}\`"
             echo "- revision: \`${{ github.sha }}\`"
             echo "- platforms: linux/amd64, linux/arm64"
           } >> "$GITHUB_STEP_SUMMARY"

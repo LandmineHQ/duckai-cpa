@@ -13,9 +13,13 @@
 # ---------------------------------------------------------------------------
 FROM node:24-alpine
 
+ARG APP_VERSION=""
+ENV DUCKAI_CPA_VERSION=${APP_VERSION}
+
 LABEL org.opencontainers.image.title="duckai-cpa" \
       org.opencontainers.image.description="Duck.ai -> OpenAI-compatible gateway with admin dashboard" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${APP_VERSION}"
 
 ENV NODE_ENV=production \
     DUCKAI_CPA_HOST=0.0.0.0 \

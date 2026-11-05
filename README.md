@@ -11,6 +11,10 @@
 
 *Use GPT-6, Claude, Mistral and open-source models from Duck.ai through one standard OpenAI interface — with streaming SSE, web search citations, image generation, multi-account routing and a self-hosted dashboard.*
 
+![DuckAI CPA admin overview](docs/assets/admin-overview.jpg)
+
+*Admin console overview: upstream health, queue/RPS, usage, model catalog, request logs and identity routing.*
+
 [Features](#-key-features) • [Models](#-supported-models) • [Quick Start](#-quick-start) • [Client Integrations](#-client-integrations) • [Architecture](#-architecture) • [Configuration](#-configuration) • [Security](#-security--reliability)
 
 ---
@@ -135,6 +139,8 @@ docker run -d --name duckai-cpa -p 8787:8787 \
 ```
 
 The workflows use the repository `GITHUB_TOKEN` with `packages: write`; no extra secrets are required. The release image copies the artifact without running `npm install`, and removes npm/corepack from the final stage.
+
+Application version is not hardcoded in the frontend: the backend reads `package.json` (falling back to `0.1.0` only if unavailable), and the admin console renders `service.version` from `/admin/api/overview`. For published images the manual Docker workflow also sets `DUCKAI_CPA_VERSION` from the version input, so the image tag and the version shown in the dashboard stay in sync.
 
 ### Option B — Docker
 

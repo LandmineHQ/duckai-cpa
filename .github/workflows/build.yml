@@ -52,7 +52,7 @@ jobs:
           cp package-lock.json release/package-lock.json
           cp -R node_modules release/node_modules
           rm -rf release/node_modules/.bin release/node_modules/.cache
-          find release/node_modules -type f \\( -name '*.md' -o -name '*.markdown' -o -name '*.map' -o -name '*.ts' -o -name '*.d.ts' \\) -delete
+          find release/node_modules -type f \( -name '*.md' -o -name '*.markdown' -o -name '*.map' -o -name '*.ts' -o -name '*.d.ts' \) -delete
           test -f release/src/index.js
           test -f release/web/index.html
           node --check release/src/index.js
@@ -62,6 +62,13 @@ jobs:
         run: |
           tar -czf duckai-cpa-release.tar.gz release
           ls -lh duckai-cpa-release.tar.gz
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
@@ -80,6 +87,7 @@ jobs:
             echo "- commit: \`${GITHUB_SHA}\`"
             echo "- ref: \`${GITHUB_REF}\`"
             echo "- run id: \`${GITHUB_RUN_ID}\`"
+            echo "- package version: \`${{ steps.version.outputs.value }}\`"
             echo "- artifact: \`duckai-cpa-release\` (retention 30 days)"
             echo ""
             echo "| path | size |"

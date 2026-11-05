@@ -16,7 +16,7 @@ import { loadConfig } from './config.js';
 import { createStore } from './store.js';
 import { createLogger } from './logger.js';
 import { createUpstreamQueue } from './upstream/queue.js';
-import { createServer, getPackageMeta } from './http/server.js';
+import { createServer, getPackageMeta, getServiceVersion } from './http/server.js';
 
 const logger = createLogger({ level: 'info' });
 
@@ -392,7 +392,7 @@ async function main() {
   const meta = getPackageMeta();
   const baseUrl = `http://${host}:${port}`;
 
-  logger.info(`${meta.name || 'duckai-cpa'} v${meta.version || '0.1.0'}（v2.5）已启动`);
+  logger.info(`${meta.name || 'duckai-cpa'} v${getServiceVersion()}（v2.5）已启动`);
   // v2.27：订阅 access token 自动续期（每 5 分钟检查一次，到期前 30 分钟内刷新）
   let subscriptionRefreshTimer = null;
   if (subscriptions) {
