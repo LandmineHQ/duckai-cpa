@@ -110,19 +110,31 @@ First start creates `data/config.json` and prints an **admin token** and a defau
 
 ### Option C — Prebuilt image from GHCR
 
-The repository workflow `.github/workflows/docker.yml` builds the admin console, then builds and pushes a multi-arch image to GitHub Container Registry on every push to `main` and every `v*` tag.
+The repository has two workflows:
+
+- `.github/workflows/build.yml` runs on every push: builds the admin console, trims production dependencies and uploads a `duckai-cpa-release` artifact (retained 30 days). Its run id is shown in the run summary.
+- `.github/workflows/docker.yml` is **manual only**: provide a version tag and the successful build run id, and it downloads that artifact, builds the runtime image and pushes it to GHCR (multi-arch `linux/amd64` + `linux/arm64`).
+
+```text
+Actions → build (latest successful run) → copy run id
+Actions → docker → Run workflow
+  version: v0.1.0
+  run_id:  <build run id>
+```
+
+Pull/run the published image:
 
 ```bash
 # replace <owner>/<repo> with the GitHub repository path
-docker pull ghcr.io/<owner>/<repo>:latest
+docker pull ghcr.io/<owner>/<repo>:v0.1.0
 
 docker run -d --name duckai-cpa -p 8787:8787 \
   -v "$PWD/data:/app/data" \
   -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
-  ghcr.io/<owner>/<repo>:latest
+  ghcr.io/<owner>/<repo>:v0.1.0
 ```
 
-Tag pushes also publish version tags (for example `ghcr.io/<owner>/<repo>:v0.1.0`). The workflow needs no extra secrets; it uses the repository `GITHUB_TOKEN` with `packages: write`.
+The workflows use the repository `GITHUB_TOKEN` with `packages: write`; no extra secrets are required. The release image copies the artifact without running `npm install`, and removes npm/corepack from the final stage.
 
 ### Option B — Docker
 

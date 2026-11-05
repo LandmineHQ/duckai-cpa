@@ -1,40 +1,66 @@
 name: docker
 
-# Build the prebuilt admin console, then build and push the runtime image to GHCR.
+# Manual only: publish an existing build artifact to GHCR.
+# 1. Open the latest successful "build" workflow run and copy its run id.
+# 2. Run this workflow with a version (for example v0.1.0) and that run id.
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Image version/tag (for example v0.1.0)"
+        required: true
+        type: string
+      run_id:
+        description: "Successful build workflow run id (artifact duckai-cpa-release)"
+        required: true
+        type: string
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: docker-${{ github.ref }}
-  cancel-in-progress: true
+  group: docker-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate inputs
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::version may only contain letters, digits, '.', '_' and '-'"
+            exit 1
+          fi
+          if [[ ! "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::run_id must be a numeric GitHub Actions run id"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
         with:
-          node-version: "24"
-          cache: npm
+          name: duckai-cpa-release
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: .
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build admin console
-        run: npm run build:web
+      - name: Extract release artifact
+        shell: bash
+        run: |
+          test -f duckai-cpa-release.tar.gz
+          tar -xzf duckai-cpa-release.tar.gz
+          test -f release/src/index.js
+          test -f release/web/index.html
+          du -sh release
 
       - name: Compute lowercase image name
         id: image
@@ -54,29 +80,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.image.outputs.name }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=sha,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-
-      - name: Build and push
+      - name: Build and push versioned image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
+          file: ./Dockerfile.release
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ inputs.version }}
+          labels: |
+            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Publish summary
+        shell: bash
+        run: |
+          {
+            echo "### Published image"
+            echo ""
+            echo "- image: \`${{ steps.image.outputs.name }}:${{ inputs.version }}\`"
+            echo "- source build run id: \`${{ inputs.run_id }}\`"
+            echo "- revision: \`${{ github.sha }}\`"
+            echo "- platforms: linux/amd64, linux/arm64"
+          } >> "$GITHUB_STEP_SUMMARY"

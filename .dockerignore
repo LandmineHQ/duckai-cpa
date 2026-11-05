@@ -32,3 +32,6 @@ coverage/
 .gitignore
 
 # 注意：不要忽略 web/、config/、src/、package*.json，它们是镜像运行所必需的。
+
+# CI release archive (Dockerfile.release uses the extracted release/ directory)
+duckai-cpa-release.tar.gz
