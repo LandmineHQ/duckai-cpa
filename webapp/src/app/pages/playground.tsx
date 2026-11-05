@@ -333,6 +333,7 @@ export function PlaygroundPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeSession, setActiveSession] = useState<SessionSummary | null>(null);
+  const [compactable, setCompactable] = useState(true);
   /** v2.5：按会话缓存消息 / 流式草稿 / 生成状态，切换会话互不影响。 */
   const [sessionMessages, setSessionMessages] = useState<Record<string, SessionMessage[]>>({});
   const [sessionDrafts, setSessionDrafts] = useState<Record<string, SessionMessage | null>>({});
@@ -708,6 +709,7 @@ export function PlaygroundPage() {
         loadedRef.current[id] = true;
         return;
       }
+      setCompactable(response?.compactable !== false);
       const session = response?.session ?? null;
       const detailMessages = Array.isArray(response?.messages) ? response.messages : [];
       // 写入该会话缓存（后台刷新也不会污染其它会话视图）
@@ -1151,6 +1153,11 @@ export function PlaygroundPage() {
           `/test/sessions/${encodeURIComponent(sessionId)}/compact`,
           {}
         );
+        if (response?.skipped) {
+          toast.info('当前会话消息太少，无需压缩。');
+          await loadDetail(sessionId);
+          return;
+        }
         const info = response?.summary ?? response?.session?.summary ?? null;
         const covered =
           response?.coveredMessageCount ??
@@ -1477,7 +1484,8 @@ export function PlaygroundPage() {
                   size="sm"
                   data-testid="compact-session"
                   className="h-7 gap-1 text-xs"
-                  disabled={activeStreaming || compacting}
+                  disabled={activeStreaming || compacting || compactable === false}
+                  title={compactable === false ? '消息太少，暂无可压缩的历史' : '压缩会话'}
                   onClick={() => compactSession()}
                 >
                   {compacting ? (

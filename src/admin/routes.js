@@ -631,7 +631,14 @@ async function handleSessions(ctx, parts) {
     if (ctx.method === 'GET' || ctx.method === 'HEAD') {
       const session = await ctx.sessions.getSession(sessionId);
       if (!session) throw notFound(`Session "${sessionId}" not found`, 'session_not_found');
-      ctx.json(200, { session, messages: session.messages });
+      const compactConfig = getCompactConfig(ctx.config);
+      const compactSplit = splitForCompact(buildConversation(session.messages), compactConfig.keepRecentMessages);
+      ctx.json(200, {
+        session,
+        messages: session.messages,
+        summary: session.summary ?? null,
+        compactable: compactSplit.history.length > 0
+      });
       return;
     }
     if (ctx.method === 'PATCH') {
@@ -689,7 +696,20 @@ async function handleSessionCompact(ctx, sessionId) {
   const conversation = buildConversation(session.messages);
   const split = splitForCompact(conversation, compactConfig.keepRecentMessages);
   if (!split.history.length) {
-    throw badRequest('session has no older messages to compact', 'sessionId', 'nothing_to_compact');
+    // 短会话没有可压缩历史：按 no-op 返回，前端显示“无需压缩”，不要把按钮点击变成错误。
+    ctx.json(200, {
+      ok: true,
+      skipped: true,
+      reason: 'nothing_to_compact',
+      messageCount: session.messages.length,
+      summary: session.summary ?? null,
+      summaryChars: session.summary?.text?.length || 0,
+      coveredMessageCount: 0,
+      coveredPairCount: 0,
+      trigger: 'manual',
+      session
+    });
+    return;
   }
   const resolved = resolveModel(ctx.config, body.model !== undefined ? body.model : session.model || undefined);
   if (typeof ctx.selectIdentity === 'function') {

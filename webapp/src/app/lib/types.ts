@@ -302,6 +302,7 @@ export interface SessionSummary {
 export interface SessionDetail {
   session: SessionSummary;
   messages: SessionMessage[];
+  compactable?: boolean;
   /** v2.11：详情里同时返回摘要区。 */
   summary?: SessionSummaryInfo | null;
 }
@@ -338,6 +339,8 @@ export interface TestStreamEvent {
 }
 
 export interface CompactSessionResponse {
+  skipped?: boolean;
+  reason?: string;
   ok?: boolean;
   session?: SessionSummary;
   summary?: SessionSummaryInfo | null;

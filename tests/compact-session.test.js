@@ -174,7 +174,7 @@ test('摘要失败回退：请求仍成功、不标记 compacted、summary 不�
 /* 手动 compact                                                        */
 /* ------------------------------------------------------------------ */
 
-test('手动 compact：200 返回 summary 并持久化；重复幂等；404/400 错误码', async () => {
+test('手动 compact：200 返回 summary 并持久化；重复幂等；短会话 no-op；404 错误码', async () => {
   await withServer({ config: makeConfig(compactConfig({ triggerChars: 100000 })) }, async (env) => {
     const session = await createSession(env);
     for (let round = 0; round < 4; round += 1) {
@@ -213,8 +213,9 @@ test('手动 compact：200 返回 summary 并持久化；重复幂等；404/400 
       method: 'POST',
       body: {}
     });
-    assert.equal(nothing.status, 400);
-    assert.equal(nothing.json.error.code, 'nothing_to_compact');
+    assert.equal(nothing.status, 200, '短会话压缩应为 no-op，不应报错');
+    assert.equal(nothing.json.skipped, true);
+    assert.equal(nothing.json.reason, 'nothing_to_compact');
   });
 });
 
