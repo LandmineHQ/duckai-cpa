@@ -9,10 +9,60 @@
  *
  * 注意：PDF 仍然消耗模型 token；这里只解决 duck.ai 的文本字符限制。
  */
-import { createContextPdf, PdfCapacityError } from './context-pdf.js';
+import crypto from 'node:crypto';
+import { createContextPdf, createToolsPdf, PdfCapacityError } from './context-pdf.js';
 
 const DEFAULT_INPUT_CHAR_LIMIT = 20000;
 const DEFAULT_MAX_PAGES = 15;
+
+export function hashConversationPrefix(messages = []) {
+  try {
+    return crypto.createHash('sha1').update(JSON.stringify(messages)).digest('hex');
+  } catch {
+    return '';
+  }
+}
+
+/** v2.50：稳定的 PDF scope（同一会话复用同一 PDF）。 */
+export function pdfScopeKey({ kind = 'chat', sessionKey = null, previousResponseId = null, model = '', conversation = [] }) {
+  if (sessionKey) return `${kind}:session:${sessionKey}`;
+  if (previousResponseId) return `${kind}:response:${previousResponseId}`;
+  const firstUser = (Array.isArray(conversation) ? conversation : []).find((message) => message && message.role === 'user');
+  const seed = `${model}\n${firstUser ? String(firstUser.content || '') : ''}`;
+  return `${kind}:auto:${crypto.createHash('sha1').update(seed).digest('hex').slice(0, 24)}`;
+}
+
+export function pdfFileFromState(state) {
+  if (!state || !state.pdfB64) return null;
+  return {
+    mimeType: state.mimeType || 'application/pdf',
+    filename: state.filename || 'conversation-context.pdf',
+    b64: state.pdfB64,
+    pages: state.pages,
+    bytes: state.bytes,
+    textChars: state.textChars,
+    text: ''
+  };
+}
+
+/** 把已存储的 PDF 挂到最后一条 user 消息上。 */
+export function attachPdfFile(messages = [], file) {
+  if (!file || !Array.isArray(messages) || !messages.length) return messages;
+  let index = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] && messages[i].role === 'user') { index = i; break; }
+  }
+  if (index < 0) return messages;
+  return messages.map((message, i) =>
+    i === index
+      ? { ...message, files: [...(Array.isArray(message.files) ? message.files : []), file] }
+      : message
+  );
+}
+
+export function stripSpillInstruction(text) {
+  return String(text || '').replace(/\s*\[系统提示\] 附件包含 client-tools\.pdf[\s\S]*$/, '').trim();
+}
 
 export function messageTextChars(messages = []) {
   let total = 0;
@@ -72,6 +122,22 @@ export async function spillMessagesToPdf(duckMessages, options = {}) {
     maxPages,
     title: options.filename || 'DuckAI conversation context'
   });
+  let toolsFile = null;
+  if (options.toolProtocol || (Array.isArray(options.toolNames) && options.toolNames.length)) {
+    const toolsPdf = await createToolsPdf({
+      toolProtocol: options.toolProtocol || '',
+      toolNames: options.toolNames || [],
+      maxPages: 1
+    });
+    toolsFile = {
+      mimeType: 'application/pdf',
+      filename: 'client-tools.pdf',
+      b64: toolsPdf.buffer.toString('base64'),
+      pages: toolsPdf.pages,
+      bytes: toolsPdf.buffer.length,
+      textChars: toolsPdf.textChars
+    };
+  }
   const filename = options.filename || 'conversation-context.pdf';
   const file = {
     mimeType: 'application/pdf',
@@ -82,11 +148,15 @@ export async function spillMessagesToPdf(duckMessages, options = {}) {
     textChars: pdfResult.textChars
   };
 
+  const instruction =
+    '\n\n[系统提示] 附件包含 client-tools.pdf（客户端工具说明）和 context PDF（会话历史上下文）。' +
+    '请先阅读工具说明，然后读取 context PDF 的全部页面（不要只读第一页/摘要），结合当前问题继续回答。';
   const keepWithFile = keep.map((message, index) => {
     if (index !== 0 || message.role !== 'user') return message;
     return {
       ...message,
-      files: [...(Array.isArray(message.files) ? message.files : []), file]
+      content: typeof message.content === 'string' ? message.content + instruction : message.content,
+      files: [...(Array.isArray(message.files) ? message.files : []), ...(toolsFile ? [toolsFile] : []), file]
     };
   });
   if (keepWithFile.length === 0 || keepWithFile[0].role !== 'user') {
@@ -96,9 +166,14 @@ export async function spillMessagesToPdf(duckMessages, options = {}) {
   return {
     messages: [...systemPrefix, ...keepWithFile],
     pdf: { pages: pdfResult.pages, textChars: pdfResult.textChars, bytes: pdfResult.buffer.length },
-    movedMessages: history.length
+    file,
+    toolsFile,
+    movedMessages: history.length,
+    coveredCount: keepIndex,
+    coveredHash: hashConversationPrefix(messages.slice(0, keepIndex))
   };
 }
 
 export { PdfCapacityError };
-export default { spillMessagesToPdf, messageTextChars, PdfCapacityError };
+export { createToolsPdf };
+export default { spillMessagesToPdf, messageTextChars, stripSpillInstruction, pdfScopeKey, pdfFileFromState, attachPdfFile, createToolsPdf, PdfCapacityError };

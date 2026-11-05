@@ -9,6 +9,8 @@
 
 import { OpenAIError } from './errors.js';
 import { formatToolCallsForHistory, formatToolResult } from './tool-protocol.js';
+import { createContextPdf } from './context-pdf.js';
+import { hashConversationPrefix, pdfScopeKey } from './context-spill.js';
 import {
   COMPACTION_MODELS as DUCK_COMPACTION_MODELS,
   countPairs as duckCountPairs,
@@ -517,8 +519,30 @@ export async function handleCompact(req, res, ctx) {
     trigger: 'client',
     savedChars: historyChars
   });
+  let contextPdf = null;
+  if (ctx.sessionKey && ctx.responsesStore?.enabled) {
+    try {
+      const sourceMessages = Array.isArray(body.messages) && body.messages.length ? body.messages : normalized.messages;
+      const pdf = await createContextPdf({ messages: sourceMessages, maxPages: 15, title: 'DuckAI manual compaction context' });
+      const scopeKey = pdfScopeKey({ kind: 'chat', sessionKey: ctx.sessionKey, conversation: sourceMessages });
+      await ctx.responsesStore.saveContextPdf({
+        scopeKey,
+        filename: 'conversation-context.pdf',
+        pages: pdf.pages,
+        bytes: pdf.buffer.length,
+        textChars: pdf.textChars,
+        coveredCount: sourceMessages.length,
+        coveredHash: hashConversationPrefix(sourceMessages),
+        pdfB64: pdf.buffer.toString('base64')
+      });
+      contextPdf = { filename: 'conversation-context.pdf', pages: pdf.pages, bytes: pdf.buffer.length };
+    } catch (error) {
+      ctx.log?.warn?.('manual compact PDF generation failed', { error: error.message });
+    }
+  }
   ctx.json(200, {
     object: 'compaction',
+    context_pdf: contextPdf,
     model: summary.model || body.model || null,
     summary: {
       text: summary.text,

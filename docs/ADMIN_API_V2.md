@@ -1519,7 +1519,14 @@ upstream 日志新增：`clientTools`、`protocolInjected`、`upstreamMessageCou
 | --- | --- | --- |
 | `context.pdfSpill.enabled` | true | 启用自动 PDF 溢出（替代自动摘要压缩） |
 | `context.pdfSpill.inputCharLimit` | 20000 | 超过该字符数才移动历史到 PDF |
-| `context.pdfSpill.maxPages` | 15 | 单 PDF 页数上限（Free 实测 15） |
+| `context.pdfSpill.maxPages` | 15 | 单 context PDF 页数上限（Free 实测 15） |
+
+### 43.1.1 双 PDF 与会话复用
+
+- `client-tools.pdf`：客户端工具说明，1 页；
+- `conversation-context.pdf`：历史上下文，≤15 页；
+- 同一会话（session id / previous_response_id / 首条 user 哈希）复用 `context_pdfs` 中的 context PDF，不每轮生成；
+- 手动 `/v1/compact` 也会生成新的 context PDF，并在响应中返回 `context_pdf` 元数据。
 
 ### 43.2 行为
 

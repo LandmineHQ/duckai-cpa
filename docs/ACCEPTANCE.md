@@ -550,3 +550,14 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 7 | 回归 | ✅ | `npm test` **465/465**、build-check 16/16、page-check 22/22 |
 | 8 | 图片嵌入 PDF | ✅ | 历史图片转 PDF 后真实上游回答「红色」；`createContextPdf` 单测包含 `/Subtype /Image` |
 | 9 | 历史 PDF 展示 | ✅ | 溢出请求的历史记录只保存当前 user + PDF 元数据（不存 base64）；前端显示 `conversation-context.pdf · 2 页` chip；`ReadDocument` 显示「文档读取」 |
+## 2.43 v2.50 双 PDF + 会话复用 + 手动压缩 PDF
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 两个 PDF 上传 | ✅ | 真实 Free 身份同时上传 client-tools.pdf + context PDF；模型读取 context 最后一页代码 TWO-PDF-CONTEXT-CODE-8899 |
+| 2 | 工具说明单独 PDF | ✅ | client-tools.pdf 1 页（工具协议 + 读取全部页面说明）；context PDF 从第 1 页开始 |
+| 3 | 同一会话复用 context PDF | ✅ | chat 第二轮复用同一 PDF；真实上游第二轮 usage prompt_tokens=7393（含 PDF）并回答 PDF-only 代码 REUSE3-8642 |
+| 4 | Responses 复用 | ✅ | 单测：两轮 responses 的 context PDF b64 相同 |
+| 5 | 手动压缩生成 PDF | ✅ | `/v1/compact` 返回 context_pdf 元数据并写入 context_pdfs |
+| 6 | 历史样式/PDF chip | ✅ | PDF chip 在用户气泡内；历史去掉注入指令；双 PDF chip 均显示 |
+| 7 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |

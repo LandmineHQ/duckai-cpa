@@ -263,3 +263,45 @@ export async function createContextPdf({ messages = [], maxPages = MAX_PAGES_DEF
 }
 
 export default { createContextPdf, PdfCapacityError };
+
+
+/** v2.50：独立的 client tools 说明 PDF（第一页工具说明，避免占用 context PDF 页数）。 */
+export async function createToolsPdf({ toolProtocol = '', toolNames = [], maxPages = 1 } = {}) {
+  const doc = await PDFDocument.create();
+  doc.setTitle('DuckAI client tools');
+  const fontInfo = readFont();
+  let font;
+  if (fontInfo) {
+    doc.registerFontkit(fontkit);
+    try { font = await doc.embedFont(fontInfo.bytes, { subset: true }); } catch { font = null; }
+  }
+  if (!font) font = await doc.embedFont(StandardFonts.Helvetica);
+  const lines = [
+    'CLIENT TOOLS / 客户端工具说明',
+    '',
+    '本 PDF 说明本次会话可用的客户端工具。',
+    '另一个 PDF（context）是会话历史上下文。',
+    '请读取 context PDF 的全部页面，不要只读第一页/摘要。',
+    ''
+  ];
+  if (toolNames.length) lines.push('可用工具：' + toolNames.join(', '));
+  if (toolProtocol) {
+    lines.push('', '工具调用协议：', ...String(toolProtocol).split('\n'));
+  }
+  let page = doc.addPage(A4);
+  let y = A4[1] - MARGIN;
+  let pageCount = 1;
+  const maxWidth = A4[0] - MARGIN * 2;
+  for (const line of lines) {
+    const wrapped = wrapText(line, font, FONT_SIZE, maxWidth);
+    for (const part of wrapped) {
+      if (y - LINE_HEIGHT < MARGIN) {
+        if (pageCount >= maxPages) throw new PdfCapacityError('client tools PDF exceeds max pages', { maxPages });
+        page = doc.addPage(A4); pageCount += 1; y = A4[1] - MARGIN;
+      }
+      if (part) page.drawText(part, { x: MARGIN, y, size: FONT_SIZE, font, color: rgb(0.05, 0.05, 0.05) });
+      y -= LINE_HEIGHT;
+    }
+  }
+  return { buffer: Buffer.from(await doc.save()), pages: pageCount, textChars: lines.join('\n').length };
+}

@@ -55,7 +55,16 @@ import {
   isAbortError
 } from './errors.js';
 import { countMessagesTokens, countTextTokens } from './tokens.js';
-import { spillMessagesToPdf } from './context-spill.js';
+import {
+  spillMessagesToPdf,
+  messageTextChars,
+  pdfScopeKey,
+  pdfFileFromState,
+  attachPdfFile,
+  hashConversationPrefix,
+  createToolsPdf,
+  stripSpillInstruction
+} from './context-spill.js';
 
 const IGNORED_INPUT_ITEM_TYPES = new Set([
   'item_reference',
@@ -419,6 +428,30 @@ export async function handleResponses(req, res, ctx) {
     previousRecord.upstream.length > 0 &&
     previousRecord.toolsHash === toolsHash &&
     (previousRecord.systemPrompt || '') === (systemPrompt || '');
+  const pdfScope = pdfScopeKey({
+    kind: 'responses',
+    sessionKey: ctx.sessionKey || null,
+    previousResponseId,
+    model: resolved.id,
+    conversation: chainedConversation
+  });
+  let pdfState = null;
+  let pdfReuse = false;
+  let pdfHot = null;
+  if (!reusablePrefix && pdfSpillConfig.enabled !== false && responseStore?.enabled) {
+    pdfState = await responseStore.getContextPdf(pdfScope);
+    if (
+      pdfState &&
+      pdfState.coveredCount <= chainedConversation.length &&
+      pdfState.coveredHash === hashConversationPrefix(chainedConversation.slice(0, pdfState.coveredCount))
+    ) {
+      const hot = chainedConversation.slice(pdfState.coveredCount);
+      if (messageTextChars(hot) + String(systemPrompt || '').length <= (Number(pdfSpillConfig.inputCharLimit) || 20000)) {
+        pdfReuse = true;
+        pdfHot = hot;
+      }
+    }
+  }
   let canonicalConversation;
   let duckMessages;
   if (reusablePrefix) {
@@ -428,9 +461,11 @@ export async function handleResponses(req, res, ctx) {
     duckMessages = [...previousRecord.upstream, ...outputConversation, ...input.conversation];
     ctx.log.conversationChain = 'prefix-reuse';
   } else {
-    const guarded = pdfSpillPlanned
-      ? { messages: chainedConversation, trimmed: false }
-      : guardConversation(chainedConversation, systemPrompt, ctx.config?.context || {});
+    const guarded = pdfReuse
+      ? { messages: pdfHot, trimmed: false }
+      : pdfSpillPlanned
+        ? { messages: chainedConversation, trimmed: false }
+        : guardConversation(chainedConversation, systemPrompt, ctx.config?.context || {});
     if (guarded.trimmed) ctx.log.contextTrimmed = true;
     canonicalConversation = guarded.messages;
     let upstreamMessages = guarded.messages;
@@ -452,17 +487,64 @@ export async function handleResponses(req, res, ctx) {
 
   let displayHistoryMessages = canonicalConversation;
   let spillDisplay = null;
-  if (pdfSpillConfig.enabled !== false) {
+  if (pdfReuse && pdfState) {
+    const storedFile = pdfFileFromState(pdfState);
+    if (storedFile) duckMessages = attachPdfFile(duckMessages, storedFile);
+    if (clientTools.length) {
+      try {
+        const toolsPdf = await createToolsPdf({
+          toolProtocol: buildToolProtocol(clientTools),
+          toolNames: clientTools.map((tool) => tool.name),
+          maxPages: 1
+        });
+        duckMessages = attachPdfFile(duckMessages, {
+          mimeType: 'application/pdf',
+          filename: 'client-tools.pdf',
+          b64: toolsPdf.buffer.toString('base64'),
+          pages: toolsPdf.pages,
+          bytes: toolsPdf.buffer.length
+        });
+      } catch (error) {
+        ctx.logger?.warn?.('client tools PDF generation failed', { error: error.message });
+      }
+    }
+    spillDisplay = duckMessages;
+    ctx.log.contextPdfReused = true;
+    ctx.log.contextPdf = { pages: pdfState.pages, bytes: pdfState.bytes, reused: true };
+  } else if (pdfSpillConfig.enabled !== false) {
     try {
       const spill = await spillMessagesToPdf(duckMessages, {
         inputCharLimit: Number(pdfSpillConfig.inputCharLimit) || 20000,
-        maxPages: Number(pdfSpillConfig.maxPages) || 15
+        maxPages: Number(pdfSpillConfig.maxPages) || 15,
+        toolProtocol: clientTools.length ? buildToolProtocol(clientTools) : '',
+        toolNames: clientTools.map((tool) => tool.name)
       });
       if (spill) {
         duckMessages = spill.messages;
         spillDisplay = spill.messages;
         ctx.log.contextPdf = spill.pdf;
         ctx.log.contextPdfMoved = spill.movedMessages;
+        if (responseStore?.enabled && pdfScope && spill.file) {
+          let coveredCount = chainedConversation.length;
+          for (let i = chainedConversation.length - 1; i >= 0; i--) {
+            if (chainedConversation[i].role === 'user') {
+              coveredCount = i;
+              break;
+            }
+          }
+          await responseStore.saveContextPdf({
+            scopeKey: pdfScope,
+            filename: spill.file.filename,
+            mimeType: spill.file.mimeType,
+            pages: spill.pdf.pages,
+            bytes: spill.pdf.bytes,
+            textChars: spill.pdf.textChars,
+            coveredCount,
+            coveredHash: hashConversationPrefix(chainedConversation.slice(0, coveredCount)),
+            pdfB64: spill.file.b64
+          });
+          ctx.log.contextPdfSaved = true;
+        }
       }
     } catch (error) {
       if (error && error.code === 'context_pdf_capacity_exceeded') {
@@ -481,7 +563,7 @@ export async function handleResponses(req, res, ctx) {
   displayHistoryMessages = spillDisplay
     ? spillDisplay.map((message) => ({
         ...message,
-        content: String(message.content || '').replace(protocolText, '').trim(),
+        content: stripSpillInstruction(String(message.content || '').replace(protocolText, '')),
         files: message.files
       }))
     : canonicalConversation;

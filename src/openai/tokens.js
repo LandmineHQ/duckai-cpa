@@ -65,7 +65,12 @@ export function countFileTokens(file = {}) {
     const text = typeof file.text === 'string' ? file.text : '';
     const pages = Number(file.pages);
     const pageCount = Number.isFinite(pages) && pages > 0 ? pages : 1;
-    return countTextTokens(text) + pageCount * 100;
+    const textTokens = text
+      ? countTextTokens(text)
+      : Number.isFinite(Number(file.textChars))
+        ? Math.max(1, Math.ceil(Number(file.textChars) / 3))
+        : 0;
+    return textTokens + pageCount * 100;
   }
   return 1000;
 }

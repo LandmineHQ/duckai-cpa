@@ -151,6 +151,21 @@ CREATE TABLE IF NOT EXISTS conversation_state (
   expires_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_conversation_state_expires ON conversation_state(expires_at);
+CREATE TABLE IF NOT EXISTS context_pdfs (
+  scope_key TEXT PRIMARY KEY,
+  filename TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  pages INTEGER,
+  bytes INTEGER,
+  covered_count INTEGER NOT NULL,
+  covered_hash TEXT NOT NULL,
+  text_chars INTEGER,
+  pdf_b64 TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  expires_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_context_pdfs_expires ON context_pdfs(expires_at);
 `;
 
 const connections = new Map();
@@ -190,6 +205,8 @@ export async function openDatabase(options = {}) {
     if (!historyColumns.has('injection_json')) {
       db.exec('ALTER TABLE history ADD COLUMN injection_json TEXT');
     }
+    const pdfColumns = new Set(db.prepare('PRAGMA table_info(context_pdfs)').all().map((column) => column.name));
+    if (!pdfColumns.has('text_chars')) db.exec('ALTER TABLE context_pdfs ADD COLUMN text_chars INTEGER');
   } catch (error) {
     options.logger?.warn?.('[db] failed to init sqlite', { error: error.message });
     throw error;

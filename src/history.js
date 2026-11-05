@@ -56,6 +56,10 @@ function messageText(message) {
   return '';
 }
 
+function stripPdfInstruction(text) {
+  return String(text || '').replace(/\s*\[系统提示\] 附件包含 client-tools\.pdf[\s\S]*$/, '').trim();
+}
+
 function normalizeInjection(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const clientTools = Array.isArray(raw.clientTools)
@@ -240,7 +244,7 @@ export async function createHistoryStore({ dataDir = 'data', config = null, logg
           id: row.id,
           identityId: row.identity_id,
           sessionKey: row.session_key,
-          title: row.title,
+          title: stripPdfInstruction(row.title),
           model: row.model,
           messageCount: row.message_count,
           createdAt: row.created_at,
@@ -269,10 +273,12 @@ export async function createHistoryStore({ dataDir = 'data', config = null, logg
         id: row.id,
         identityId: row.identity_id,
         sessionKey: row.session_key,
-        title: row.title,
+        title: stripPdfInstruction(row.title),
         model: row.model,
         systemPrompt: row.system_prompt,
-        messages: Array.isArray(messages) ? messages : [],
+        messages: Array.isArray(messages)
+          ? messages.map((message) => ({ ...message, content: stripPdfInstruction(message.content) }))
+          : [],
         injection: (() => {
           if (!row.injection_json) return null;
           try {

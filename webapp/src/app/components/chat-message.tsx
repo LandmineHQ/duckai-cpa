@@ -34,7 +34,7 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 /** v2.49：PDF/文件附件 chip（会话历史只存元数据）。 */
-function FileAttachmentList({ files }: { files?: Array<{ filename: string; mimeType: string; pages?: number; bytes?: number }> }) {
+function FileAttachmentList({ files, onPrimary = false }: { files?: Array<{ filename: string; mimeType: string; pages?: number; bytes?: number }>; onPrimary?: boolean }) {
   if (!files || files.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-1.5" data-testid="message-files">
@@ -43,7 +43,7 @@ function FileAttachmentList({ files }: { files?: Array<{ filename: string; mimeT
         return (
           <span
             key={`${file.filename}-${index}`}
-            className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground"
+            className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] ${onPrimary ? 'border-primary-foreground/20 bg-primary-foreground/15 text-primary-foreground' : 'bg-muted/40 text-muted-foreground'}`}
             title={`${file.filename} · ${file.mimeType}${file.pages ? ` · ${file.pages} 页` : ''}`}
           >
             <FileText className="h-3 w-3 shrink-0" />
@@ -130,12 +130,14 @@ export function ChatMessageBubble({
     return (
       <div className="flex justify-end gap-2">
         <div className="flex max-w-[85%] flex-col items-end gap-1">
-          {message.files && message.files.length ? <FileAttachmentList files={message.files} /> : null}
-          {message.content ? (
-            <div className="whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-primary px-3.5 py-2.5 text-sm text-primary-foreground">
-              {message.content}
-            </div>
-          ) : null}
+          <div className="whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-primary px-3.5 py-2.5 text-sm text-primary-foreground">
+            {message.content}
+            {message.files && message.files.length ? (
+              <div className="mt-1.5">
+                <FileAttachmentList files={message.files} onPrimary />
+              </div>
+            ) : null}
+          </div>
           <span className="pr-1 text-[11px] text-muted-foreground">{formatDateTime(message.ts)}</span>
         </div>
         <div className="mt-0.5 hidden h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary sm:flex">
