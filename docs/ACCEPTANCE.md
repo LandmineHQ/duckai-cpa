@@ -537,3 +537,15 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 3 | 上游请求调试视图 | ✅ | `GET /admin/api/history/:id/upstream` 返回真实 upstream messages；图片 base64 脱敏为 `[image data ...]` |
 | 4 | 手动压缩保留工具轨迹 | ✅ | `/v1/compact` 的 `normalizeCompactMessages` 编码 `[tool_call]` / `[tool_result]`，图片标记 `[图片 xN]` |
 | 5 | 回归 | ✅ | `npm test` **460/460**、`build-check` 16/16、`page-check` 22/22 |
+## 2.42 v2.49 自动 PDF 上下文溢出 + tokenizer usage
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | Free 身份 PDF 能力 | ✅ | 匿名 Free + GPT-6 Luna：10 页/78k 字符、15 页内可读；50 页被拒（单文件 ≤15 页） |
+| 2 | 单页/多页排版 | ✅ | 单页 10 万字符只解析前 250 行；改为 **250 行/页** 多页排版；15 页上限 |
+| 3 | 自动 PDF 溢出 | ✅ | chat >20k 字符：历史转 PDF（含图片），当前 user + file part；真实上游回答 `ZEBRA-2468` |
+| 4 | Responses 溢出 | ✅ | `/v1/responses` >20k 输入：历史转 PDF；真实上游回答 `RESP-9753` |
+| 5 | tokenizer usage | ✅ | chat `prompt_tokens=29044`（含 PDF）；responses `input_tokens=29042`；`estimation:"tokenizer"` |
+| 6 | 手动压缩保留 | ✅ | 自动压缩在 PDF 溢出路径跳过；`/v1/compact` 仍是真正摘要 |
+| 7 | 回归 | ✅ | `npm test` **465/465**、build-check 16/16、page-check 22/22 |
+| 8 | 图片嵌入 PDF | ✅ | 历史图片转 PDF 后真实上游回答「红色」；`createContextPdf` 单测包含 `/Subtype /Image` |

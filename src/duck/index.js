@@ -313,11 +313,12 @@ export function buildUpstreamMessages(messages, options = {}) {
     const role = message.role === 'developer' ? 'developer' : message.role === 'system' ? 'system' : message.role === 'assistant' ? 'assistant' : 'user';
     const messageText = extractMessageText(message.content);
     const images = extractMessageImages(message);
+    const files = extractMessageFiles(message);
     if (role === 'system' || role === 'developer') {
       if (messageText) systemTexts.push(messageText);
       continue;
     }
-    normalized.push({ role, text: messageText, images });
+    normalized.push({ role, text: messageText, images, files });
   }
 
   const injectedSystem = options.systemPrompt ? String(options.systemPrompt).trim() : '';
@@ -336,6 +337,7 @@ export function buildUpstreamMessages(messages, options = {}) {
       if (item.images.length) pendingImages.push(...item.images);
     } else {
       const content = [{ type: 'text', text: item.text }];
+      if (item.files && item.files.length) content.push(...item.files);
       if (item.images.length || pendingImages.length) {
         content.push(...pendingImages, ...item.images);
         pendingImages = [];
@@ -395,6 +397,30 @@ function toUpstreamImagePart(image) {
 function extractMessageImages(message) {
   const images = Array.isArray(message?.images) ? message.images : [];
   return images.map(toUpstreamImagePart).filter(Boolean);
+}
+
+function extractMessageFiles(message) {
+  const files = [];
+  if (Array.isArray(message?.files)) {
+    for (const file of message.files) {
+      if (!file || typeof file !== 'object') continue;
+      const b64 = typeof file.b64 === 'string' ? file.b64 : '';
+      if (!b64) continue;
+      files.push({
+        type: 'file',
+        content: b64,
+        encoding: 'base64',
+        mimeType: file.mimeType || 'application/pdf',
+        filename: file.filename || 'context.pdf'
+      });
+    }
+  }
+  if (Array.isArray(message?.content)) {
+    for (const part of message.content) {
+      if (part && part.type === 'file') files.push(part);
+    }
+  }
+  return files;
 }
 
 function extractMessageText(content) {

@@ -46,6 +46,7 @@ import { guardConversation } from './context-guard.js';
 import { normalizeToolCalls, recordHistoryOnLog } from './chat.js';
 import {
   badRequest,
+  OpenAIError,
   buildEstimatedUsage,
   genId,
   nowSec,
@@ -53,6 +54,8 @@ import {
   errorPayload,
   isAbortError
 } from './errors.js';
+import { countMessagesTokens, countTextTokens } from './tokens.js';
+import { spillMessagesToPdf } from './context-spill.js';
 
 const IGNORED_INPUT_ITEM_TYPES = new Set([
   'item_reference',
@@ -400,6 +403,16 @@ export async function handleResponses(req, res, ctx) {
       ...input.systemParts
     ]);
   }
+
+  const pdfSpillConfig = ctx.config?.context?.pdfSpill || {};
+  const chainedChars =
+    chainedConversation.reduce((sum, message) => sum + String(message.content || '').length, 0) +
+    String(systemPrompt || '').length;
+  const pdfSpillPlanned =
+    pdfSpillConfig.enabled !== false &&
+    chainedConversation.length > 1 &&
+    chainedChars > (Number(pdfSpillConfig.inputCharLimit) || 20000);
+
   const reusablePrefix =
     previousRecord &&
     Array.isArray(previousRecord.upstream) &&
@@ -415,7 +428,9 @@ export async function handleResponses(req, res, ctx) {
     duckMessages = [...previousRecord.upstream, ...outputConversation, ...input.conversation];
     ctx.log.conversationChain = 'prefix-reuse';
   } else {
-    const guarded = guardConversation(chainedConversation, systemPrompt, ctx.config?.context || {});
+    const guarded = pdfSpillPlanned
+      ? { messages: chainedConversation, trimmed: false }
+      : guardConversation(chainedConversation, systemPrompt, ctx.config?.context || {});
     if (guarded.trimmed) ctx.log.contextTrimmed = true;
     canonicalConversation = guarded.messages;
     let upstreamMessages = guarded.messages;
@@ -433,6 +448,30 @@ export async function handleResponses(req, res, ctx) {
     const paidModel =
       ctx.config?.duck?.allowPaidModels === true && (resolved.paid === true || resolved.model?.paid === true);
     await ctx.selectIdentity({ paidModel });
+  }
+
+  if (pdfSpillConfig.enabled !== false) {
+    try {
+      const spill = await spillMessagesToPdf(duckMessages, {
+        inputCharLimit: Number(pdfSpillConfig.inputCharLimit) || 20000,
+        maxPages: Number(pdfSpillConfig.maxPages) || 15
+      });
+      if (spill) {
+        duckMessages = spill.messages;
+        ctx.log.contextPdf = spill.pdf;
+        ctx.log.contextPdfMoved = spill.movedMessages;
+      }
+    } catch (error) {
+      if (error && error.code === 'context_pdf_capacity_exceeded') {
+        throw new OpenAIError('上下文超过 PDF 容量（15 页），请调用 /v1/compact 手动压缩后重试', {
+          status: 413,
+          type: 'invalid_request_error',
+          code: 'context_pdf_capacity_exceeded',
+          param: 'input'
+        });
+      }
+      ctx.logger?.warn?.('context PDF spill failed; continuing without spill', { error: error.message });
+    }
   }
 
   const protocolText = clientTools.length ? buildToolProtocol(clientTools) : '';
@@ -611,6 +650,8 @@ async function completeResponse(ctx, params) {
     promptChars: params.promptChars,
     completionChars: content.length,
     reasoningChars: reasoningText.length,
+    promptTokens: countMessagesTokens(params.duckMessages || []),
+    completionTokens: countTextTokens(content) + countTextTokens(reasoningText),
     upstreamUsage
   });
   recordUsageOnLog(ctx, usage);
@@ -690,6 +731,8 @@ async function streamResponseWithTools(ctx, params) {
     promptChars: params.promptChars,
     completionChars: content.length,
     reasoningChars: reasoningText.length,
+    promptTokens: countMessagesTokens(params.duckMessages || []),
+    completionTokens: countTextTokens(content) + countTextTokens(reasoningText),
     upstreamUsage
   });
   recordUsageOnLog(ctx, usage);
@@ -1319,6 +1362,8 @@ async function streamResponse(ctx, params) {
       promptChars: params.promptChars,
       completionChars: content.length,
       reasoningChars: reasoningText.length,
+      promptTokens: countMessagesTokens(params.duckMessages || []),
+      completionTokens: countTextTokens(content) + countTextTokens(reasoningText),
       upstreamUsage
     });
     recordUsageOnLog(ctx, usage);

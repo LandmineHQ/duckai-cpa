@@ -332,7 +332,7 @@ curl http://127.0.0.1:8787/v1/chat/completions \
     "completion_tokens": 210,
     "total_tokens": 242,
     "estimated": true,
-    "estimation": "chars/4"
+    "estimation": "tokenizer"
   },
   "system_fingerprint": null
 }
@@ -344,7 +344,7 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 - `message.annotations`：联网搜索时为 `[{ "type": "url_citation", "url_citation": { "url", "title" } }]`；
 - `message.sources`：来源明细 `[{ "title", "url", "snippet" }]`（OpenAI 客户端可忽略）；
 - `message.images`：图片生成时为 `[{ "b64_json", "format", "width?", "height?", "model?" }]`；
-- `usage` 是**估算值**：上游不提供 token 计数，网关按字符数 / 4 估算，`estimated:true` 显式标注。
+- `usage` 是**估算值**：上游不提供 token 计数，网关用 gpt-tokenizer（o200k）估算文本 token，图片/PDF 用保守公式；`estimated:true` / `estimation:"tokenizer"` 显式标注。
 
 ### 3.3 流式示例
 
@@ -492,7 +492,7 @@ curl http://127.0.0.1:8787/v1/responses \
     "output_tokens": 160,
     "total_tokens": 178,
     "estimated": true,
-    "estimation": "chars/4"
+    "estimation": "tokenizer"
   },
   "metadata": {},
   "store": false,
@@ -950,7 +950,7 @@ v2 有三类 429，处理方式不同：
 ### 为什么 usage 是估算的？
 
 上游网页协议不返回 token 计数。网关按 **字符数 / 4** 估算，并在 `usage` 中标注
-`estimated: true`、`estimation: "chars/4"`。不要把该值用于精确计费。
+`estimated: true`、`estimation: "tokenizer"`（旧实现为 `"chars/4"`）。不要把该值用于精确计费。
 
 ### 流式输出里没有推理内容？
 
@@ -1132,3 +1132,29 @@ Chat Completions 没有官方的 assistant 图片字段，采用主流 OpenAI �
 - 响应头返回 `X-Session-Id`。
 
 > 精确前缀包含已注入的工具协议与已压缩的图片；因此后续轮次 duck.ai 收到的历史逐字节一致，prefix cache 可复用。
+## v2.49：自动 PDF 上下文溢出
+
+### 触发规则
+
+- 本次文本输入字符 ≤ `context.pdfSpill.inputCharLimit`（默认 **20000**）→ 不移动；
+- 超过 → 把除当前 user 外的全部历史渲染为会话 PDF，当前 user 保留文本；PDF 通过 `file` part 附带；
+- 自动摘要压缩被跳过；手动 `POST /v1/compact` 仍是真正的摘要压缩。
+
+### PDF 限制（Free 实测）
+
+- 单文件最多 **15 页**；
+- 每页最多 **250 行**（duck.ai PDF 解析上限）；
+- 超过 15 页 → HTTP 413 `context_pdf_capacity_exceeded`，提示先手动压缩；
+- 图片会嵌入 PDF 页面，并计入 token 估算。
+
+### 配置
+
+```json
+"context": { "pdfSpill": { "enabled": true, "inputCharLimit": 20000, "maxPages": 15 } }
+```
+
+> PDF 只绕过 duck.ai 的文本字符限制；PDF 内容仍消耗模型 token。
+
+### usage
+
+估算改为 tokenizer；chat 返回 `prompt_tokens/completion_tokens/total_tokens`，responses 返回 `input_tokens/output_tokens/total_tokens`。

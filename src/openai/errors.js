@@ -405,15 +405,26 @@ export function estimateTokensFromText(text) {
  * Build an OpenAI-style usage object from character counts.
  * `estimated: true` + `estimation: 'chars/4'` make the approximation explicit.
  */
-export function buildEstimatedUsage({ promptChars = 0, completionChars = 0, reasoningChars = 0, upstreamUsage = null } = {}) {
-  const prompt_tokens = estimateTokensFromChars(promptChars);
-  const completion_tokens = estimateTokensFromChars(completionChars + reasoningChars);
+export function buildEstimatedUsage({
+  promptChars = 0,
+  completionChars = 0,
+  reasoningChars = 0,
+  promptTokens = null,
+  completionTokens = null,
+  upstreamUsage = null
+} = {}) {
+  const prompt_tokens = Number.isFinite(Number(promptTokens))
+    ? Math.max(0, Math.trunc(Number(promptTokens)))
+    : estimateTokensFromChars(promptChars);
+  const completion_tokens = Number.isFinite(Number(completionTokens))
+    ? Math.max(0, Math.trunc(Number(completionTokens)))
+    : estimateTokensFromChars(completionChars + reasoningChars);
   const usage = {
     prompt_tokens,
     completion_tokens,
     total_tokens: prompt_tokens + completion_tokens,
     estimated: true,
-    estimation: 'chars/4'
+    estimation: Number.isFinite(Number(promptTokens)) ? 'tokenizer' : 'chars/4'
   };
   if (upstreamUsage && (Number.isFinite(upstreamUsage.inputTokens) || Number.isFinite(upstreamUsage.outputTokens))) {
     usage.upstream = {

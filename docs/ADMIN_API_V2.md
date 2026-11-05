@@ -1511,3 +1511,25 @@ upstream 日志新增：`clientTools`、`protocolInjected`、`upstreamMessageCou
 
 `POST /v1/compact` 会把 `assistant.tool_calls` 编码为 `[tool_call] …`、`role:"tool"` 编码为 `[tool_result] …` 后再摘要，
 不再丢失工具轨迹；图片以 `[图片 xN]` 标记。
+## 43. PDF 上下文溢出（v2.49）
+
+### 43.1 配置
+
+| 路径 | 默认 | 说明 |
+| --- | --- | --- |
+| `context.pdfSpill.enabled` | true | 启用自动 PDF 溢出（替代自动摘要压缩） |
+| `context.pdfSpill.inputCharLimit` | 20000 | 超过该字符数才移动历史到 PDF |
+| `context.pdfSpill.maxPages` | 15 | 单 PDF 页数上限（Free 实测 15） |
+
+### 43.2 行为
+
+- 计算本次文本字符（含 system / 工具协议）；≤ 阈值不处理；
+- 超过阈值：历史消息 → PDF（250 行/页），当前 user 保留文本 + `file` part；
+- 图片嵌入 PDF；PDF 文本/图片计入 token 估算；
+- 超过 15 页：413 `context_pdf_capacity_exceeded`（不静默截断）；
+- 手动 `/v1/compact` 不受影响，仍是摘要压缩。
+
+### 43.3 依赖
+
+`pdf-lib` + `@pdf-lib/fontkit`（PDF 生成/图片嵌入）、`gpt-tokenizer`（token 估算）；
+CJK 字体默认 Windows `simhei.ttf`，可用 `DUCKAI_PDF_FONT` 覆盖。

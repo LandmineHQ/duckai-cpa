@@ -84,6 +84,12 @@ export const DEFAULT_CONFIG = Object.freeze({
       keepRecentMessages: 6,
       maxSummaryChars: 4000,
       model: null
+    },
+    // v2.49：自动 PDF 溢出（文本超过 inputCharLimit 时把历史移入 PDF，替代自动压缩）
+    pdfSpill: {
+      enabled: true,
+      inputCharLimit: 20000,
+      maxPages: 15
     }
   },
   duck: {
@@ -356,6 +362,7 @@ export function normalizeContextConfig(raw = {}) {
     typeof compactSource.model === 'string' && compactSource.model.trim()
       ? compactSource.model.trim().slice(0, 100)
       : null;
+  const pdfSpillSource = isPlainObject(source.pdfSpill) ? source.pdfSpill : {};
   return {
     maxInputChars: toInteger(source.maxInputChars, DEFAULT_CONFIG.context.maxInputChars, 1000, 200000),
     maxMessages: toInteger(source.maxMessages, DEFAULT_CONFIG.context.maxMessages, 2, 500),
@@ -381,6 +388,16 @@ export function normalizeContextConfig(raw = {}) {
         20000
       ),
       model: compactModel
+    },
+    pdfSpill: {
+      enabled: toBoolean(pdfSpillSource.enabled, true),
+      inputCharLimit: toInteger(
+        pdfSpillSource.inputCharLimit,
+        DEFAULT_CONFIG.context.pdfSpill.inputCharLimit,
+        5000,
+        200000
+      ),
+      maxPages: toInteger(pdfSpillSource.maxPages, DEFAULT_CONFIG.context.pdfSpill.maxPages, 1, 15)
     }
   };
 }

@@ -1,0 +1,120 @@
+/**
+ * v2.49：PDF 溢出 + tokenizer usage。
+ * 规则：文本输入 >20k 字符时，把历史移入会话 PDF；当前 user 保留文本。
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { withServer, v1Request } from './helpers/test-server.js';
+import { MockDuckClient } from './helpers/mock-duck.js';
+import { spillMessagesToPdf } from '../src/openai/context-spill.js';
+import { createContextPdf } from '../src/openai/context-pdf.js';
+import { countTextTokens, countMessagesTokens } from '../src/openai/tokens.js';
+import { buildUpstreamMessages } from '../src/duck/index.js';
+
+const BIG = 'A'.repeat(25000);
+
+test('tokenizer：文本/消息 token 估算', () => {
+  assert.ok(countTextTokens('hello world') >= 1);
+  assert.ok(countTextTokens('中文内容测试') >= 1);
+  assert.ok(countMessagesTokens([{ role: 'user', content: 'hello' }]) >= 1);
+});
+
+test('spill：历史移入 PDF，当前 user 保留并附带 file part', async () => {
+  const messages = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: BIG },
+    { role: 'assistant', content: 'old answer' },
+    { role: 'user', content: '当前问题' }
+  ];
+  const spill = await spillMessagesToPdf(messages, { inputCharLimit: 20000, maxPages: 15 });
+  assert.ok(spill);
+  assert.equal(spill.pdf.pages <= 15, true);
+  assert.equal(spill.movedMessages, 2);
+  const kept = spill.messages.at(-1);
+  assert.equal(kept.role, 'user');
+  assert.equal(kept.content, '当前问题');
+  assert.ok(Array.isArray(kept.files) && kept.files.length === 1);
+  assert.equal(kept.files[0].mimeType, 'application/pdf');
+  assert.ok(kept.files[0].b64.startsWith('JVBERi0'));
+  const upstream = buildUpstreamMessages(spill.messages);
+  const filePart = upstream
+    .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+    .find((part) => part && part.type === 'file');
+  assert.ok(filePart, 'upstream 应包含 file part');
+  assert.equal(filePart.mimeType, 'application/pdf');
+});
+
+test('chat：>20k 文本自动 PDF 溢出，usage 使用 tokenizer', async () => {
+  const duck = new MockDuckClient();
+  duck.enqueueChat({ textDeltas: ['ok'] });
+  await withServer({ duck }, async ({ baseUrl }) => {
+    const res = await v1Request(baseUrl, '/v1/chat/completions', {
+      method: 'POST',
+      body: {
+        model: 'gpt-6-luna',
+        messages: [
+          { role: 'user', content: BIG },
+          { role: 'assistant', content: 'old answer' },
+          { role: 'user', content: '当前问题' }
+        ]
+      }
+    });
+    assert.equal(res.status, 200, res.text);
+    const payload = JSON.parse(res.text);
+    assert.equal(payload.usage.estimation, 'tokenizer');
+    assert.ok(payload.usage.prompt_tokens > 0);
+    const duckMessages = duck.calls.chat[0].params.messages;
+    const lastUser = [...duckMessages].reverse().find((message) => message.role === 'user');
+    assert.ok(lastUser.files && lastUser.files.length === 1, '最后一条 user 应带 PDF file');
+    const upstream = buildUpstreamMessages(duckMessages);
+    const filePart = upstream
+      .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+      .find((part) => part && part.type === 'file');
+    assert.ok(filePart);
+    assert.equal(filePart.mimeType, 'application/pdf');
+  });
+});
+
+test('responses：>20k 文本自动 PDF 溢出', async () => {
+  const duck = new MockDuckClient();
+  duck.enqueueChat({ textDeltas: ['ok'] });
+  await withServer({ duck }, async ({ baseUrl }) => {
+    const res = await v1Request(baseUrl, '/v1/responses', {
+      method: 'POST',
+      body: {
+        model: 'gpt-6-luna',
+        input: [
+          { type: 'message', role: 'user', content: BIG },
+          { type: 'message', role: 'assistant', content: 'old answer' },
+          { type: 'message', role: 'user', content: '当前问题' }
+        ]
+      }
+    });
+    assert.equal(res.status, 200, res.text);
+    const payload = JSON.parse(res.text);
+    assert.equal(payload.usage.estimation, 'tokenizer');
+    const duckMessages = duck.calls.chat[0].params.messages;
+    const filePart = buildUpstreamMessages(duckMessages)
+      .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+      .find((part) => part && part.type === 'file');
+    assert.ok(filePart);
+    assert.equal(filePart.mimeType, 'application/pdf');
+  });
+});
+
+
+
+test('PDF 生成：文本分页 + 图片嵌入', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const result = await createContextPdf({
+    messages: [
+      { role: 'user', content: '请参考这张图', images: [{ b64: png, format: 'png' }] },
+      { role: 'assistant', content: '已收到' }
+    ],
+    maxPages: 15
+  });
+  assert.ok(result.pages >= 2);
+  assert.equal(result.imageCount, 1);
+  assert.ok(result.buffer.includes(Buffer.from('/Subtype /Image')));
+});

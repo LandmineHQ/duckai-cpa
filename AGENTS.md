@@ -121,6 +121,11 @@ data/                运行时数据（不入库；含敏感文件）
   不要改回最后一条 user：下一轮协议消失会导致历史文本变化、cache miss）。配置 `tools.clientFunctionCalling.enabled`（默认 true）。
 - **上下文前缀稳定（v2.45/v2.47）**：客户端工具协议固定在第一条 user；历史文本/工具调用/图片映射必须确定性序列化，
   跨轮不改写旧消息。压缩摘要（`chat_summaries`）和 context-guard 裁剪会改变前缀，启用后无法保证 cache 命中。
+- **PDF 上下文溢出（v2.49）**：自动压缩改为“PDF 溢出”——文本输入字符 > `context.pdfSpill.inputCharLimit`（默认 20000）时，
+  把除当前 user 以外的全部历史渲染成会话 PDF（≤15 页，每页最多 250 行；250 是 duck.ai PDF 解析实测上限），
+  当前 user 保留文本并把 PDF 作为 `file` part 附带；图片嵌入 PDF。手动 `/v1/compact` 仍是真正的摘要压缩。
+  15 页是 Free 实测硬限制；超过时返回 413 `context_pdf_capacity_exceeded`，不静默丢内容。
+  token 用量改用 gpt-tokenizer（`src/openai/tokens.js`），PDF/图片也计入；chat 返回 prompt/completion tokens，responses 返回 input/output tokens。
 - **提示词注入可观测（v2.48）**：工具协议注入是上游临时消息，不写进会话历史的 messages；
   但 `history` 表新增 `injection_json`（`{injected,clientTools,protocolText,firstUserContent,upstreamMessageCount,chain}`），
   会话历史详情可查看完整协议与注入后的第一条 user；upstream 日志新增 `clientTools/protocolInjected/upstreamMessageCount/conversationChain`；

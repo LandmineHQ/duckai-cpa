@@ -22,6 +22,7 @@ import {
 import {
   badRequest,
   conflict,
+  OpenAIError,
   buildEstimatedUsage,
   genId,
   normalizeFinishReason,
@@ -40,6 +41,8 @@ import {
   parseToolCalls,
   stripToolCallText
 } from './tool-protocol.js';
+import { countMessagesTokens, countTextTokens } from './tokens.js';
+import { spillMessagesToPdf } from './context-spill.js';
 import {
   buildCompactedSystemPrompt,
   evaluateCompactionTrigger,
@@ -264,7 +267,8 @@ export function buildDuckMessages({ systemPrompt = '', conversation = [], prompt
   const history = conversation.map((message) => ({
     role: message.role,
     content: message.content,
-    ...(Array.isArray(message.images) && message.images.length ? { images: message.images } : {})
+    ...(Array.isArray(message.images) && message.images.length ? { images: message.images } : {}),
+    ...(Array.isArray(message.files) && message.files.length ? { files: message.files } : {})
   }));
   if (systemPrompt && systemPrompt.trim()) {
     if (promptMode === 'inline') {
@@ -747,7 +751,13 @@ export async function handleChatCompletions(req, res, ctx) {
 
   let requestConversation = messages.conversation;
   let compactedInfo = null;
-  if (!storedConversation && ctx.sessionKey && ctx.chatSummaries) {
+  const pdfSpillConfig = ctx.config?.context?.pdfSpill || {};
+  const pdfSpillPlanned =
+    pdfSpillConfig.enabled !== false &&
+    messages.conversation.length > 1 &&
+    messages.promptChars + String(systemPrompt || '').length >
+      (Number(pdfSpillConfig.inputCharLimit) || 20000);
+  if (!storedConversation && !pdfSpillPlanned && ctx.sessionKey && ctx.chatSummaries) {
     const compactConfig = getCompactConfig(ctx.config);
     const split = splitForCompact(messages.conversation, compactConfig.keepRecentMessages);
     if (compactConfig.enabled && split.compactable) {
@@ -860,7 +870,9 @@ export async function handleChatCompletions(req, res, ctx) {
 
   if (!prefixReused) {
     const rebuild = storedConversation ? normalizeChatMessages(canonicalBefore) : messages;
-    const guarded = guardConversation(rebuild.conversation, systemPrompt, ctx.config?.context || {});
+    const guarded = pdfSpillPlanned
+      ? { messages: rebuild.conversation, trimmed: false }
+      : guardConversation(rebuild.conversation, systemPrompt, ctx.config?.context || {});
     historyMessages = guarded.messages;
     ctx.historyMessages = historyMessages;
     if (guarded.trimmed) ctx.log.contextTrimmed = true;
@@ -876,6 +888,29 @@ export async function handleChatCompletions(req, res, ctx) {
     canonicalForSave = storedConversation ? canonicalBefore : rebuild.conversation;
     retryConversation = guarded.messages;
     ctx.log.conversationChain = storedConversation ? 'rebuild' : 'stateless';
+  }
+  if (pdfSpillConfig.enabled !== false) {
+    try {
+      const spill = await spillMessagesToPdf(duckMessages, {
+        inputCharLimit: Number(pdfSpillConfig.inputCharLimit) || 20000,
+        maxPages: Number(pdfSpillConfig.maxPages) || 15
+      });
+      if (spill) {
+        duckMessages = spill.messages;
+        ctx.log.contextPdf = spill.pdf;
+        ctx.log.contextPdfMoved = spill.movedMessages;
+      }
+    } catch (error) {
+      if (error && error.code === 'context_pdf_capacity_exceeded') {
+        throw new OpenAIError('上下文超过 PDF 容量（15 页），请调用 /v1/compact 手动压缩后重试', {
+          status: 413,
+          type: 'invalid_request_error',
+          code: 'context_pdf_capacity_exceeded',
+          param: 'messages'
+        });
+      }
+      ctx.logger?.warn?.('context PDF spill failed; continuing without spill', { error: error.message });
+    }
   }
   ctx.historyMessages = historyMessages;
   const protocolText = clientTools.length ? buildToolProtocol(clientTools) : '';
@@ -1073,6 +1108,8 @@ async function resolveChatCompletion(ctx, params) {
     promptChars: params.promptChars,
     completionChars: content.length,
     reasoningChars: reasoningText.length,
+    promptTokens: countMessagesTokens(params.duckMessages || []),
+    completionTokens: countTextTokens(content) + countTextTokens(reasoningText),
     upstreamUsage: collected.usage
   });
   return {
@@ -1448,6 +1485,8 @@ async function streamChatCompletion(ctx, params) {
       promptChars: params.promptChars,
       completionChars: collected.content.length,
       reasoningChars: collected.reasoning.length,
+      promptTokens: countMessagesTokens(params.duckMessages || []),
+      completionTokens: countTextTokens(collected.content) + countTextTokens(collected.reasoning),
       upstreamUsage: collected.usage
     });
     recordUsageOnLog(ctx, streamUsage);
