@@ -527,7 +527,7 @@ export function HistoryPage() {
                 ) : null}
                 {/* v2.37：与「连接测试」共用 ChatMessageBubble（工具调用 / 图片 / 思考 / 来源） */}
                 <div className="space-y-2" data-testid="history-messages">
-                  {detail.messages.map((message, index) => (
+                  {detail.messages.filter((message) => message.role !== 'system' && message.role !== 'developer').map((message, index) => (
                     <div key={`${message.ts}-${index}`} data-testid={`history-message-${index}`}>
                       <ChatMessageBubble
                         message={{

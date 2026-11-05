@@ -332,6 +332,28 @@ export function createServer(options = {}) {
     return null;
   }
 
+  // v2.54：会话级稳定标识（用于历史/PDF，不影响身份绑定）。Codex 等客户端可能只发 prompt_cache_key。
+  function extractConversationKey(req, body) {
+    for (const name of ['x-session-id', 'x-conversation-id', 'x-conversation']) {
+      const value = req.headers[name];
+      if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 512);
+    }
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      for (const field of ['session_id', 'sessionId', 'conversation_id', 'conversationId', 'prompt_cache_key']) {
+        const value = body[field];
+        if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 512);
+      }
+      for (const field of ['metadata', 'extra_body']) {
+        const nested = body[field];
+        if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+          const value = nested.session_id ?? nested.sessionId ?? nested.conversation_id ?? nested.prompt_cache_key;
+          if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 512);
+        }
+      }
+    }
+    return null;
+  }
+
   // Upstream health is cached briefly so /healthz and the admin overview do not
   // stampede the challenge endpoint.
   const healthCache = { at: 0, value: null };
@@ -1116,6 +1138,7 @@ export function createServer(options = {}) {
           ctx.body = await readJsonBody(req);
         }
         ctx.sessionKey = extractSessionKey(req, ctx.body);
+        ctx.conversationKey = extractConversationKey(req, ctx.body);
         await dispatch(ctx);
         if (!ctx.sent && !res.headersSent) {
           ctx.head(204);

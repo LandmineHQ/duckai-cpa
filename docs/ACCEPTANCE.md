@@ -587,3 +587,12 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 3 | 历史 protocolText 显示 PDF 用途 | ✅ | protocolKind=client-tools-pdf；protocolText 143 字符说明；完整工具协议在 PDF 弹窗 |
 | 4 | 测试默认不请求上游 | ✅ | page-check 默认跳过 `/test/sessions/messages` 真实消息；需 `--allow-upstream` 才执行 |
 | 5 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22（默认离线） |
+## 2.47 v2.54 会话标识兼容 + 系统消息解析修复
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 压缩后保持同一 session | ✅ | 支持 `prompt_cache_key` / `x-conversation-id` / body conversation_id；真实 pc-test-9911 两轮长会话只更新同一历史记录 |
+| 2 | 无标识时稳定 auto | ✅ | 首条 user + 模型哈希；两轮只更新一条 auto 历史 |
+| 3 | 系统消息解析错误 | ✅ | history 跳过 system/developer；前端过滤；auto:14cd 不再出现巨大 system pill |
+| 4 | 测试默认离线 | ✅ | page-check 默认跳过真实 `/test/sessions/messages`；469 单测离线通过 |
+| 5 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |

@@ -125,7 +125,7 @@ data/                运行时数据（不入库；含敏感文件）
   把除当前 user 以外的全部历史渲染成 **两个 PDF**：`client-tools.pdf`（工具说明，1 页）+ `conversation-context.pdf`（上下文，≤15 页，250 行/页）；当前 user 保留文本并同时附带两个 `file` part；图片嵌入上下文 PDF。
   同一会话的 context PDF 持久化在 `context_pdfs` 表（scope = session id / previous_response_id / 首条 user 稳定哈希），后续轮次复用同一 PDF，不再每轮生成；只有再次触发溢出/手动 `/v1/compact` 才更新。
   15 页是 Free 实测硬限制；超过时返回 413 `context_pdf_capacity_exceeded`，不静默丢内容。
-  会话历史只保存 PDF 元数据（filename/pages/bytes），前端 `ChatMessageBubble` 渲染 PDF chip（用户气泡内）；`ReadDocument` 等工具显示为「文档读取」；历史展示会去掉注入的「[系统提示] 附件…」指令文本。
+  会话历史跳过 system/developer 消息（Codex 系统提示不再渲染成巨大 pill）；只保存 PDF 元数据（filename/pages/bytes），前端 `ChatMessageBubble` 渲染 PDF chip（用户气泡内）；`ReadDocument` 等工具显示为「文档读取」；历史展示会去掉注入的「[系统提示] 附件…」指令文本。
   PDF 模式下**不把完整工具协议注入文本**，而是放进 `client-tools.pdf`；历史 `injection.protocolText` 改为 PDF 用途说明（protocolKind=client-tools-pdf），完整工具协议在 client-tools.pdf 弹窗查看。
   token 用量改用 gpt-tokenizer（`src/openai/tokens.js`），PDF/图片也计入；chat 返回 prompt/completion tokens，responses 返回 input/output tokens。
   `scripts/page-check.mjs` 默认**不再向上游发真实消息**；需要真实会话压缩验收时显式加 `--allow-upstream`。

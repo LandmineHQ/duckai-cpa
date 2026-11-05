@@ -387,7 +387,7 @@ export async function handleResponses(req, res, ctx) {
 
   const input = normalizeResponsesInput(body.input, { allowEmptyUser: Boolean(previousResponseId) });
   ctx.log.promptChars = input.promptChars;
-  ctx.historySessionKey = ctx.sessionKey || stableAutoSessionKey(resolved.id, input.conversation);
+  ctx.historySessionKey = ctx.sessionKey || (previousRecord && previousRecord.sessionKey) || ctx.conversationKey || stableAutoSessionKey(resolved.id, input.conversation);
 
   const outputConversation = previousRecord ? outputItemsToConversation(previousRecord.output) : [];
   const chainedConversation = previousRecord
@@ -433,7 +433,7 @@ export async function handleResponses(req, res, ctx) {
     (previousRecord.systemPrompt || '') === (systemPrompt || '');
   const pdfScope = pdfScopeKey({
     kind: 'responses',
-    sessionKey: ctx.sessionKey || null,
+    sessionKey: ctx.sessionKey || ctx.conversationKey || null,
     previousResponseId,
     model: resolved.id,
     conversation: chainedConversation
@@ -630,7 +630,7 @@ export async function handleResponses(req, res, ctx) {
     await responseStore.save({
       id: payload.id,
       previousId: previousResponseId,
-      sessionKey: ctx.sessionKey || null,
+      sessionKey: ctx.historySessionKey || ctx.sessionKey || null,
       model: params.resolved.id,
       systemPrompt,
       conversation: canonicalConversation,

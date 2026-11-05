@@ -413,6 +413,7 @@ export function recordHistoryOnLog(
     const normalized = [];
     for (const message of Array.isArray(messages) ? messages : []) {
       if (!message || !message.role) continue;
+      if (message.role === 'system' || message.role === 'developer') continue;
       let content = '';
       if (typeof message.content === 'string') content = message.content;
       else if (Array.isArray(message.content)) {
@@ -723,7 +724,7 @@ export async function handleChatCompletions(req, res, ctx) {
 
   const messages = normalizeChatMessages(body.messages);
   ctx.log.promptChars = messages.promptChars;
-  ctx.historySessionKey = ctx.sessionKey || stableAutoSessionKey(resolved.id, messages.conversation);
+  ctx.historySessionKey = ctx.sessionKey || ctx.conversationKey || stableAutoSessionKey(resolved.id, messages.conversation);
 
   const reasoning = resolveReasoningEffort(resolved.model, body.reasoning_effort ?? body.reasoning?.effort);
   const flags = resolveToolFlags(ctx.config, resolved.model, body);
@@ -779,7 +780,7 @@ export async function handleChatCompletions(req, res, ctx) {
   const pdfInputLimit = Number(pdfSpillConfig.inputCharLimit) || 20000;
   const pdfScope = pdfScopeKey({
     kind: 'chat',
-    sessionKey: ctx.sessionKey || null,
+    sessionKey: ctx.sessionKey || ctx.conversationKey || null,
     model: resolved.id,
     conversation: messages.conversation
   });
