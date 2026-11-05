@@ -1622,3 +1622,35 @@ Marker 文本（role=user，位于旧历史之后、新 user 之前）：
 3. 真实 image part 挂到**最后一条 user 消息**（canonical/upstream 都生效）；history 中该 user 消息也保留 `images`（b64/format，≤4 张），前端可按用户图片渲染；
 4. 仍可用 `X-Session-Id`、`conversation_id`、`prompt_cache_key`、`previous_response_id` 或稳定自动哈希触发；
 5. 连续生成图片会合并保存在 images（最多 8 张），旧图仍以 image part 保留在 canonical 历史中。
+
+---
+
+## 47. Authoritative session（v2.59，BREAKING）
+
+网关拥有会话 canonical/upstream/history，客户端只提供 **session id + 新输入**（完整历史仅用于 diff）。旧「客户端回放为主」语义已删除。
+
+### 47.1 conversation_state 字段
+
+- `client_json`：客户端上次完整输入（规范化视图，含 role/content/tool_calls；图片不存二进制），用于下轮 diff；
+- `client_hash`：`client_json` SHA-1；
+- `epoch`：压缩/自动 PDF 溢出/显式 fork 才递增；
+- `first_user_hash`：首条 user 内容 SHA-1；
+- 既有 `canonical_json`、`upstream_json`（精确 duck 消息快照）、`images_json`、`compression_json`、`context_pdf_scope`。
+
+### 47.2 session 解析与 diff
+
+- 优先级：X-Session-Id → body session_id/conversation_id → prompt_cache_key → previous_response_id → `auto:<hash>`（回写 `X-Session-Id`）。
+- diff：
+  - incoming 以 client 为前缀 → `new=suffix`；
+  - incoming 更短（只发最新 user/tool output）→ 全部视为 new（delta 模式）；
+  - 同长/更长但前缀冲突 → **409 `session_history_mismatch`**（不静默重建）；
+  - 显式 fork：`X-Session-Epoch` / body `session_epoch`（或 `fork:true`）→ 丢弃旧 canonical，epoch+1。
+- `canonical = 旧 canonical + new`；assistant（文本/tool_calls/images）追加 canonical；history 来自 canonical。
+- `upstream_json` 为精确 duck 消息快照；普通轮次只 append 新消息转换结果；compression/auto spill/system/tools 变化才允许前缀变化并 epoch+1。
+
+### 47.3 行为
+
+- 无 session 自动生成 `auto:<hash>` 并回写 `X-Session-Id`；同时回写 `X-Session-Epoch`。
+- `/v1/responses` `store:false` 也保存 conversation_state；`store` 只控制 responses 表/previous_response_id。
+- 保留 PDF/图片/手动 marker：数据源改 canonical；手动 marker/compact、自动 PDF 溢出创建新 epoch，跨 epoch 禁止拼接。
+- 错误码：authoritative 冲突 `409 session_history_mismatch`；旧 chat server 模式 `conversation_session_conflict` 仅在显式 server-mode 兼容路径保留。

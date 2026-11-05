@@ -151,6 +151,10 @@ CREATE TABLE IF NOT EXISTS conversation_state (
   context_pdf_scope TEXT,
   compacted_at INTEGER,
   images_json TEXT,
+  client_json TEXT,
+  client_hash TEXT,
+  epoch INTEGER NOT NULL DEFAULT 0,
+  first_user_hash TEXT,
   updated_at INTEGER NOT NULL,
   expires_at INTEGER
 );
@@ -221,6 +225,11 @@ export async function openDatabase(options = {}) {
     if (!conversationColumns.has('context_pdf_scope')) db.exec('ALTER TABLE conversation_state ADD COLUMN context_pdf_scope TEXT');
     if (!conversationColumns.has('compacted_at')) db.exec('ALTER TABLE conversation_state ADD COLUMN compacted_at INTEGER');
     if (!conversationColumns.has('images_json')) db.exec('ALTER TABLE conversation_state ADD COLUMN images_json TEXT');
+    // v2.59：authoritative session（客户端输入 diff / epoch / 冲突检测）。
+    if (!conversationColumns.has('client_json')) db.exec('ALTER TABLE conversation_state ADD COLUMN client_json TEXT');
+    if (!conversationColumns.has('client_hash')) db.exec('ALTER TABLE conversation_state ADD COLUMN client_hash TEXT');
+    if (!conversationColumns.has('epoch')) db.exec('ALTER TABLE conversation_state ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0');
+    if (!conversationColumns.has('first_user_hash')) db.exec('ALTER TABLE conversation_state ADD COLUMN first_user_hash TEXT');
   } catch (error) {
     options.logger?.warn?.('[db] failed to init sqlite', { error: error.message });
     throw error;

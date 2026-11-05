@@ -77,7 +77,7 @@ test('chat session：X-Conversation-Delta 只发新消息', async () => {
   });
 });
 
-test('chat session：历史不匹配 → 409 conversation_session_conflict', async () => {
+test('chat session：历史不匹配 → 409 session_history_mismatch（v2.59 authoritative）', async () => {
   const duck = new MockDuckClient();
   duck.enqueueChat({ textDeltas: ['ok'] });
 
@@ -89,13 +89,20 @@ test('chat session：历史不匹配 → 409 conversation_session_conflict', asy
     });
     assert.equal(first.status, 200, first.text);
 
+    // v2.59：更短的历史按 delta 处理；同长/更长的冲突历史才返回 session_history_mismatch。
     const conflict = await v1Request(baseUrl, '/v1/chat/completions', {
       method: 'POST',
       headers: { 'x-session-id': 'sess-conflict', 'x-conversation-mode': 'server' },
-      body: { model: 'gpt-6-luna', messages: [{ role: 'user', content: '完全不同的历史' }] }
+      body: {
+        model: 'gpt-6-luna',
+        messages: [
+          { role: 'user', content: '完全不同的历史' },
+          { role: 'assistant', content: '完全不同的回答' }
+        ]
+      }
     });
     assert.equal(conflict.status, 409);
-    assert.equal(conflict.json.error.code, 'conversation_session_conflict');
+    assert.equal(conflict.json.error.code, 'session_history_mismatch');
   });
 });
 

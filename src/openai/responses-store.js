@@ -237,7 +237,7 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       try {
         row = db.db
           .prepare(
-            'SELECT session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, compression_json, context_pdf_scope, compacted_at, images_json, updated_at, expires_at FROM conversation_state WHERE session_key = ?'
+            'SELECT session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, compression_json, context_pdf_scope, compacted_at, images_json, client_json, client_hash, epoch, first_user_hash, updated_at, expires_at FROM conversation_state WHERE session_key = ?'
           )
           .get(sessionKey);
       } catch (error) {
@@ -277,6 +277,12 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       } catch {
         images = [];
       }
+      let client = [];
+      try {
+        client = row.client_json ? JSON.parse(row.client_json) : [];
+      } catch {
+        client = [];
+      }
       return {
         sessionKey: row.session_key,
         model: row.model || null,
@@ -289,6 +295,10 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
         contextPdfScope: row.context_pdf_scope || null,
         compactedAt: Number.isFinite(row.compacted_at) ? row.compacted_at : null,
         images: Array.isArray(images) ? images.filter((image) => image && typeof image.b64 === 'string' && image.b64) : [],
+        client: Array.isArray(client) ? client : [],
+        clientHash: row.client_hash || null,
+        epoch: Number.isFinite(row.epoch) ? row.epoch : 0,
+        firstUserHash: row.first_user_hash || null,
         updatedAt: row.updated_at,
         expiresAt: row.expires_at
       };
@@ -305,7 +315,11 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       compression = null,
       contextPdfScope = null,
       compactedAt = null,
-      images = null
+      images = null,
+      client = null,
+      clientHash = null,
+      epoch = null,
+      firstUserHash = null
     }) {
       if (!enabled || !db || typeof sessionKey !== 'string' || !sessionKey) return null;
       const now = Date.now();
@@ -313,6 +327,13 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       const canonicalJson = JSON.stringify(safeJson(canonical, []));
       const upstreamJson = JSON.stringify(safeJson(upstream, []));
       const compressionJson = compression && typeof compression === 'object' ? JSON.stringify(compression) : null;
+      const clientJson = Array.isArray(client) ? JSON.stringify(safeJson(client, [])) : null;
+      const clientHashValue =
+        clientJson != null
+          ? crypto.createHash('sha1').update(clientJson).digest('hex')
+          : typeof clientHash === 'string' && clientHash
+            ? clientHash
+            : null;
       let imagesToSave = null;
       if (Array.isArray(images)) {
         const seen = new Set();
@@ -341,14 +362,18 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       try {
         db.db
           .prepare(
-            `INSERT INTO conversation_state(session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, compression_json, context_pdf_scope, compacted_at, images_json, updated_at, expires_at)
-             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO conversation_state(session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, compression_json, context_pdf_scope, compacted_at, images_json, client_json, client_hash, epoch, first_user_hash, updated_at, expires_at)
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(session_key) DO UPDATE SET
                model=excluded.model, mode=excluded.mode, system_prompt=excluded.system_prompt,
                canonical_json=excluded.canonical_json, upstream_json=excluded.upstream_json,
                tools_hash=excluded.tools_hash, compression_json=excluded.compression_json,
                context_pdf_scope=excluded.context_pdf_scope, compacted_at=excluded.compacted_at,
                images_json=COALESCE(excluded.images_json, conversation_state.images_json),
+               client_json=COALESCE(excluded.client_json, conversation_state.client_json),
+               client_hash=COALESCE(excluded.client_hash, conversation_state.client_hash),
+               epoch=MAX(COALESCE(excluded.epoch, 0), COALESCE(conversation_state.epoch, 0)),
+               first_user_hash=COALESCE(excluded.first_user_hash, conversation_state.first_user_hash),
                updated_at=excluded.updated_at, expires_at=excluded.expires_at`
           )
           .run(
@@ -363,6 +388,10 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
             contextPdfScope,
             Number.isFinite(compactedAt) ? compactedAt : null,
             imagesJson,
+            clientJson,
+            clientHashValue,
+            Number.isFinite(epoch) ? Math.max(0, Math.trunc(epoch)) : 0,
+            typeof firstUserHash === 'string' && firstUserHash ? firstUserHash : null,
             now,
             expiresAt
           );

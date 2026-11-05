@@ -1127,6 +1127,16 @@ Chat Completions 没有官方的 assistant 图片字段，采用主流 OpenAI �
 - **history**：assistant 消息保留 `images`（b64/format/model），图片-only 的占位文本不写入历史正文；跨轮占位回放后 user 消息也保留 `images`（b64/format，≤4 张），前端可按图片渲染。
 - 连续图片：每次生成追加到 session images/canonical assistant，最多保留最近 8 张，旧图仍以 image part 留在 canonical 历史中。
 
+## v2.59：Authoritative session（BREAKING）
+
+- 客户端只需 **session id + 新输入**；网关在 `conversation_state` 保存 canonical + 精确 `upstream_json` 快照，后续只 append 新消息（不再每轮 rebuild 整段）。
+- session 解析：X-Session-Id → session_id/conversation_id → prompt_cache_key → previous_response_id → `auto:<hash>`（自动回写 `X-Session-Id`）。
+- diff：incoming 是 client_json 前缀 → 取 suffix；只发最新 user/tool output（更短）→ 全部作为 new；前缀冲突 → **409 `session_history_mismatch`**；显式 `session_epoch`/`X-Session-Epoch` 或 `fork:true` 可 fork 新 epoch。
+- assistant/tool_calls/images 写回 canonical；history 来自 canonical，不被客户端回放覆盖。
+- 图片/PDF：仍保留 v2.57/v2.58 语义；手动 marker/compact、自动 PDF 溢出创建新 epoch，epoch 内 PDF/image 固定复用，不重写 tail。
+- `/v1/responses` 的 `store:false` 也保存 conversation_state；`store` 只控制 responses 表/previous_response_id。
+- 响应头回写 `X-Session-Id` 与 `X-Session-Epoch`。
+
 ## v2.47：服务端会话与精确前缀
 
 ### Responses：`previous_response_id`

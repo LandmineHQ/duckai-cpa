@@ -52,7 +52,13 @@ import {
   resolveConversationSessionKey,
   COMPACTION_MARKER
 } from './conversation-compact.js';
-import { mergeStoredImages, replaySessionImages } from './image-context.js';
+import { isImagePlaceholderText, mergeStoredImages, replaySessionImages } from './image-context.js';
+import {
+  clientViewOf,
+  diffSession,
+  firstUserHash,
+  resolveEpochFlags
+} from './authoritative-session.js';
 import {
   badRequest,
   OpenAIError,
@@ -398,8 +404,7 @@ export async function handleResponses(req, res, ctx) {
   const input = normalizeResponsesInput(body.input, { allowEmptyUser: Boolean(previousResponseId) });
   ctx.log.promptChars = input.promptChars;
 
-  const outputConversation = previousRecord ? outputItemsToConversation(previousRecord.output) : [];
-  let chainedConversation = previousRecord
+  const outputConversation = previousRecord ? outputItemsToConversation(previousRecord.output) : [];  let chainedConversation = previousRecord
     ? [...previousRecord.conversation, ...outputConversation, ...input.conversation]
     : input.conversation;
   // v2.51：Codex 手动压缩 marker（可能在 input 或 previous_response_id 链里）。
@@ -412,11 +417,13 @@ export async function handleResponses(req, res, ctx) {
     marker: manualMarker
   });
   let conversationState = null;
+  let replayedInputConversation = input.conversation;
   if (responseStore?.enabled && conversationSessionKey) {
     conversationState = await responseStore.getConversation(conversationSessionKey).catch(() => null);
     // v2.58：客户端只回放图片占位文本时，用 session 保存的真实图片补回上下文。
     if (conversationState?.images?.length) {
       chainedConversation = replaySessionImages(chainedConversation, conversationState.images);
+      replayedInputConversation = replaySessionImages(input.conversation, conversationState.images);
     }
   }
   let manualCompaction = null;
@@ -474,6 +481,50 @@ export async function handleResponses(req, res, ctx) {
       contextPdf: compression.contextPdf,
       reused: compression.reused
     };
+  }
+  // v2.59：authoritative session —— 旧 input 只用于 diff，canonical 由网关维护。
+  let authoritativeDiff = null;
+  if (!manualCompaction && conversationState) {
+    const epochFlags = resolveEpochFlags(ctx, body);
+    authoritativeDiff = diffSession({
+      state: conversationState,
+      incoming: replayedInputConversation,
+      requestedEpoch: epochFlags.requestedEpoch,
+      fork: epochFlags.fork
+    });
+    if (authoritativeDiff.mode === 'noop') {
+      throw badRequest('no new input for this session', 'input', 'no_new_messages');
+    }
+    if (authoritativeDiff.mode === 'fork') {
+      previousRecord = null;
+      chainedConversation = authoritativeDiff.canonical;
+      input.conversation = authoritativeDiff.canonical;
+    } else {
+      const oldCanonical = Array.isArray(conversationState.canonical) ? conversationState.canonical : [];
+      const newMessages = authoritativeDiff.newMessages;
+      outputConversation.length = 0;
+      previousRecord = {
+        conversation: oldCanonical,
+        upstream: Array.isArray(conversationState.upstream) ? conversationState.upstream : [],
+        toolsHash: conversationState.toolsHash || null,
+        systemPrompt: conversationState.systemPrompt || null,
+        output: []
+      };
+      input.conversation = newMessages;
+      chainedConversation = [...oldCanonical, ...newMessages];
+    }
+    ctx.log.sessionMode = authoritativeDiff.mode;
+    ctx.log.sessionEpoch = authoritativeDiff.epoch;
+    ctx.log.sessionAppended = authoritativeDiff.appended;
+  } else if (manualCompaction) {
+    const sameCompression =
+      conversationState?.compression?.summaryHash &&
+      conversationState.compression.summaryHash === manualCompaction.compression.summaryHash &&
+      manualCompaction.compression.reused === true;
+    ctx.log.sessionEpoch = sameCompression
+      ? conversationState?.epoch || 0
+      : (conversationState?.epoch || 0) + 1;
+    ctx.log.sessionMode = sameCompression ? 'compact-reuse' : 'compact-epoch';
   }
   ctx.historySessionKey =
     ctx.sessionKey || (previousRecord && previousRecord.sessionKey) || ctx.conversationKey || conversationSessionKey;
@@ -737,6 +788,19 @@ export async function handleResponses(req, res, ctx) {
       // headers may already be sent
     }
   }
+  if (ctx.log.sessionEpoch != null) {
+    try {
+      ctx.res.setHeader('X-Session-Epoch', String(ctx.log.sessionEpoch));
+    } catch {
+      // headers may already be sent
+    }
+  } else if (conversationSessionKey) {
+    try {
+      ctx.res.setHeader('X-Session-Epoch', '0');
+    } catch {
+      // headers may already be sent
+    }
+  }
 
   try {
     ctx.res.setHeader('X-Duckai-Model', resolved.id);
@@ -788,7 +852,6 @@ export async function handleResponses(req, res, ctx) {
     const stateKey = conversationSessionKey || ctx.historySessionKey || ctx.sessionKey || null;
     if (stateKey) {
       try {
-        const assistantCanonical = outputItemsToConversation(payload.output);
         const outputImages = (Array.isArray(payload.output) ? payload.output : [])
           .filter((item) => item && item.type === 'image_generation_call' && typeof item.result === 'string' && item.result)
           .map((item) => ({
@@ -796,18 +859,41 @@ export async function handleResponses(req, res, ctx) {
             format: item.output_format || 'png',
             ...(item.model ? { model: item.model } : {})
           }));
+        // v2.58：图片-only 的占位 fallback 只用于响应 message，不写入 canonical/upstream 文本。
+        const assistantCanonical = outputItemsToConversation(payload.output).map((message) =>
+          message &&
+          message.role === 'assistant' &&
+          isImagePlaceholderText(message.content) &&
+          (outputImages.length > 0 || (Array.isArray(message.images) && message.images.length))
+            ? { ...message, content: '' }
+            : message
+        );
+        const canonicalFinal = [...canonicalConversation, ...assistantCanonical];
         await responseStore.saveConversation({
           sessionKey: stateKey,
           model: resolved.id,
           mode: 'responses',
           systemPrompt,
-          canonical: [...canonicalConversation, ...assistantCanonical],
-          upstream: [...duckMessages, ...outputItemsToConversation(payload.output)],
+          canonical: canonicalFinal,
+          upstream: [...duckMessages, ...assistantCanonical],
           toolsHash,
           compression: manualCompaction?.compression || conversationState?.compression || null,
           contextPdfScope: manualCompaction?.scopeKey || conversationState?.contextPdfScope || null,
           compactedAt: manualCompaction ? Date.now() : conversationState?.compactedAt || null,
-          images: mergeStoredImages(conversationState?.images, outputImages)
+          images: mergeStoredImages(conversationState?.images, outputImages),
+          client: clientViewOf(canonicalFinal),
+          firstUserHash: firstUserHash(canonicalFinal),
+          epoch: (() => {
+            const base = conversationState?.epoch || 0;
+            let value = ctx.log.sessionEpoch != null ? ctx.log.sessionEpoch : base;
+            const toolsSystemChanged =
+              conversationState &&
+              ((toolsHash || null) !== (conversationState.toolsHash || null) ||
+                (systemPrompt || '') !== (conversationState.systemPrompt || ''));
+            if (toolsSystemChanged && value === base) value = base + 1;
+            if (ctx.log.contextPdfSaved && value === base) value = base + 1;
+            return value;
+          })()
         });
       } catch (error) {
         ctx.logger?.warn?.('failed to save responses canonical conversation state', { error: error.message });

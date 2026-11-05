@@ -140,6 +140,11 @@ data/                运行时数据（不入库；含敏感文件）
   会话历史详情可查看完整协议与注入后的第一条 user；upstream 日志新增 `clientTools/protocolInjected/upstreamMessageCount/conversationChain`；
   `GET /admin/api/history/:id/upstream` 返回脱敏后的真实 upstream messages（图片 base64 替换为 `[image data ...]`）。
   手动 `/v1/compact` 现在会把 assistant.tool_calls / role:"tool" 编码成文本再摘要，不再丢工具轨迹。
+- **Authoritative session（v2.59，BREAKING）**：网关是唯一会话所有者。稳定 session（X-Session-Id/conversation_id/prompt_cache_key/previous_response_id 链）下：
+  客户端历史只用于 diff，canonical 由网关维护；`conversation_state.client_json` 保存上次完整客户端视图，第二轮回放只 append suffix，
+  只发最新 user/tool 输入视为 delta；无前缀的短历史/冲突返回 **409 `session_history_mismatch`**，显式 `X-Session-Fork`/`session_epoch` 才新 epoch。
+  普通轮次使用持久化 `upstream_json` 精确快照 append，不每轮 rebuild；工具协议/PDF/图片/压缩变化必须新 epoch。
+  history 来自 canonical，不再被客户端下一轮回放覆盖。客户端不要再假设 stateless 回放；需要编辑历史/分支用 fork/epoch。
 - **服务端会话 / response chaining（v2.46/v2.47）**：
   - `/v1/responses`：支持官方 `previous_response_id`；`responses` 表保存 canonical conversation、
     **精确 upstream 前缀（duckMessages，含协议/图片）**、output items、toolsHash；下一轮只发新 input，

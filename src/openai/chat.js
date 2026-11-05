@@ -71,6 +71,13 @@ import {
   COMPACTION_MARKER
 } from './conversation-compact.js';
 import { isImagePlaceholderText, mergeStoredImages, replaySessionImages } from './image-context.js';
+import {
+  clientViewOf,
+  diffSession,
+  firstUserHash,
+  normalizeClientMessages,
+  resolveEpochFlags
+} from './authoritative-session.js';
 
 const MAX_SOURCES = 50;
 
@@ -854,6 +861,50 @@ export async function handleChatCompletions(req, res, ctx) {
     };
   }
 
+  // v2.59：authoritative session —— 客户端旧历史只用于 diff，canonical 由网关维护。
+  let authoritativeDiff = null;
+  if (!manualCompaction && conversationState) {
+    const epochFlags = resolveEpochFlags(ctx, body);
+    // v2.58/v2.59：先按 state.images 回放占位图片，再用于 authoritative diff（否则 canonical 丢图）。
+    const replayedIncoming = conversationState?.images?.length
+      ? replaySessionImages(rawRequestMessages, conversationState.images)
+      : rawRequestMessages;
+    const clientIncoming = replayedIncoming.filter(
+      (message) => message && !['system', 'developer'].includes(String(message.role || '').toLowerCase())
+    );
+    authoritativeDiff = diffSession({
+      state: conversationState,
+      incoming: clientIncoming,
+      requestedEpoch: epochFlags.requestedEpoch,
+      fork: epochFlags.fork
+    });
+    if (authoritativeDiff.mode === 'noop') {
+      throw badRequest('no new messages for this session', 'messages', 'no_new_messages');
+    }
+    const fullCanonical = normalizeChatMessages(authoritativeDiff.canonical, { allowEmptyUser: true });
+    const rawCanonical = authoritativeDiff.canonical;
+    messages.conversation = fullCanonical.conversation.map((message, index) => {
+      const source = rawCanonical[index];
+      return {
+        ...message,
+        ...(source && Array.isArray(source.images) && source.images.length ? { images: source.images } : {})
+      };
+    });
+    messages.promptChars = fullCanonical.promptChars;
+    ctx.log.sessionMode = authoritativeDiff.mode;
+    ctx.log.sessionEpoch = authoritativeDiff.epoch;
+    ctx.log.sessionAppended = authoritativeDiff.appended;
+  } else if (manualCompaction) {
+    const sameCompression =
+      conversationState?.compression?.summaryHash &&
+      conversationState.compression.summaryHash === manualCompaction.compression.summaryHash &&
+      manualCompaction.compression.reused === true;
+    ctx.log.sessionEpoch = sameCompression
+      ? conversationState?.epoch || 0
+      : (conversationState?.epoch || 0) + 1;
+    ctx.log.sessionMode = sameCompression ? 'compact-reuse' : 'compact-epoch';
+  }
+
   const reasoning = resolveReasoningEffort(resolved.model, body.reasoning_effort ?? body.reasoning?.effort);
   const flags = resolveToolFlags(ctx.config, resolved.model, body);
   if (flags.dropped && flags.dropped.length) ctx.log.droppedTools = flags.dropped;
@@ -863,6 +914,11 @@ export async function handleChatCompletions(req, res, ctx) {
   if (clientTools.length) ctx.log.clientTools = clientTools.map((tool) => tool.name);
   const useClientToolsPdf = clientTools.length > 0 && ctx.config?.context?.pdfSpill?.enabled !== false;
   let systemPrompt = composeSystemPrompt(ctx.config, resolved, messages.systemParts);
+  // v2.59：authoritative session 的 system prompt 属于会话前缀；压缩摘要保存在 state.systemPrompt，
+  // 普通轮次必须复用同一前缀（system/tools 变化视为压缩/新 epoch）。
+  if (authoritativeDiff && conversationState?.systemPrompt) {
+    systemPrompt = conversationState.systemPrompt;
+  }
   // v2.11: routed identity is needed before compaction (summary is an upstream call).
   if (typeof ctx.selectIdentity === 'function') {
     const paidModel =
@@ -891,7 +947,14 @@ export async function handleChatCompletions(req, res, ctx) {
     );
   }
   let storedConversation = null;
-  if (!manualCompaction && conversationMode === 'server' && responseStore?.enabled && ctx.sessionKey) {
+  if (!manualCompaction && authoritativeDiff && conversationState && authoritativeDiff.mode !== 'fork') {
+    storedConversation = {
+      canonical: conversationState.canonical || [],
+      upstream: conversationState.upstream || [],
+      toolsHash: conversationState.toolsHash || null,
+      systemPrompt: conversationState.systemPrompt || null
+    };
+  } else if (!manualCompaction && conversationMode === 'server' && responseStore?.enabled && ctx.sessionKey) {
     storedConversation = await responseStore.getConversation(ctx.sessionKey);
   }
   if (ctx.sessionKey) {
@@ -907,9 +970,32 @@ export async function handleChatCompletions(req, res, ctx) {
       // headers may already be sent
     }
   }
+  if (ctx.log.sessionEpoch != null) {
+    try {
+      ctx.res.setHeader('X-Session-Epoch', String(ctx.log.sessionEpoch));
+    } catch {
+      // headers may already be sent
+    }
+  } else if (conversationSessionKey) {
+    try {
+      ctx.res.setHeader('X-Session-Epoch', '0');
+    } catch {
+      // headers may already be sent
+    }
+  }
 
   let requestConversation = messages.conversation;
   let compactedInfo = null;
+  if (authoritativeDiff && conversationState?.systemPrompt?.includes('[对话摘要]')) {
+    const match = conversationState.systemPrompt.match(/\[对话摘要\]\n([\s\S]*?)\n\[\/对话摘要\]/);
+    compactedInfo = {
+      text: match ? match[1] : '',
+      version: 1,
+      coveredMessageCount: 0,
+      compacted: true
+    };
+    ctx.log.compacted = true;
+  }
   const pdfSpillConfig = ctx.config?.context?.pdfSpill || {};
   const pdfInputLimit = Number(pdfSpillConfig.inputCharLimit) || 20000;
   const pdfScope = pdfScopeKey({
@@ -1007,7 +1093,13 @@ export async function handleChatCompletions(req, res, ctx) {
       }
     }
   }
-  const rawMessages = manualCompaction ? manualMarker.hot : Array.isArray(body.messages) ? body.messages : [];
+  const rawMessages = manualCompaction
+    ? manualMarker.hot
+    : authoritativeDiff
+      ? authoritativeDiff.canonical
+      : Array.isArray(body.messages)
+        ? body.messages
+        : [];
   const toolsHash = crypto.createHash('sha1').update(JSON.stringify(clientTools)).digest('hex');
   let canonicalBefore = rawMessages;
   let tailRaw = rawMessages;
@@ -1050,13 +1142,24 @@ export async function handleChatCompletions(req, res, ctx) {
       (storedConversation.systemPrompt || '') === (systemPrompt || '');
     if (reusablePrefix) {
       const tail = normalizeChatMessages(tailRaw, { allowEmptyUser: true });
+      // v2.58/v2.59：prefix-reuse 的 tail 也必须保留 replay 图片（normalizeChatMessages 会丢 message.images）。
+      const tailConversation = tail.conversation.map((message, index) => {
+        const raw = tailRaw[index];
+        if (!raw) return message;
+        const rawImages = Array.isArray(raw.images) && raw.images.length
+          ? raw.images
+          : Array.isArray(raw.content)
+            ? raw.content.filter((part) => part && (part.type === 'image_url' || part.type === 'input_image'))
+            : [];
+        return rawImages.length ? { ...message, images: rawImages } : message;
+      });
       if (tail.systemParts.length === 0) {
-        duckMessages = [...storedConversation.upstream, ...tail.conversation];
+        duckMessages = [...storedConversation.upstream, ...tailConversation];
         canonicalForSave = canonicalBefore;
         try {
           retryConversation = normalizeChatMessages(canonicalBefore, { allowEmptyUser: true }).conversation;
         } catch {
-          retryConversation = tail.conversation;
+          retryConversation = tailConversation;
         }
         historyMessages = messages.conversation;
         prefixReused = true;
@@ -1286,18 +1389,32 @@ export async function handleChatCompletions(req, res, ctx) {
         ? { role: 'assistant', content: formatToolCallsForHistory(ctx.chatFinal.toolCalls) }
         : { role: 'assistant', content: String(ctx.chatFinal.content || '') };
     try {
+      const canonicalFinal = [...session.canonicalBefore, assistantCanonical];
       await session.store.saveConversation({
         sessionKey: session.sessionKey,
         model: resolved.id,
         mode: session.mode,
         systemPrompt: session.systemPrompt,
-        canonical: [...session.canonicalBefore, assistantCanonical],
+        canonical: canonicalFinal,
         upstream: [...session.upstreamBeforeResponse, assistantUpstream],
         toolsHash: session.toolsHash,
         compression: session.compression || null,
         contextPdfScope: session.contextPdfScope || null,
         compactedAt: session.compactedAt || null,
-        images: mergeStoredImages(session.images, finalImages)
+        images: mergeStoredImages(session.images, finalImages),
+        client: clientViewOf(canonicalFinal),
+        firstUserHash: firstUserHash(canonicalFinal),
+        epoch: (() => {
+          const base = conversationState?.epoch || 0;
+          let value = ctx.log.sessionEpoch != null ? ctx.log.sessionEpoch : base;
+          const toolsSystemChanged =
+            conversationState &&
+            ((session.toolsHash || null) !== (conversationState.toolsHash || null) ||
+              (session.systemPrompt || '') !== (conversationState.systemPrompt || ''));
+          if (toolsSystemChanged && value === base) value = base + 1;
+          if (ctx.log.contextPdfSaved && value === base) value = base + 1;
+          return value;
+        })()
       });
       ctx.log.conversationState = 'saved';
     } catch (error) {

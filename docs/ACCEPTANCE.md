@@ -677,3 +677,28 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 - 上游会对输入图片重新编码（PNG 尺寸/压缩可能变化），测试按**图片尺寸/像素**区分两张图而不是 base64 字面量；
 - 占位文本识别规则：`已生成 N 张图片` 或 `base64 位于 image_generation_call.result`；
 - `conversation_state.images_json` 去重最多 8 张；history 每消息最多 4 张。
+
+## 2.52 v2.59 Authoritative session：canonical + client diff + append（task-79/80）
+
+> BREAKING：网关成为会话权威，客户端只给 session id + 新输入；旧历史只用于 diff。
+> 新增测试：`tests/authoritative-session-v259.test.js`（6 项）；并更新 `tests/chat-session-v247.test.js`
+> 的旧 409 断言（短历史=delta，完整冲突=新 code）。全程 `MockDuckClient`，离线。
+> 回归：`npm test` **489 / 489 PASS**（此前 483，新增 6 项）。
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | chat 首轮 full 建 session；第二轮 full replay 只 append 新 user，不重复，assistant 写回 canonical | ✅ | 第二轮 upstream 前缀与第一轮逐字节相同；tail=assistant1+新 user；canonical users 无重复；`client_json`（state.client）已保存 |
+| 2 | chat 第二轮只发最新 user → append，同一 session 不重建 | ✅ | upstream 含旧 Q1/A1 + 新 Q2；canonical users=[Q1,Q2] 无重复 |
+| 3 | responses previous_response_id / 同 session delta/full → append 不重复 | ✅ | previous_id+新 input：第二轮前缀稳定；第三轮 full replay canonical users=[Q1,Q2,Q3] 无重复 |
+| 4 | 冲突 → 409 `session_history_mismatch`；显式 fork 可重建 | ✅ | 同长冲突历史 409；`X-Session-Fork: true` → 200、epoch 递增、canonical 重建 |
+| 5 | history 来自 canonical：旧消息/图片不丢，v2.58 图片占位恢复 | ✅ | 第二轮占位文本恢复真实 image part（user.images）；history 保留旧 user/assistant 与 image b64 |
+| 6 | 普通轮次 upstream 前缀逐字节稳定 | ✅ | 第二轮 messages 前缀 deepEqual 第一轮（cache 前缀） |
+| 7 | 旧 conversation_state 无 client_json 初始化不炸 | ✅ | 直接写入无 client_json 的旧行 → 请求 200；旧 canonical + 新 user append |
+| 8 | 首轮响应回写 X-Session-Id / X-Session-Epoch | ✅ | 首轮 epoch=0（修复前缺失） |
+| 9 | 回归 | ✅ | `npm test` **489 / 489 PASS**；旧 `chat-session-v247` 冲突用例按新语义更新 |
+
+### 2.52.1 本轮发现并修复的问题
+
+1. **图片占位在 authoritative diff/prefix-reuse 丢图**：chat diff 使用原始 body（未用 replay 结果）、prefix-reuse 的 tail 用 `normalizeChatMessages` 丢 images；已由 api-core 修复（raw images 映射回 tail；responses 同步修）。
+2. **首轮 X-Session-Epoch 缺失**：已修（首轮回写 0）。
+3. **`/v1/compact` 后 conversation_state.compression 丢失**：`epoch` 列 NOT NULL，compact 传 null 导致 INSERT 失败被吞；已修（缺省 0 + MAX 保留）。

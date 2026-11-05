@@ -282,16 +282,11 @@ test('/v1 X-Session-Id：自动压缩、summary 复用、重启后保留', async
 
         // 第二次：短消息（低于阈值）应复用 summary
         const before = env.duck.calls.chat.length;
+        // v2.59 authoritative session：同 session 只发最新 user（delta），不发无前缀短历史。
         const second = await v1Chat(env, {
           sessionKey,
           model: v1Model,
-          messages: [
-            { role: 'user', content: '继续：简短追问一。' },
-            { role: 'assistant', content: '答复一。' },
-            { role: 'user', content: '继续：简短追问二。' },
-            { role: 'assistant', content: '答复二。' },
-            { role: 'user', content: '继续：简短追问三。' }
-          ]
+          messages: [{ role: 'user', content: '继续：简短追问。' }]
         });
         assert.equal(second.status, 200);
         assert.equal(env.duck.calls.chat.length, before + 1);
@@ -307,13 +302,7 @@ test('/v1 X-Session-Id：自动压缩、summary 复用、重启后保留', async
         const restarted = await v1Chat(env, {
           sessionKey,
           model: v1Model,
-          messages: [
-            { role: 'user', content: '重启一。' },
-            { role: 'assistant', content: '答复一。' },
-            { role: 'user', content: '重启二。' },
-            { role: 'assistant', content: '答复二。' },
-            { role: 'user', content: '重启三。' }
-          ]
+          messages: [{ role: 'user', content: '重启后继续。' }]
         });
         assert.equal(restarted.status, 200);
         assert.ok(chatText(env).includes(SUMMARY_TEXT), '重启后应从 SQLite 恢复 summary');
