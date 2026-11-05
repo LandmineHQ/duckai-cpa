@@ -90,6 +90,8 @@ function FileAttachmentList({ files, onPrimary = false }: { files?: Array<{ file
   );
 }
 
+const COMPACTION_MARKER = 'Another language model started to solve this problem';
+
 function toolLabel(name: string): string {
   return TOOL_LABELS[name] || name || '工具调用';
 }
@@ -155,6 +157,23 @@ export function ChatMessageBubble({
         <div className="max-w-[92%] rounded-full border border-primary/25 bg-primary/5 px-3 py-1.5 text-center text-[11px] leading-relaxed text-primary">
           {message.content}
         </div>
+      </div>
+    );
+  }
+
+  if (message.role === 'user' && String(message.content || '').startsWith(COMPACTION_MARKER)) {
+    const summary = String(message.content || '');
+    return (
+      <div className="rounded-lg border border-primary/25 bg-primary/5 p-3" data-testid="compaction-notice">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="success" className="px-1.5 py-0 text-[10px]">上下文已压缩</Badge>
+          <span className="text-[11px] text-muted-foreground">以下是上一次会话的摘要，旧消息已写入 PDF</span>
+        </div>
+        {message.files && message.files.length ? <div className="mt-2"><FileAttachmentList files={message.files} /></div> : null}
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">查看压缩摘要（{summary.length} 字符）</summary>
+          <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 text-[11px]">{summary}</pre>
+        </details>
       </div>
     );
   }

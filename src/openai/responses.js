@@ -45,6 +45,14 @@ import { resolveModel, resolveReasoningEffort } from './models.js';
 import { guardConversation } from './context-guard.js';
 import { normalizeToolCalls, recordHistoryOnLog } from './chat.js';
 import {
+  buildCompressionRecord,
+  buildManualCompactionPdf,
+  findCompactionMarker,
+  loadReusableCompactionPdf,
+  resolveConversationSessionKey,
+  COMPACTION_MARKER
+} from './conversation-compact.js';
+import {
   badRequest,
   OpenAIError,
   buildEstimatedUsage,
@@ -65,7 +73,8 @@ import {
   stableAutoSessionKey,
   PDF_PURPOSE_TEXT,
   createToolsPdf,
-  stripSpillInstruction
+  stripSpillInstruction,
+  sanitizeFileMetadata
 } from './context-spill.js';
 
 const IGNORED_INPUT_ITEM_TYPES = new Set([
@@ -387,12 +396,82 @@ export async function handleResponses(req, res, ctx) {
 
   const input = normalizeResponsesInput(body.input, { allowEmptyUser: Boolean(previousResponseId) });
   ctx.log.promptChars = input.promptChars;
-  ctx.historySessionKey = ctx.sessionKey || (previousRecord && previousRecord.sessionKey) || ctx.conversationKey || stableAutoSessionKey(resolved.id, input.conversation);
 
   const outputConversation = previousRecord ? outputItemsToConversation(previousRecord.output) : [];
-  const chainedConversation = previousRecord
+  let chainedConversation = previousRecord
     ? [...previousRecord.conversation, ...outputConversation, ...input.conversation]
     : input.conversation;
+  // v2.51：Codex 手动压缩 marker（可能在 input 或 previous_response_id 链里）。
+  const manualMarker = findCompactionMarker(chainedConversation);
+  const conversationSessionKey = resolveConversationSessionKey({
+    ctx,
+    body,
+    model: resolved.id,
+    conversation: chainedConversation,
+    marker: manualMarker
+  });
+  let conversationState = null;
+  if (responseStore?.enabled && conversationSessionKey) {
+    conversationState = await responseStore.getConversation(conversationSessionKey).catch(() => null);
+  }
+  let manualCompaction = null;
+  if (manualMarker) {
+    const manualScope = pdfScopeKey({
+      kind: 'responses',
+      sessionKey: conversationSessionKey,
+      conversation: manualMarker.before
+    });
+    let pdfResult = null;
+    if (
+      conversationState?.compression?.summaryHash === manualMarker.summaryHash &&
+      conversationState.contextPdfScope
+    ) {
+      pdfResult = await loadReusableCompactionPdf({
+        responsesStore: responseStore,
+        compression: conversationState.compression,
+        scopeKey: conversationState.contextPdfScope
+      });
+    }
+    const effectiveScope = pdfResult?.scopeKey || manualScope;
+    if (!pdfResult) {
+      try {
+        pdfResult = await buildManualCompactionPdf({
+          marker: manualMarker,
+          responsesStore: responseStore,
+          scopeKey: effectiveScope
+        });
+      } catch (error) {
+        if (error && error.code === 'context_pdf_capacity_exceeded') {
+          throw new OpenAIError('会话历史超过 PDF 容量（15 页），无法生成压缩上下文 PDF', {
+            status: 413,
+            type: 'invalid_request_error',
+            code: 'context_pdf_capacity_exceeded',
+            param: 'input'
+          });
+        }
+        throw error;
+      }
+    }
+    const compression = buildCompressionRecord({
+      marker: manualMarker,
+      pdfFile: pdfResult.file || pdfResult.state,
+      trigger: 'manual',
+      reused: pdfResult.generated === false,
+      scopeKey: effectiveScope
+    });
+    manualCompaction = { marker: manualMarker, scopeKey: effectiveScope, contextPdfState: pdfResult.state, compression };
+    chainedConversation = [manualMarker.message, ...manualMarker.hot];
+    ctx.log.manualCompaction = true;
+    ctx.log.compression = {
+      trigger: 'manual',
+      summaryHash: compression.summaryHash,
+      coveredMessageCount: compression.coveredMessageCount,
+      contextPdf: compression.contextPdf,
+      reused: compression.reused
+    };
+  }
+  ctx.historySessionKey =
+    ctx.sessionKey || (previousRecord && previousRecord.sessionKey) || ctx.conversationKey || conversationSessionKey;
   const reasoning = resolveReasoningEffort(
     resolved.model,
     body.reasoning?.effort ?? body.reasoning_effort,
@@ -427,6 +506,7 @@ export async function handleResponses(req, res, ctx) {
     chainedChars > (Number(pdfSpillConfig.inputCharLimit) || 20000);
 
   const reusablePrefix =
+    !manualCompaction &&
     previousRecord &&
     Array.isArray(previousRecord.upstream) &&
     previousRecord.upstream.length > 0 &&
@@ -434,7 +514,7 @@ export async function handleResponses(req, res, ctx) {
     (previousRecord.systemPrompt || '') === (systemPrompt || '');
   const pdfScope = pdfScopeKey({
     kind: 'responses',
-    sessionKey: ctx.sessionKey || ctx.conversationKey || null,
+    sessionKey: conversationSessionKey || ctx.sessionKey || ctx.conversationKey || null,
     previousResponseId,
     model: resolved.id,
     conversation: chainedConversation
@@ -454,6 +534,18 @@ export async function handleResponses(req, res, ctx) {
         pdfReuse = true;
         pdfHot = hot;
       }
+    }
+  }
+  if (manualCompaction) {
+    pdfState = manualCompaction.contextPdfState || null;
+    pdfReuse = Boolean(pdfState);
+    pdfHot = chainedConversation;
+  } else if (!reusablePrefix && conversationState?.compression && conversationState.contextPdfScope && responseStore?.enabled) {
+    const statePdf = await responseStore.getContextPdf(conversationState.contextPdfScope);
+    if (statePdf) {
+      pdfState = statePdf;
+      pdfReuse = true;
+      pdfHot = chainedConversation;
     }
   }
   let canonicalConversation;
@@ -606,7 +698,7 @@ export async function handleResponses(req, res, ctx) {
     ? spillDisplay.map((message) => ({
         ...message,
         content: stripSpillInstruction(String(message.content || '').replace(protocolText, '')),
-        files: message.files
+        files: sanitizeFileMetadata(message.files)
       }))
     : canonicalConversation;
   const firstInjectedUser = duckMessages.find((message) => message && message.role === 'user');
@@ -624,7 +716,8 @@ export async function handleResponses(req, res, ctx) {
     chain: ctx.log.conversationChain || null,
     contextPdf: ctx.log.contextPdf || null,
     toolsPdf: ctx.log.toolsPdf || null,
-    contextPdfReused: ctx.log.contextPdfReused === true
+    contextPdfReused: ctx.log.contextPdfReused === true,
+    ...(manualCompaction ? { compression: manualCompaction.compression } : {})
   };
   ctx.log.protocolInjected = Boolean(protocolText && !hasPdfMode);
   ctx.log.clientToolsPdf = hasPdfMode && clientTools.length > 0;
@@ -632,6 +725,13 @@ export async function handleResponses(req, res, ctx) {
 
   const stream = body.stream === true;
   ctx.log.stream = stream;
+  if (conversationSessionKey) {
+    try {
+      ctx.res.setHeader('X-Session-Id', conversationSessionKey);
+    } catch {
+      // headers may already be sent
+    }
+  }
 
   try {
     ctx.res.setHeader('X-Duckai-Model', resolved.id);
@@ -677,6 +777,28 @@ export async function handleResponses(req, res, ctx) {
       toolsHash,
       output: payload.output
     });
+  }
+  // v2.51：persist canonical conversation + compression record for the stable session.
+  if (responseStore?.enabled && (manualCompaction || conversationState)) {
+    const stateKey = conversationSessionKey || ctx.historySessionKey || ctx.sessionKey || null;
+    if (stateKey) {
+      try {
+        await responseStore.saveConversation({
+          sessionKey: stateKey,
+          model: resolved.id,
+          mode: 'responses',
+          systemPrompt,
+          canonical: canonicalConversation,
+          upstream: duckMessages,
+          toolsHash,
+          compression: manualCompaction?.compression || conversationState?.compression || null,
+          contextPdfScope: manualCompaction?.scopeKey || conversationState?.contextPdfScope || null,
+          compactedAt: manualCompaction ? Date.now() : conversationState?.compactedAt || null
+        });
+      } catch (error) {
+        ctx.logger?.warn?.('failed to save responses canonical conversation state', { error: error.message });
+      }
+    }
   }
 }
 

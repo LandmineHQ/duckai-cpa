@@ -147,6 +147,9 @@ CREATE TABLE IF NOT EXISTS conversation_state (
   canonical_json TEXT NOT NULL,
   upstream_json TEXT NOT NULL,
   tools_hash TEXT,
+  compression_json TEXT,
+  context_pdf_scope TEXT,
+  compacted_at INTEGER,
   updated_at INTEGER NOT NULL,
   expires_at INTEGER
 );
@@ -209,6 +212,13 @@ export async function openDatabase(options = {}) {
     const pdfColumns = new Set(db.prepare('PRAGMA table_info(context_pdfs)').all().map((column) => column.name));
     if (!pdfColumns.has('text_chars')) db.exec('ALTER TABLE context_pdfs ADD COLUMN text_chars INTEGER');
     if (!pdfColumns.has('text_content')) db.exec('ALTER TABLE context_pdfs ADD COLUMN text_content TEXT');
+    // v2.51：canonical conversation 的压缩状态（手动 Codex 压缩/context PDF 引用）。
+    const conversationColumns = new Set(
+      db.prepare('PRAGMA table_info(conversation_state)').all().map((column) => column.name)
+    );
+    if (!conversationColumns.has('compression_json')) db.exec('ALTER TABLE conversation_state ADD COLUMN compression_json TEXT');
+    if (!conversationColumns.has('context_pdf_scope')) db.exec('ALTER TABLE conversation_state ADD COLUMN context_pdf_scope TEXT');
+    if (!conversationColumns.has('compacted_at')) db.exec('ALTER TABLE conversation_state ADD COLUMN compacted_at INTEGER');
   } catch (error) {
     options.logger?.warn?.('[db] failed to init sqlite', { error: error.message });
     throw error;

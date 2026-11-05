@@ -52,7 +52,8 @@ import {
   stableAutoSessionKey,
   PDF_PURPOSE_TEXT,
   createToolsPdf,
-  stripSpillInstruction
+  stripSpillInstruction,
+  sanitizeFileMetadata
 } from './context-spill.js';
 import {
   buildCompactedSystemPrompt,
@@ -61,6 +62,14 @@ import {
   splitForCompact,
   summarizeConversation
 } from './compact.js';
+import {
+  buildCompressionRecord,
+  buildManualCompactionPdf,
+  findCompactionMarker,
+  loadReusableCompactionPdf,
+  resolveConversationSessionKey,
+  COMPACTION_MARKER
+} from './conversation-compact.js';
 
 const MAX_SOURCES = 50;
 
@@ -724,7 +733,91 @@ export async function handleChatCompletions(req, res, ctx) {
 
   const messages = normalizeChatMessages(body.messages);
   ctx.log.promptChars = messages.promptChars;
-  ctx.historySessionKey = ctx.sessionKey || ctx.conversationKey || stableAutoSessionKey(resolved.id, messages.conversation);
+  // v2.51：Codex 手动压缩 marker → marker 之前旧对话 + 摘要进 context PDF，之后为 hot text。
+  const rawRequestMessages = Array.isArray(body.messages) ? body.messages : [];
+  const manualMarker = findCompactionMarker(rawRequestMessages);
+  const responseStore = ctx.responsesStore || null;
+  const conversationSessionKey = resolveConversationSessionKey({
+    ctx,
+    body,
+    model: resolved.id,
+    conversation: messages.conversation,
+    marker: manualMarker
+  });
+  ctx.chatConversationKey = conversationSessionKey;
+  ctx.historySessionKey = ctx.sessionKey || ctx.conversationKey || conversationSessionKey;
+  let conversationState = null;
+  let manualCompaction = null;
+  if (responseStore?.enabled && conversationSessionKey) {
+    conversationState = await responseStore.getConversation(conversationSessionKey).catch(() => null);
+  }
+  if (manualMarker) {
+    const manualScope = pdfScopeKey({
+      kind: 'chat',
+      sessionKey: conversationSessionKey,
+      conversation: manualMarker.before
+    });
+    let pdfResult = null;
+    if (
+      conversationState?.compression?.summaryHash === manualMarker.summaryHash &&
+      conversationState.contextPdfScope
+    ) {
+      pdfResult = await loadReusableCompactionPdf({
+        responsesStore: responseStore,
+        compression: conversationState.compression,
+        scopeKey: conversationState.contextPdfScope
+      });
+    }
+    const effectiveScope = pdfResult?.scopeKey || manualScope;
+    if (!pdfResult) {
+      try {
+        pdfResult = await buildManualCompactionPdf({
+          marker: manualMarker,
+          responsesStore: responseStore,
+          scopeKey: effectiveScope
+        });
+      } catch (error) {
+        if (error && error.code === 'context_pdf_capacity_exceeded') {
+          throw new OpenAIError('会话历史超过 PDF 容量（15 页），无法生成压缩上下文 PDF', {
+            status: 413,
+            type: 'invalid_request_error',
+            code: 'context_pdf_capacity_exceeded',
+            param: 'messages'
+          });
+        }
+        throw error;
+      }
+    }
+    const compression = buildCompressionRecord({
+      marker: manualMarker,
+      pdfFile: pdfResult.file || pdfResult.state,
+      trigger: 'manual',
+      reused: pdfResult.generated === false,
+      scopeKey: effectiveScope
+    });
+    manualCompaction = {
+      marker: manualMarker,
+      scopeKey: effectiveScope,
+      contextPdfState: pdfResult.state,
+      compression
+    };
+    // canonical/hot 保留 marker 摘要消息 + marker 之后的消息；旧对话只存在于 PDF。
+    const hot = normalizeChatMessages([manualMarker.message, ...manualMarker.hot], { allowEmptyUser: true });
+    messages.conversation = hot.conversation;
+    messages.systemParts = [...messages.systemParts, ...hot.systemParts];
+    messages.promptChars = [manualMarker.message, ...manualMarker.hot].reduce(
+      (sum, message) => sum + String(message && message.content ? message.content : '').length,
+      0
+    );
+    ctx.log.manualCompaction = true;
+    ctx.log.compression = {
+      trigger: 'manual',
+      summaryHash: compression.summaryHash,
+      coveredMessageCount: compression.coveredMessageCount,
+      contextPdf: compression.contextPdf,
+      reused: compression.reused
+    };
+  }
 
   const reasoning = resolveReasoningEffort(resolved.model, body.reasoning_effort ?? body.reasoning?.effort);
   const flags = resolveToolFlags(ctx.config, resolved.model, body);
@@ -755,7 +848,6 @@ export async function handleChatCompletions(req, res, ctx) {
         : configuredMode === 'server'
           ? 'server'
           : 'stateless';
-  const responseStore = ctx.responsesStore || null;
   if (conversationMode === 'server' && !ctx.sessionKey) {
     throw badRequest(
       'conversation mode "server" requires an X-Session-Id header (or session_id in body)',
@@ -764,12 +856,18 @@ export async function handleChatCompletions(req, res, ctx) {
     );
   }
   let storedConversation = null;
-  if (conversationMode === 'server' && responseStore?.enabled && ctx.sessionKey) {
+  if (!manualCompaction && conversationMode === 'server' && responseStore?.enabled && ctx.sessionKey) {
     storedConversation = await responseStore.getConversation(ctx.sessionKey);
   }
   if (ctx.sessionKey) {
     try {
       ctx.res.setHeader('X-Session-Id', ctx.sessionKey);
+    } catch {
+      // headers may already be sent
+    }
+  } else if (conversationSessionKey) {
+    try {
+      ctx.res.setHeader('X-Session-Id', conversationSessionKey);
     } catch {
       // headers may already be sent
     }
@@ -781,7 +879,7 @@ export async function handleChatCompletions(req, res, ctx) {
   const pdfInputLimit = Number(pdfSpillConfig.inputCharLimit) || 20000;
   const pdfScope = pdfScopeKey({
     kind: 'chat',
-    sessionKey: ctx.sessionKey || ctx.conversationKey || null,
+    sessionKey: conversationSessionKey || ctx.sessionKey || ctx.conversationKey || null,
     model: resolved.id,
     conversation: messages.conversation
   });
@@ -800,6 +898,20 @@ export async function handleChatCompletions(req, res, ctx) {
         pdfReuse = true;
         pdfHot = hot;
       }
+    }
+  }
+  // v2.51：手动压缩请求直接复用/使用刚生成的 context PDF（hot text 已在上面裁剪）。
+  if (manualCompaction) {
+    pdfState = manualCompaction.contextPdfState || null;
+    pdfReuse = Boolean(pdfState);
+    pdfHot = messages.conversation;
+  } else if (conversationState?.compression && conversationState.contextPdfScope && responseStore?.enabled) {
+    // 压缩后的普通轮次：同一 session 继续复用已存 context PDF。
+    const statePdf = await responseStore.getContextPdf(conversationState.contextPdfScope);
+    if (statePdf) {
+      pdfState = statePdf;
+      pdfReuse = true;
+      pdfHot = messages.conversation;
     }
   }
   const pdfSpillPlanned =
@@ -860,7 +972,7 @@ export async function handleChatCompletions(req, res, ctx) {
       }
     }
   }
-  const rawMessages = Array.isArray(body.messages) ? body.messages : [];
+  const rawMessages = manualCompaction ? [manualMarker.message, ...manualMarker.hot] : Array.isArray(body.messages) ? body.messages : [];
   const toolsHash = crypto.createHash('sha1').update(JSON.stringify(clientTools)).digest('hex');
   let canonicalBefore = rawMessages;
   let tailRaw = rawMessages;
@@ -1056,7 +1168,7 @@ export async function handleChatCompletions(req, res, ctx) {
     ? spillDisplay.map((message) => ({
         ...message,
         content: stripSpillInstruction(String(message.content || '').replace(protocolText, '')),
-        files: message.files
+        files: sanitizeFileMetadata(message.files)
       }))
     : historyMessages;
   ctx.historyMessages = historyForDisplay;
@@ -1075,20 +1187,28 @@ export async function handleChatCompletions(req, res, ctx) {
     chain: ctx.log.conversationChain || null,
     contextPdf: ctx.log.contextPdf || null,
     toolsPdf: ctx.log.toolsPdf || null,
-    contextPdfReused: ctx.log.contextPdfReused === true
+    contextPdfReused: ctx.log.contextPdfReused === true,
+    ...(manualCompaction ? { compression: manualCompaction.compression } : {})
   };
   ctx.log.protocolInjected = Boolean(protocolText && !hasPdfMode);
   ctx.log.clientToolsPdf = hasPdfMode && clientTools.length > 0;
   ctx.log.upstreamMessageCount = duckMessages.length;
   ctx.chatSession = {
-    enabled: conversationMode === 'server' && Boolean(responseStore?.enabled && ctx.sessionKey),
+    enabled: Boolean(
+      responseStore?.enabled &&
+        conversationSessionKey &&
+        (conversationMode === 'server' || manualCompaction || ctx.sessionKey || ctx.conversationKey)
+    ),
     store: responseStore,
-    sessionKey: ctx.sessionKey || null,
+    sessionKey: conversationSessionKey || null,
     mode: conversationMode,
     systemPrompt,
     toolsHash,
     canonicalBefore,
-    upstreamBeforeResponse: duckMessages
+    upstreamBeforeResponse: duckMessages,
+    compression: manualCompaction?.compression || conversationState?.compression || null,
+    contextPdfScope: manualCompaction?.scopeKey || conversationState?.contextPdfScope || null,
+    compactedAt: manualCompaction ? Date.now() : conversationState?.compactedAt || null
   };
 
   const stream = body.stream === true;
@@ -1136,7 +1256,10 @@ export async function handleChatCompletions(req, res, ctx) {
         systemPrompt: session.systemPrompt,
         canonical: [...session.canonicalBefore, assistantCanonical],
         upstream: [...session.upstreamBeforeResponse, assistantUpstream],
-        toolsHash: session.toolsHash
+        toolsHash: session.toolsHash,
+        compression: session.compression || null,
+        contextPdfScope: session.contextPdfScope || null,
+        compactedAt: session.compactedAt || null
       });
       ctx.log.conversationState = 'saved';
     } catch (error) {

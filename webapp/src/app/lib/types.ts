@@ -959,6 +959,15 @@ export interface HistoryInjection {
   chain: string | null;
   contextPdf?: { pages: number | null; bytes: number | null; reused: boolean } | null;
   toolsPdf?: { pages: number | null; bytes: number | null } | null;
+  compression?: {
+    trigger: string;
+    summaryHash: string | null;
+    summaryChars: number | null;
+    coveredMessageCount: number | null;
+    hotMessageCount: number | null;
+    reused: boolean;
+    createdAt: number | null;
+  } | null;
   at: number;
 }
 

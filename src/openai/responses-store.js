@@ -237,7 +237,7 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       try {
         row = db.db
           .prepare(
-            'SELECT session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, updated_at, expires_at FROM conversation_state WHERE session_key = ?'
+            'SELECT session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, compression_json, context_pdf_scope, compacted_at, updated_at, expires_at FROM conversation_state WHERE session_key = ?'
           )
           .get(sessionKey);
       } catch (error) {
@@ -265,6 +265,12 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       } catch {
         upstream = [];
       }
+      let compression = null;
+      try {
+        compression = row.compression_json ? JSON.parse(row.compression_json) : null;
+      } catch {
+        compression = null;
+      }
       return {
         sessionKey: row.session_key,
         model: row.model || null,
@@ -273,17 +279,32 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
         canonical: Array.isArray(canonical) ? canonical : [],
         upstream: Array.isArray(upstream) ? upstream : [],
         toolsHash: row.tools_hash || null,
+        compression: compression && typeof compression === 'object' ? compression : null,
+        contextPdfScope: row.context_pdf_scope || null,
+        compactedAt: Number.isFinite(row.compacted_at) ? row.compacted_at : null,
         updatedAt: row.updated_at,
         expiresAt: row.expires_at
       };
     },
 
-    async saveConversation({ sessionKey, model = null, mode = 'auto', systemPrompt = null, canonical = [], upstream = [], toolsHash = null }) {
+    async saveConversation({
+      sessionKey,
+      model = null,
+      mode = 'auto',
+      systemPrompt = null,
+      canonical = [],
+      upstream = [],
+      toolsHash = null,
+      compression = null,
+      contextPdfScope = null,
+      compactedAt = null
+    }) {
       if (!enabled || !db || typeof sessionKey !== 'string' || !sessionKey) return null;
       const now = Date.now();
       const expiresAt = conversationExpiresAtFrom(now);
       const canonicalJson = JSON.stringify(safeJson(canonical, []));
       const upstreamJson = JSON.stringify(safeJson(upstream, []));
+      const compressionJson = compression && typeof compression === 'object' ? JSON.stringify(compression) : null;
       const bytes = Buffer.byteLength(canonicalJson, 'utf8') + Buffer.byteLength(upstreamJson, 'utf8');
       if (bytes > MAX_RECORD_BYTES) {
         logger?.warn?.('responses store: conversation too large; not stored', { sessionKey, bytes, limit: MAX_RECORD_BYTES });
@@ -292,12 +313,14 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       try {
         db.db
           .prepare(
-            `INSERT INTO conversation_state(session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, updated_at, expires_at)
-             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO conversation_state(session_key, model, mode, system_prompt, canonical_json, upstream_json, tools_hash, compression_json, context_pdf_scope, compacted_at, updated_at, expires_at)
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(session_key) DO UPDATE SET
                model=excluded.model, mode=excluded.mode, system_prompt=excluded.system_prompt,
                canonical_json=excluded.canonical_json, upstream_json=excluded.upstream_json,
-               tools_hash=excluded.tools_hash, updated_at=excluded.updated_at, expires_at=excluded.expires_at`
+               tools_hash=excluded.tools_hash, compression_json=excluded.compression_json,
+               context_pdf_scope=excluded.context_pdf_scope, compacted_at=excluded.compacted_at,
+               updated_at=excluded.updated_at, expires_at=excluded.expires_at`
           )
           .run(
             sessionKey,
@@ -307,6 +330,9 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
             canonicalJson,
             upstreamJson,
             toolsHash,
+            compressionJson,
+            contextPdfScope,
+            Number.isFinite(compactedAt) ? compactedAt : null,
             now,
             expiresAt
           );

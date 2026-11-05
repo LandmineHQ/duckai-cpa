@@ -80,6 +80,20 @@ export function stripSpillInstruction(text) {
     .trim();
 }
 
+/** 历史只保存 PDF 元数据，不保存 base64/text 全文（context PDF 的旧对话文本不落历史；client-tools 协议文本保留供查看）。 */
+export function sanitizeFileMetadata(files = []) {
+  return (Array.isArray(files) ? files : [])
+    .filter((file) => file && typeof file === 'object' && file.filename)
+    .map((file) => ({
+      filename: String(file.filename),
+      mimeType: file.mimeType || 'application/pdf',
+      ...(Number.isFinite(file.pages) ? { pages: file.pages } : {}),
+      ...(Number.isFinite(file.bytes) ? { bytes: file.bytes } : {}),
+      ...(Number.isFinite(file.textChars) ? { textChars: file.textChars } : {}),
+      ...(typeof file.text === 'string' && file.text ? { text: file.text.slice(0, 200000) } : {})
+    }));
+}
+
 export function messageTextChars(messages = []) {
   let total = 0;
   for (const message of Array.isArray(messages) ? messages : []) {
@@ -191,4 +205,4 @@ export async function spillMessagesToPdf(duckMessages, options = {}) {
 
 export { PdfCapacityError };
 export { createToolsPdf };
-export default { spillMessagesToPdf, messageTextChars, stripSpillInstruction, stableAutoSessionKey, pdfScopeKey, pdfFileFromState, attachPdfFile, createToolsPdf, PdfCapacityError };
+export default { spillMessagesToPdf, messageTextChars, stripSpillInstruction, sanitizeFileMetadata, stableAutoSessionKey, pdfScopeKey, pdfFileFromState, attachPdfFile, createToolsPdf, PdfCapacityError };

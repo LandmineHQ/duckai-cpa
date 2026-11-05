@@ -164,6 +164,8 @@ export async function createContextPdf({ messages = [], maxPages = MAX_PAGES_DEF
   const imageList = Array.isArray(images) ? images : collectImages(messages);
   const doc = await PDFDocument.create();
   doc.setTitle(title);
+  doc.setCreationDate(new Date(0));
+  doc.setModificationDate(new Date(0));
 
   let font;
   if (fontInfo) {
@@ -269,6 +271,8 @@ export default { createContextPdf, PdfCapacityError };
 export async function createToolsPdf({ toolProtocol = '', toolNames = [], maxPages = 1, includeContext = true } = {}) {
   const doc = await PDFDocument.create();
   doc.setTitle('DuckAI client tools');
+  doc.setCreationDate(new Date(0));
+  doc.setModificationDate(new Date(0));
   const fontInfo = readFont();
   let font;
   if (fontInfo) {

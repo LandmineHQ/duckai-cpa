@@ -606,3 +606,28 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 4 | 会话标识 | ✅ | 支持 X-Session-Id / conversation_id / prompt_cache_key；真实 pc-test 两轮同一历史 |
 | 5 | 系统消息解析 | ✅ | history 跳过 system/developer，前端过滤；无巨大 compact pill |
 | 6 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |
+## 2.49 v2.56 手动压缩 canonical 状态 + PDF 重建（task-72/73）
+
+> 复审对象：Codex 手动压缩 marker（`Another language model started to solve this problem`）链路。
+> 新增测试：`tests/manual-compaction-pdf.test.js`（5 项）；全程 `MockDuckClient`，不访问真实 duck.ai。
+> 命令：`node --test --test-isolation=none tests/manual-compaction-pdf.test.js` / `npm test`。
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 首轮长会话带 tools → client-tools.pdf + conversation-context.pdf | ✅ | 第 1 轮 26k 字符 + read_file：上游 messages 同时含两个 PDF；context PDF 文本包含首轮旧 user 唯一标记 |
+| 2 | 第二轮旧历史 + marker + 新 user → 同一 session、双 PDF 挂 hot 第一条 user | ✅ | 同 `X-Session-Id` 第 2 轮：`files=[client-tools.pdf, conversation-context.pdf]` 均挂在第一条 user；context PDF 文本含旧 user + marker 摘要全文 |
+| 3 | context PDF 包含压缩前内容，旧历史不进入 hot | ✅ | 上游消息正文无旧 user/旧 assistant；PDF `text` 含 `QA-OLD-BEFORE-MARKER`/marker 摘要；hot = marker + 新 user |
+| 4 | 历史只保留压缩后视图（旧 user 不残留） | ✅ | `GET /admin/api/history/:id` messages = marker + 新 user + assistant；旧 user 不在任何用户/助手正文；`injection.compression.trigger=manual`、`coveredMessageCount>=2`、`injection.contextPdf` 元数据存在 |
+| 5 | canonical 持久化（SQLite）且压缩前后 session 不变 | ✅ | `conversation_state` canonical 无旧 user；compression.summaryHash/contextPdfScope 存在；响应头 `X-Session-Id` 与历史 `sessionKey` 压缩前后相同 |
+| 6 | 连续普通轮次复用 PDF，不重复生成 | ✅ | 第 3 轮普通消息：context PDF b64 与第 2 轮一致；`context_pdfs.updated_at` 不变；历史 `injection.contextPdf.reused=true` |
+| 7 | 会话标识三组：X-Session-Id / conversation_id / prompt_cache_key | ✅ | 三组各自：首轮长会话生成 PDF；压缩轮响应头回写同一 key、历史 sessionKey 相同、旧 user 不残留（各 1 用例） |
+| 8 | /v1/responses 同样支持 marker | ✅ | responses 两轮：双 PDF 挂第一条 user、hot 无旧 user、历史压缩视图、injection.compression.trigger=manual |
+| 9 | 回归 | ✅ | `npm test` **474 / 474 PASS**（新增 5 项；此前 469） |
+
+### 2.49.1 观察项
+
+- 历史中的 context PDF 附件只保留元数据（filename/mimeType/pages/bytes/textChars），**不保存 PDF base64**；
+  其 `files[].text` 仍含旧对话文本（供排查/查看），因此「旧 user 不残留」按**消息正文**判定：
+  `messages.filter(role=user|assistant).content` 不含旧文本。若要求连 PDF 文本也不出现在历史 JSON，需要后续再收紧。
+- marker 精确匹配大小写敏感子串；fixture 放在旧历史末尾的 user 摘要消息，符合 Codex 默认形状。
+- 测试使用独立临时 dataDir + 自建 `responseStore`/`history`，运行后清理，不污染真实 data/。

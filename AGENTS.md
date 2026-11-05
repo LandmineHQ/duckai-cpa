@@ -129,6 +129,12 @@ data/                运行时数据（不入库；含敏感文件）
   只要本次请求带 client tools，就生成 **client-tools.pdf**（即使文本 <20k、没有 context PDF）；完整工具协议不再注入文本。历史 `injection.protocolText` 改为 PDF 用途说明（protocolKind=client-tools-pdf），完整工具协议在 client-tools.pdf 弹窗查看；无 context PDF 时历史显示 `工具说明 PDF` 徽章。
   token 用量改用 gpt-tokenizer（`src/openai/tokens.js`），PDF/图片也计入；chat 返回 prompt/completion tokens，responses 返回 input/output tokens。
   `scripts/page-check.mjs` 默认**不再向上游发真实消息**；需要真实会话压缩验收时显式加 `--allow-upstream`。
+- **手动压缩 marker（v2.56）**：Codex 手动压缩不调用 `/v1/compact`，而是在 `/v1/responses` 的 input 里发一条 user 消息：
+  `Another language model started to solve this problem ...`。网关必须识别 marker，把 marker 之前旧对话 + 摘要写入
+  `conversation-context.pdf`，marker 之后的消息（含当前 user）作为 hot text；同一 session/canonical，旧 user 不残留。
+  历史展示把 marker 渲染为「上下文已压缩」卡片（可查看摘要/双 PDF），标题取 marker 后的第一条真实 user；
+  `injection.compression` / `conversation_state.compression_json` 记录 trigger/summaryHash/coveredMessageCount/contextPdfScope。
+  同一 marker summaryHash 复用 PDF；普通轮次复用 upstream 里的 PDF，不重建。client-tools.pdf 仍始终附带。
 - **提示词注入可观测（v2.48）**：工具协议注入是上游临时消息，不写进会话历史的 messages；
   但 `history` 表新增 `injection_json`（`{injected,clientTools,protocolText,firstUserContent,upstreamMessageCount,chain}`），
   会话历史详情可查看完整协议与注入后的第一条 user；upstream 日志新增 `clientTools/protocolInjected/upstreamMessageCount/conversationChain`；

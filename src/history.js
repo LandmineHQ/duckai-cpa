@@ -82,6 +82,17 @@ function normalizeInjection(raw) {
       : null,
     chain: typeof raw.chain === 'string' && raw.chain ? raw.chain.slice(0, 64) : null,
     protocolKind: raw.protocolKind === 'client-tools-pdf' ? 'client-tools-pdf' : 'text',
+    compression: raw.compression && typeof raw.compression === 'object'
+      ? {
+          trigger: typeof raw.compression.trigger === 'string' ? raw.compression.trigger : 'manual',
+          summaryHash: typeof raw.compression.summaryHash === 'string' ? raw.compression.summaryHash : null,
+          summaryChars: Number.isFinite(Number(raw.compression.summaryChars)) ? Number(raw.compression.summaryChars) : null,
+          coveredMessageCount: Number.isFinite(Number(raw.compression.coveredMessageCount)) ? Number(raw.compression.coveredMessageCount) : null,
+          hotMessageCount: Number.isFinite(Number(raw.compression.hotMessageCount)) ? Number(raw.compression.hotMessageCount) : null,
+          reused: raw.compression.reused === true,
+          createdAt: Number.isFinite(Number(raw.compression.createdAt)) ? Number(raw.compression.createdAt) : null
+        }
+      : null,
     toolsPdf: raw.toolsPdf && typeof raw.toolsPdf === 'object'
       ? {
           pages: Number.isFinite(Number(raw.toolsPdf.pages)) ? Number(raw.toolsPdf.pages) : null,
@@ -99,8 +110,11 @@ function normalizeInjection(raw) {
   };
 }
 
+const COMPACTION_MARKER = 'Another language model started to solve this problem';
+
 function titleFrom(messages) {
-  const firstUser = (messages || []).find((message) => message && message.role === 'user');
+  const users = (messages || []).filter((message) => message && message.role === 'user');
+  const firstUser = users.find((message) => !messageText(message).includes(COMPACTION_MARKER)) || users[0];
   const text = messageText(firstUser).replace(/\s+/g, ' ').trim();
   if (!text) return '未命名会话';
   return text.length > 60 ? `${text.slice(0, 60)}…` : text;

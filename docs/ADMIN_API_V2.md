@@ -1540,3 +1540,38 @@ upstream 日志新增：`clientTools`、`protocolInjected`、`upstreamMessageCou
 
 `pdf-lib` + `@pdf-lib/fontkit`（PDF 生成/图片嵌入）、`gpt-tokenizer`（token 估算）；
 CJK 字体默认 Windows `simhei.ttf`，可用 `DUCKAI_PDF_FONT` 覆盖。
+
+---
+
+## 44. 会话 canonical 状态 + Codex 手动压缩 PDF（v2.51）
+
+### 44.1 稳定 session
+
+- 解析优先级：`X-Session-Id` → `conversation_id/session_id` → `prompt_cache_key` → `previous_response_id` → 首条 user 稳定哈希。
+- Codex 手动压缩会话通常没有 X-Session-Id，**使用 `prompt_cache_key` UUID 作为 session key**；同一会话压缩后不换 key。
+- canonical 会话状态持久化在 SQLite `conversation_state`：
+  `session_key / model / mode / system_prompt / canonical_json / upstream_json / tools_hash
+   / compression_json / context_pdf_scope / compacted_at / updated_at / expires_at`。
+  - `canonical_json`：当前压缩后的 OpenAI 级对话（旧对话不再保留）；
+  - `upstream_json`：发给 duck 的精确前缀（含 PDF file parts，供 prefix cache 复用）；
+  - `compression_json`：`{trigger:'manual', summaryHash, summaryChars, summaryText, coveredMessageCount, hotMessageCount, contextPdf:{filename,pages,bytes}, contextPdfScope, reused, createdAt}`。
+
+### 44.2 Codex 手动压缩 marker（chat + responses 双链路）
+
+Marker 文本（role=user，位于旧历史之后、新 user 之前）：
+`Another language model started to solve this problem and produced a summary of its thinking process.`
+
+处理：
+1. `before` = marker 之前的旧 user/assistant 消息；`summary` = marker 消息；
+2. `before + summary` → **新的 conversation-context.pdf**（≤15 页，超限 413 `context_pdf_capacity_exceeded`），写入 `context_pdfs`（scope = session）；
+3. `hot = marker 消息 + marker 之后的消息`（含当前 user）；upstream 只发送 hot + PDF file parts；
+4. 有 client tools 时同时生成/附带 **client-tools.pdf**；
+5. canonical 更新为 hot（+ assistant），历史记录使用压缩后视图：旧 user 不残留；PDF 仅保存元数据（context PDF 不保存全文，client-tools PDF 保留协议文本供查看）；
+6. 同一 session + 相同 `summaryHash` 直接复用已有 context PDF（`compression.reused=true`），不重复生成；只有新的摘要 hash / 新压缩才更新；
+7. `/v1/responses` 使用 canonical/previous_response_id 链时同样检测 marker；后续轮次复用已持久化的 PDF（不得每轮重建）。
+
+### 44.3 日志与可观测
+
+- `ctx.log.manualCompaction = true`，`ctx.log.compression = {trigger,summaryHash,coveredMessageCount,contextPdf,reused}`；
+- 历史 `injection_json` 增加 `compression`，前端可显示「已压缩 · 覆盖 N 条 · 复用/新建 PDF」；
+- `history` 的 user 消息 `files` 仅保留 `{filename,mimeType,pages,bytes,textChars}`（client-tools.pdf 额外保留 `text`）。
