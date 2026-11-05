@@ -561,3 +561,11 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 5 | 手动压缩生成 PDF | ✅ | `/v1/compact` 返回 context_pdf 元数据并写入 context_pdfs |
 | 6 | 历史样式/PDF chip | ✅ | PDF chip 在用户气泡内；历史去掉注入指令；双 PDF chip 均显示 |
 | 7 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |
+## 2.44 v2.51 PDF 文本弹窗
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 点击 PDF chip 显示文本 | ✅ | 用户气泡内 chip 点击后 Dialog 显示完整 PDF 文本（client-tools / context 均可） |
+| 2 | 文本持久化 | ✅ | context_pdfs.text_content + history files[].text（≤200k，不存 base64）；复用 PDF 也保留文本 |
+| 3 | 旧记录兼容 | ✅ | 旧记录无 text 时弹窗提示「未保存 PDF 文本」 |
+| 4 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |

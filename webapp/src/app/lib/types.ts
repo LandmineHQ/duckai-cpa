@@ -236,6 +236,7 @@ export interface FileAttachment {
   pages?: number;
   bytes?: number;
   textChars?: number;
+  text?: string;
 }
 
 export interface SessionMessage {

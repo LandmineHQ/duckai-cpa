@@ -41,7 +41,7 @@ export function pdfFileFromState(state) {
     pages: state.pages,
     bytes: state.bytes,
     textChars: state.textChars,
-    text: ''
+    text: state.textContent || ''
   };
 }
 
@@ -135,7 +135,8 @@ export async function spillMessagesToPdf(duckMessages, options = {}) {
       b64: toolsPdf.buffer.toString('base64'),
       pages: toolsPdf.pages,
       bytes: toolsPdf.buffer.length,
-      textChars: toolsPdf.textChars
+      textChars: toolsPdf.textChars,
+      text: toolsPdf.text
     };
   }
   const filename = options.filename || 'conversation-context.pdf';

@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS context_pdfs (
   covered_count INTEGER NOT NULL,
   covered_hash TEXT NOT NULL,
   text_chars INTEGER,
+  text_content TEXT,
   pdf_b64 TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
@@ -207,6 +208,7 @@ export async function openDatabase(options = {}) {
     }
     const pdfColumns = new Set(db.prepare('PRAGMA table_info(context_pdfs)').all().map((column) => column.name));
     if (!pdfColumns.has('text_chars')) db.exec('ALTER TABLE context_pdfs ADD COLUMN text_chars INTEGER');
+    if (!pdfColumns.has('text_content')) db.exec('ALTER TABLE context_pdfs ADD COLUMN text_content TEXT');
   } catch (error) {
     options.logger?.warn?.('[db] failed to init sqlite', { error: error.message });
     throw error;

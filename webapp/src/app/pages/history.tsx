@@ -62,6 +62,7 @@ interface HistoryFile {
   pages?: number;
   bytes?: number;
   textChars?: number;
+  text?: string;
 }
 
 interface HistoryMessage {

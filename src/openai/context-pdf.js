@@ -303,5 +303,6 @@ export async function createToolsPdf({ toolProtocol = '', toolNames = [], maxPag
       y -= LINE_HEIGHT;
     }
   }
-  return { buffer: Buffer.from(await doc.save()), pages: pageCount, textChars: lines.join('\n').length };
+  const text = lines.join('\n');
+  return { buffer: Buffer.from(await doc.save()), pages: pageCount, textChars: text.length, text };
 }

@@ -531,6 +531,7 @@ export async function handleCompact(req, res, ctx) {
         pages: pdf.pages,
         bytes: pdf.buffer.length,
         textChars: pdf.textChars,
+        textContent: pdf.text || '',
         coveredCount: sourceMessages.length,
         coveredHash: hashConversationPrefix(sourceMessages),
         pdfB64: pdf.buffer.toString('base64')

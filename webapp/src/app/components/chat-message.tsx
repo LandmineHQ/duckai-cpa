@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { AlertTriangle, Bot, ExternalLink, FileText, Loader2, RefreshCw, User, Wrench } from 'lucide-react';
 import type { SessionMessage, ToolCallInfo } from '@/app/lib/types';
 import { dataUrlForImage, formatDateTime, formatDuration, formatQueueWait } from '@/app/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ReasoningBlock } from './reasoning-block';
 
 function safeHttpUrl(value: string | undefined | null): string | null {
@@ -34,26 +36,57 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 /** v2.49：PDF/文件附件 chip（会话历史只存元数据）。 */
-function FileAttachmentList({ files, onPrimary = false }: { files?: Array<{ filename: string; mimeType: string; pages?: number; bytes?: number }>; onPrimary?: boolean }) {
+function FileAttachmentList({ files, onPrimary = false }: { files?: Array<{ filename: string; mimeType: string; pages?: number; bytes?: number; text?: string }>; onPrimary?: boolean }) {
+  const [selected, setSelected] = useState<{ filename: string; mimeType: string; pages?: number; bytes?: number; text?: string } | null>(null);
   if (!files || files.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-1.5" data-testid="message-files">
-      {files.map((file, index) => {
-        const kb = Number.isFinite(Number(file.bytes)) ? Math.max(1, Math.round(Number(file.bytes) / 1024)) : null;
-        return (
-          <span
-            key={`${file.filename}-${index}`}
-            className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] ${onPrimary ? 'border-primary-foreground/20 bg-primary-foreground/15 text-primary-foreground' : 'bg-muted/40 text-muted-foreground'}`}
-            title={`${file.filename} · ${file.mimeType}${file.pages ? ` · ${file.pages} 页` : ''}`}
-          >
-            <FileText className="h-3 w-3 shrink-0" />
-            <span className="truncate">{file.filename}</span>
-            {file.pages ? <span className="shrink-0">· {file.pages} 页</span> : null}
-            {kb ? <span className="shrink-0">· {kb} KB</span> : null}
-          </span>
-        );
-      })}
-    </div>
+    <>
+      <div className="flex flex-wrap gap-1.5" data-testid="message-files">
+        {files.map((file, index) => {
+          const kb = Number.isFinite(Number(file.bytes)) ? Math.max(1, Math.round(Number(file.bytes) / 1024)) : null;
+          return (
+            <button
+              key={`${file.filename}-${index}`}
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setSelected(file);
+              }}
+              className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors ${onPrimary ? 'border-primary-foreground/20 bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25' : 'bg-muted/40 text-muted-foreground hover:bg-muted'}`}
+              title={`${file.filename} · ${file.mimeType}${file.pages ? ` · ${file.pages} 页` : ''}（点击查看 PDF 文本）`}
+              data-testid="message-file-chip"
+            >
+              <FileText className="h-3 w-3 shrink-0" />
+              <span className="truncate">{file.filename}</span>
+              {file.pages ? <span className="shrink-0">· {file.pages} 页</span> : null}
+              {kb ? <span className="shrink-0">· {kb} KB</span> : null}
+            </button>
+          );
+        })}
+      </div>
+      <Dialog open={Boolean(selected)} onOpenChange={(open) => { if (!open) setSelected(null); }}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              {selected?.filename || 'PDF'}
+            </DialogTitle>
+            <DialogDescription>
+              {selected?.mimeType || 'application/pdf'}
+              {selected?.pages ? ` · ${selected.pages} 页` : ''}
+              {selected?.bytes ? ` · ${Math.max(1, Math.round(selected.bytes / 1024))} KB` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {selected?.text ? (
+            <pre className="max-h-[62vh] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 text-xs leading-relaxed" data-testid="message-file-text">{selected.text}</pre>
+          ) : (
+            <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+              该历史记录没有保存 PDF 文本内容（v2.50 之前的记录）；新记录会显示完整文本。
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

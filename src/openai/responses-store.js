@@ -203,26 +203,27 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
         coveredCount: row.covered_count,
         coveredHash: row.covered_hash,
         textChars: row.text_chars ?? null,
+        textContent: row.text_content ?? null,
         pdfB64: row.pdf_b64,
         createdAt: row.created_at,
         updatedAt: row.updated_at
       };
     },
 
-    async saveContextPdf({ scopeKey, filename, mimeType = 'application/pdf', pages, bytes, textChars = null, coveredCount, coveredHash, pdfB64 }) {
+    async saveContextPdf({ scopeKey, filename, mimeType = 'application/pdf', pages, bytes, textChars = null, textContent = null, coveredCount, coveredHash, pdfB64 }) {
       if (!enabled || !db || typeof scopeKey !== 'string' || !scopeKey) return null;
       if (typeof pdfB64 !== 'string' || !pdfB64) return null;
       const now = Date.now();
       const expiresAt = conversationExpiresAtFrom(now);
       try {
         db.db.prepare(
-          `INSERT INTO context_pdfs(scope_key, filename, mime_type, pages, bytes, covered_count, covered_hash, text_chars, pdf_b64, created_at, updated_at, expires_at)
-           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO context_pdfs(scope_key, filename, mime_type, pages, bytes, covered_count, covered_hash, text_chars, text_content, pdf_b64, created_at, updated_at, expires_at)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(scope_key) DO UPDATE SET
              filename=excluded.filename, mime_type=excluded.mime_type, pages=excluded.pages, bytes=excluded.bytes,
-             covered_count=excluded.covered_count, covered_hash=excluded.covered_hash, text_chars=excluded.text_chars, pdf_b64=excluded.pdf_b64,
+             covered_count=excluded.covered_count, covered_hash=excluded.covered_hash, text_chars=excluded.text_chars, text_content=excluded.text_content, pdf_b64=excluded.pdf_b64,
              updated_at=excluded.updated_at, expires_at=excluded.expires_at`
-        ).run(scopeKey, filename, mimeType, pages, bytes, coveredCount, coveredHash, textChars, pdfB64, now, now, expiresAt);
+        ).run(scopeKey, filename, mimeType, pages, bytes, coveredCount, coveredHash, textChars, textContent, pdfB64, now, now, expiresAt);
         return { scopeKey, pages, bytes, coveredCount };
       } catch (error) {
         logger?.warn?.('responses store: saveContextPdf failed', { error: error.message });

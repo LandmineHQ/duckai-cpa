@@ -19,6 +19,7 @@ const MAX_IMAGE_BASE64_CHARS = 6 * 1024 * 1024;
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_TOOL_CALLS_PER_MESSAGE = 20;
 const MAX_TOOL_TEXT_CHARS = 4000;
+const MAX_PDF_TEXT_CHARS = 200000;
 const MAX_SOURCES_PER_MESSAGE = 20;
 
 function now() {
@@ -153,7 +154,8 @@ export async function createHistoryStore({ dataDir = 'data', config = null, logg
               mimeType: String(file.mimeType || 'application/octet-stream').slice(0, 100),
               ...(Number.isFinite(Number(file.pages)) ? { pages: Math.max(0, Math.trunc(Number(file.pages))) } : {}),
               ...(Number.isFinite(Number(file.bytes)) ? { bytes: Math.max(0, Math.trunc(Number(file.bytes))) } : {}),
-              ...(Number.isFinite(Number(file.textChars)) ? { textChars: Math.max(0, Math.trunc(Number(file.textChars))) } : {})
+              ...(Number.isFinite(Number(file.textChars)) ? { textChars: Math.max(0, Math.trunc(Number(file.textChars))) } : {}),
+              ...(typeof file.text === 'string' && file.text ? { text: file.text.slice(0, MAX_PDF_TEXT_CHARS) } : {})
             }));
           if (files.length) entry.files = files;
         }

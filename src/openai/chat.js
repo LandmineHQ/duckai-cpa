@@ -427,7 +427,8 @@ export function recordHistoryOnLog(
               filename: String(file.filename || 'attachment'),
               mimeType: String(file.mimeType || 'application/octet-stream'),
               ...(Number.isFinite(Number(file.pages)) ? { pages: Number(file.pages) } : {}),
-              ...(Number.isFinite(Number(file.bytes)) ? { bytes: Number(file.bytes) } : {})
+              ...(Number.isFinite(Number(file.bytes)) ? { bytes: Number(file.bytes) } : {}),
+              ...(typeof file.text === 'string' && file.text ? { text: file.text.slice(0, 200000) } : {})
             }))
         : [];
       if (!content && !files.length) continue;
@@ -988,6 +989,7 @@ export async function handleChatCompletions(req, res, ctx) {
             pages: spill.pdf.pages,
             bytes: spill.pdf.bytes,
             textChars: spill.pdf.textChars,
+            textContent: spill.file.text || '',
             coveredCount,
             coveredHash: hashConversationPrefix(messages.conversation.slice(0, coveredCount)),
             pdfB64: spill.file.b64

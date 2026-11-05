@@ -539,6 +539,7 @@ export async function handleResponses(req, res, ctx) {
             pages: spill.pdf.pages,
             bytes: spill.pdf.bytes,
             textChars: spill.pdf.textChars,
+            textContent: spill.file.text || '',
             coveredCount,
             coveredHash: hashConversationPrefix(chainedConversation.slice(0, coveredCount)),
             pdfB64: spill.file.b64
