@@ -801,11 +801,11 @@ export async function handleChatCompletions(req, res, ctx) {
       contextPdfState: pdfResult.state,
       compression
     };
-    // canonical/hot 保留 marker 摘要消息 + marker 之后的消息；旧对话只存在于 PDF。
-    const hot = normalizeChatMessages([manualMarker.message, ...manualMarker.hot], { allowEmptyUser: true });
+    // 真正压缩：摘要只进 PDF；hot = marker 之后的消息（含当前 user），旧历史/摘要不进入文本。
+    const hot = normalizeChatMessages(manualMarker.hot, { allowEmptyUser: true });
     messages.conversation = hot.conversation;
     messages.systemParts = [...messages.systemParts, ...hot.systemParts];
-    messages.promptChars = [manualMarker.message, ...manualMarker.hot].reduce(
+    messages.promptChars = manualMarker.hot.reduce(
       (sum, message) => sum + String(message && message.content ? message.content : '').length,
       0
     );
@@ -972,7 +972,7 @@ export async function handleChatCompletions(req, res, ctx) {
       }
     }
   }
-  const rawMessages = manualCompaction ? [manualMarker.message, ...manualMarker.hot] : Array.isArray(body.messages) ? body.messages : [];
+  const rawMessages = manualCompaction ? manualMarker.hot : Array.isArray(body.messages) ? body.messages : [];
   const toolsHash = crypto.createHash('sha1').update(JSON.stringify(clientTools)).digest('hex');
   let canonicalBefore = rawMessages;
   let tailRaw = rawMessages;

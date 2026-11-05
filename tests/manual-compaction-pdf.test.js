@@ -187,17 +187,19 @@ test('chat 手动压缩：双 PDF/同一 session/历史只留压缩后视图/后
     assert.equal(second.headers.get('x-session-id'), sessionKey);
     const turn2Messages = env.duck.calls.chat.at(-1)?.params?.messages || [];
     const turn2Files = allFiles(turn2Messages);
-    const contextFile = assertBothPdfsOnFirstUser(turn2Messages, { contextText: OLD_BEFORE_MARKER });
+    const contextFile = assertBothPdfsOnFirstUser(turn2Messages, { contextText: 'QA-MARKER-SUMMARY' });
+    assert.ok(!String(contextFile.text || '').includes(OLD_BEFORE_MARKER), 'v2.57 压缩后 PDF 只应含摘要，不含旧上下文');
     assert.ok(String(contextFile.text || '').includes('QA-MARKER-SUMMARY'), 'context PDF 应包含摘要全文');
     assert.ok(!contentText(turn2Messages).includes(OLD_BEFORE_MARKER), 'hot 文本不应残留旧 user');
     assert.ok(!contentText(turn2Messages).includes('OLD-ASSISTANT-BEFORE-MARKER'), 'hot 文本不应残留旧 assistant');
-    assert.ok(contentText(turn2Messages).includes(MARKER), 'hot 应包含 marker 摘要消息');
+    assert.ok(!contentText(turn2Messages).includes(MARKER), 'v2.57 hot 不应包含 marker 摘要消息（摘要只进 PDF）');
     assert.ok(contentText(turn2Messages).includes('压缩后的新问题'), 'hot 应包含当前 user');
 
     const scope = pdfScopeKey({ kind: 'chat', sessionKey });
     const pdfAfterTurn2 = await env.responsesStore.getContextPdf(scope);
     assert.ok(pdfAfterTurn2?.pdfB64, 'context PDF 应持久化');
-    assert.ok(String(pdfAfterTurn2.textContent || '').includes(OLD_BEFORE_MARKER));
+    assert.ok(String(pdfAfterTurn2.textContent || '').includes('QA-MARKER-SUMMARY'), '压缩后 PDF 只含摘要');
+    assert.ok(!String(pdfAfterTurn2.textContent || '').includes(OLD_BEFORE_MARKER), '压缩后 PDF 不应含旧完整上下文');
     const conversation = await env.responsesStore.getConversation(sessionKey);
     assert.ok(conversation, 'canonical conversation 应持久化');
     assert.ok(!JSON.stringify(conversation.canonical).includes(OLD_BEFORE_MARKER), 'canonical 不应保留旧 user');
@@ -210,7 +212,9 @@ test('chat 手动压缩：双 PDF/同一 session/历史只留压缩后视图/后
     const historyAfterTurn2 = await historyEntry(env, sessionKey);
     assert.equal(historyAfterTurn2.sessionKey, sessionKey, '压缩后 sessionKey 不变');
     assertHistoryCompressed(historyAfterTurn2.messages, OLD_BEFORE_MARKER, '第 2 轮历史');
-    assert.ok(JSON.stringify(historyAfterTurn2.messages).includes('QA-MARKER-SUMMARY'), '历史应保留摘要/marker 视图');
+    assert.ok(!historyMessageContent(historyAfterTurn2.messages).includes('QA-MARKER-SUMMARY'), '历史正文不应把摘要当普通消息');
+    const turn2PdfFile = (historyAfterTurn2.messages || []).flatMap((message) => (Array.isArray(message.files) ? message.files : [])).find((file) => file.filename === 'conversation-context.pdf');
+    assert.ok(String(turn2PdfFile?.text || '').includes('QA-MARKER-SUMMARY'), '历史 PDF chip 文本应为摘要');
     assert.equal(historyAfterTurn2.injection?.compression?.trigger, 'manual');
     assert.equal(historyAfterTurn2.injection?.protocolKind, 'client-tools-pdf');
     assert.ok(historyAfterTurn2.injection?.contextPdf?.pages >= 1, '历史 injection 应带 context PDF 元数据');
@@ -231,7 +235,8 @@ test('chat 手动压缩：双 PDF/同一 session/历史只留压缩后视图/后
     const turn3Context = turn3Files.find((file) => file.filename === 'conversation-context.pdf');
     assert.ok(turn3Context, '普通轮次应继续附带 context PDF');
     assert.equal(turn3Context.b64, contextFile.b64, '普通轮次应复用同一 context PDF（b64 相同）');
-    assert.ok(String(turn3Context.text || '').includes(OLD_BEFORE_MARKER), '复用的 PDF 仍应包含压缩前内容');
+    assert.ok(String(turn3Context.text || '').includes('QA-MARKER-SUMMARY'), '复用的 PDF 仍应包含摘要');
+    assert.ok(!String(turn3Context.text || '').includes(OLD_BEFORE_MARKER), '复用的 PDF 不应含旧上下文');
     const pdfAfterTurn3 = await env.responsesStore.getContextPdf(scope);
     assert.equal(pdfAfterTurn3.updatedAt, pdfUpdatedBefore, '普通轮次不应重建 context PDF（updatedAt 不变）');
 
@@ -293,7 +298,7 @@ async function runIdentifierScenario(identifier) {
     assert.equal(second.status, 200, `${identifier.name} 压缩轮 HTTP ${second.status}: ${second.text}`);
     assert.equal(second.headers.get('x-session-id'), key, `${identifier.name} 压缩后 session 不变`);
     const turn2Messages = env.duck.calls.chat.at(-1)?.params?.messages || [];
-    assertBothPdfsOnFirstUser(turn2Messages, { contextText: OLD_BEFORE_MARKER });
+    assertBothPdfsOnFirstUser(turn2Messages, { contextText: 'QA-MARKER-SUMMARY' });
     assert.ok(!contentText(turn2Messages).includes(OLD_BEFORE_MARKER), `${identifier.name} hot 不应残留旧 user`);
 
     const history = await historyEntry(env, key);
@@ -361,7 +366,7 @@ test('/v1/responses 手动压缩：双 PDF/历史压缩视图/同一 session', a
     assert.equal(second.status, 200, second.text);
     assert.equal(second.headers.get('x-session-id'), sessionKey);
     const messages = env.duck.calls.chat.at(-1)?.params?.messages || [];
-    assertBothPdfsOnFirstUser(messages, { contextText: OLD_RESPONSES });
+    assertBothPdfsOnFirstUser(messages, { contextText: 'QA-MARKER-SUMMARY' });
     assert.ok(!contentText(messages).includes(OLD_RESPONSES), 'responses hot 不应残留旧 user');
 
     const history = await historyEntry(env, sessionKey);

@@ -631,3 +631,27 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
   `messages.filter(role=user|assistant).content` 不含旧文本。若要求连 PDF 文本也不出现在历史 JSON，需要后续再收紧。
 - marker 精确匹配大小写敏感子串；fixture 放在旧历史末尾的 user 摘要消息，符合 Codex 默认形状。
 - 测试使用独立临时 dataDir + 自建 `responseStore`/`history`，运行后清理，不污染真实 data/。
+
+## 2.50 v2.57 真正压缩：摘要 PDF + 自动溢出完整上下文对照（task-74/75）
+
+> 用户澄清后的语义：**20k 自动溢出**仍把完整旧上下文放进 context PDF；**真正压缩**
+> （Codex marker / `/v1/compact`）只把摘要放进 context PDF，旧完整 PDF 被同 scope 覆盖。
+> 新增测试：`tests/summary-pdf-compaction.test.js`（3 项）；同时按新语义更新
+> `tests/manual-compaction-pdf.test.js`（5 项）。全程 `MockDuckClient`，不访问真实 duck.ai。
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 压缩前：自动溢出 PDF 含完整旧上下文 | ✅ | >20k 无 marker：`context_pdfs.textContent` 含 `OLD-CONTEXT-UNIQUE` 与旧 assistant；双 PDF |
+| 2 | Codex marker：PDF 只含摘要、旧 PDF 被覆盖 | ✅ | 同 session 压缩后同 scope `textContent` 含 `QA-SUMMARY-ONLY-UNIQUE`、**不含** OLD-CONTEXT-UNIQUE；`pdfB64` 变化、`updated_at` 更新 |
+| 3 | hot/history 不含旧对话，也不把摘要当普通 user 文本 | ✅ | 上游 user/assistant 正文不含旧 user/旧 assistant/摘要；hot 仅 marker 之后消息；历史正文同样干净；PDF chip 的 `text` 为摘要（预期） |
+| 4 | client-tools.pdf 仍在 + compression 元数据 | ✅ | 双 PDF 挂在 hot 第一条 user；`injection.compression.trigger=manual`、`summaryHash`、`coveredMessageCount>=2`、`protocolKind=client-tools-pdf` |
+| 5 | 后续普通轮次复用摘要 PDF | ✅ | 第 3 轮 context PDF b64 与压缩后一致、`updated_at` 不变；文本仍只含摘要 |
+| 6 | `/v1/compact`：摘要 PDF 只含 summary、覆盖旧完整 PDF | ✅ | 先自动溢出（旧完整 PDF）→ compact（mock summary）→ `textContent === SUMMARY_TEXT`、不含原始长 messages；`pdfB64` 变化；`conversation_state.compression.trigger=compact` |
+| 7 | `/v1/compact` 后续同 session 复用 | ✅ | 后续 chat：挂载同一摘要 PDF（b64/updatedAt 不变），文本只含摘要 |
+| 8 | 回归 | ✅ | `npm test` **477 / 477 PASS**（新增 3 项；原 474；同时修正 5 项旧语义断言） |
+
+### 2.50.1 说明
+
+- 历史 context PDF 的 `files[].text` 保留摘要全文（供 chip 弹窗查看），但 **messages 正文**不含旧 user/摘要；
+- 真正压缩后同一 session 的 canonical/hot 只保留 marker 之后消息；旧完整上下文仅存在于压缩前的自动溢出 PDF（已被覆盖）；
+- 自动溢出路径（>20k、无 marker）仍为完整上下文 PDF，本轮回归通过，未被真正压缩逻辑影响。

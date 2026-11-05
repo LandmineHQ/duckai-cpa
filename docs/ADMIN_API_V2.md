@@ -1561,12 +1561,12 @@ CJK 字体默认 Windows `simhei.ttf`，可用 `DUCKAI_PDF_FONT` 覆盖。
 Marker 文本（role=user，位于旧历史之后、新 user 之前）：
 `Another language model started to solve this problem and produced a summary of its thinking process.`
 
-处理：
-1. `before` = marker 之前的旧 user/assistant 消息；`summary` = marker 消息；
-2. `before + summary` → **新的 conversation-context.pdf**（≤15 页，超限 413 `context_pdf_capacity_exceeded`），写入 `context_pdfs`（scope = session）；
-3. `hot = marker 消息 + marker 之后的消息`（含当前 user）；upstream 只发送 hot + PDF file parts；
+处理（v2.57 真正压缩）：
+1. `before` = marker 之前的旧 user/assistant 消息；`summary` = marker 摘要消息；
+2. **只把 summary 写入 conversation-context.pdf**（不含旧对话；≤15 页，超限 413 `context_pdf_capacity_exceeded`），写入 `context_pdfs`（scope = session，覆盖旧完整上下文 PDF）；
+3. `hot = marker 之后的消息（含当前 user）`；摘要只进 PDF，不再作为普通 user 文本；upstream 只发送 hot + PDF file parts；
 4. 有 client tools 时同时生成/附带 **client-tools.pdf**；
-5. canonical 更新为 hot（+ assistant），历史记录使用压缩后视图：旧 user 不残留；PDF 仅保存元数据（context PDF 不保存全文，client-tools PDF 保留协议文本供查看）；
+5. canonical 更新为 hot（+ assistant），历史记录使用压缩后视图：旧 user / marker 摘要都不在 `messages` 文本中；`files[].text` 保存 PDF 文本（context PDF 为摘要文本，≤200k），供前端 chip 弹窗查看；
 6. 同一 session + 相同 `summaryHash` 直接复用已有 context PDF（`compression.reused=true`），不重复生成；只有新的摘要 hash / 新压缩才更新；
 7. `/v1/responses` 使用 canonical/previous_response_id 链时同样检测 marker；后续轮次复用已持久化的 PDF（不得每轮重建）。
 
@@ -1574,4 +1574,20 @@ Marker 文本（role=user，位于旧历史之后、新 user 之前）：
 
 - `ctx.log.manualCompaction = true`，`ctx.log.compression = {trigger,summaryHash,coveredMessageCount,contextPdf,reused}`；
 - 历史 `injection_json` 增加 `compression`，前端可显示「已压缩 · 覆盖 N 条 · 复用/新建 PDF」；
-- `history` 的 user 消息 `files` 仅保留 `{filename,mimeType,pages,bytes,textChars}`（client-tools.pdf 额外保留 `text`）。
+- `history` 的 user 消息 `files` 保留 `{filename,mimeType,pages,bytes,textChars,text}`（text ≤200k；context PDF 只含摘要文本，client-tools PDF 含协议全文）。
+
+---
+
+## 45. 真正压缩 vs 自动溢出（v2.57）
+
+| 路径 | context PDF 内容 | hot/text |
+| --- | --- | --- |
+| **自动溢出**（文本 > `context.pdfSpill.inputCharLimit`，默认 20000） | **完整旧上下文**（保持现状，用于绕过字符限制） | 当前 user 保留文本 + PDF file parts |
+| **Codex 手动 marker** | **仅摘要**（marker 摘要文本；覆盖旧同 session scope PDF） | marker 之后消息（含当前 user）；旧对话与摘要都不进文本 |
+| **`POST /v1/compact`** | **仅 `summary.text`**（覆盖旧同 session scope PDF） | 返回 `summary` + `kept_messages`，客户端用摘要/最近消息继续 |
+
+- 摘要 PDF 的 scope 固定为 session（`pdfScopeKey({kind:'chat',sessionKey})`），不带 messages 哈希，保证同一 session 覆盖旧完整上下文 PDF。
+- `/v1/compact` 生成摘要 PDF 后同步持久化 `conversation_state`：
+  `mode='compact'`、`canonical`=kept_messages、`compression={trigger:'compact',summaryHash,summaryChars,summaryText,coveredMessageCount,hotMessageCount,contextPdf,contextPdfScope,reused,createdAt}`、`context_pdf_scope`、`compacted_at`；后续请求可复用摘要 PDF。
+- 手动 marker / `/v1/compact` 的 `conversation-context.pdf` **不再包含旧对话全文**；历史 chip 的 `files[].text` 保存摘要文本（不是旧完整上下文）。
+- auto spill 逻辑不变（完整上下文 PDF）；`context_pdf_capacity_exceeded` 仍为 413。

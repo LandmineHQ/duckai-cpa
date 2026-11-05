@@ -132,7 +132,7 @@ data/                运行时数据（不入库；含敏感文件）
 - **手动压缩 marker（v2.56）**：Codex 手动压缩不调用 `/v1/compact`，而是在 `/v1/responses` 的 input 里发一条 user 消息：
   `Another language model started to solve this problem ...`。网关必须识别 marker，把 marker 之前旧对话 + 摘要写入
   `conversation-context.pdf`，marker 之后的消息（含当前 user）作为 hot text；同一 session/canonical，旧 user 不残留。
-  历史展示把 marker 渲染为「上下文已压缩」卡片（可查看摘要/双 PDF），标题取 marker 后的第一条真实 user；
+  历史只保留压缩后 hot 视图 + `injection.compression` 徽章；marker/摘要不再进入 hot 文本，摘要只在 `conversation-context.pdf`（可点击 chip 查看），标题取 marker 后的第一条真实 user；
   `injection.compression` / `conversation_state.compression_json` 记录 trigger/summaryHash/coveredMessageCount/contextPdfScope。
   同一 marker summaryHash 复用 PDF；普通轮次复用 upstream 里的 PDF，不重建。client-tools.pdf 仍始终附带。
 - **提示词注入可观测（v2.48）**：工具协议注入是上游临时消息，不写进会话历史的 messages；

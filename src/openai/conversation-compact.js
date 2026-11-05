@@ -86,7 +86,7 @@ export function resolveConversationSessionKey({ ctx = null, body = null, model =
 
 /**
  * 生成/复用 manual compaction 的上下文 PDF。
- * 新生成时把 marker 之前的旧对话 + 摘要消息渲染成 PDF。
+ * v2.57：真正压缩只把摘要写入 PDF（旧完整对话不再写入）。
  */
 export async function buildManualCompactionPdf({
   marker,
@@ -96,7 +96,8 @@ export async function buildManualCompactionPdf({
   title = 'Codex manual compaction context'
 } = {}) {
   if (!marker) return { state: null, file: null, generated: false, scopeKey };
-  const expectedCoveredHash = hashText(JSON.stringify(marker.before));
+  // 真正压缩：PDF 只放摘要；同摘要复用，新摘要覆盖同一 session scope 的旧 PDF。
+  const expectedCoveredHash = hashText(marker.summaryText);
   if (responsesStore?.enabled && scopeKey) {
     const existing = await responsesStore.getContextPdf(scopeKey);
     if (existing && existing.pdfB64 && existing.coveredHash === expectedCoveredHash) {
@@ -116,7 +117,7 @@ export async function buildManualCompactionPdf({
       };
     }
   }
-  const source = [...messagesForContextPdf(marker.before), marker.message];
+  const source = [{ role: 'assistant', content: `[CONVERSATION SUMMARY]\n${marker.summaryText}` }];
   const pdf = await createContextPdf({ messages: source, maxPages, title });
   const file = {
     mimeType: 'application/pdf',
@@ -127,7 +128,7 @@ export async function buildManualCompactionPdf({
     textChars: pdf.textChars,
     text: source.map((message) => messageText(message)).join('\n')
   };
-  const coveredCount = marker.before.length + 1;
+  const coveredCount = 1;
   let state = file;
   if (responsesStore?.enabled && scopeKey) {
     await responsesStore.saveContextPdf({

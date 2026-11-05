@@ -10,7 +10,7 @@
 import { OpenAIError } from './errors.js';
 import { formatToolCallsForHistory, formatToolResult } from './tool-protocol.js';
 import { createContextPdf } from './context-pdf.js';
-import { hashConversationPrefix, pdfScopeKey } from './context-spill.js';
+import { hashConversationPrefix, pdfScopeKey, stableAutoSessionKey } from './context-spill.js';
 import {
   COMPACTION_MODELS as DUCK_COMPACTION_MODELS,
   countPairs as duckCountPairs,
@@ -520,23 +520,65 @@ export async function handleCompact(req, res, ctx) {
     savedChars: historyChars
   });
   let contextPdf = null;
-  if (ctx.sessionKey && ctx.responsesStore?.enabled) {
+  let contextPdfScope = null;
+  const sessionKey =
+    ctx.sessionKey ||
+    ctx.conversationKey ||
+    stableAutoSessionKey(summary.model || requestedModel || '', normalized.messages);
+  if (summary.text && ctx.responsesStore?.enabled) {
     try {
-      const sourceMessages = Array.isArray(body.messages) && body.messages.length ? body.messages : normalized.messages;
-      const pdf = await createContextPdf({ messages: sourceMessages, maxPages: 15, title: 'DuckAI manual compaction context' });
-      const scopeKey = pdfScopeKey({ kind: 'chat', sessionKey: ctx.sessionKey, conversation: sourceMessages });
+      // v2.57：真正压缩只把摘要写入 PDF；同 session scope 覆盖旧完整上下文 PDF。
+      contextPdfScope = pdfScopeKey({ kind: 'chat', sessionKey });
+      const summaryMessage = { role: 'assistant', content: `[CONVERSATION SUMMARY]\n${summary.text}` };
+      const pdf = await createContextPdf({
+        messages: [summaryMessage],
+        maxPages: 15,
+        title: 'DuckAI compaction summary'
+      });
+      const summaryHash = hashConversationPrefix([summaryMessage]);
       await ctx.responsesStore.saveContextPdf({
-        scopeKey,
+        scopeKey: contextPdfScope,
         filename: 'conversation-context.pdf',
         pages: pdf.pages,
         bytes: pdf.buffer.length,
         textChars: pdf.textChars,
-        textContent: pdf.text || '',
-        coveredCount: sourceMessages.length,
-        coveredHash: hashConversationPrefix(sourceMessages),
+        textContent: summary.text,
+        coveredCount: 1,
+        coveredHash: summaryHash,
         pdfB64: pdf.buffer.toString('base64')
       });
       contextPdf = { filename: 'conversation-context.pdf', pages: pdf.pages, bytes: pdf.buffer.length };
+      // 同 session canonical/compression 持久化，后续请求可复用摘要 PDF。
+      if (sessionKey) {
+        try {
+          const keptMessages = normalized.messages.slice(history.length);
+          await ctx.responsesStore.saveConversation({
+            sessionKey,
+            model: summary.model || requestedModel || null,
+            mode: 'compact',
+            systemPrompt: normalized.systemPrompt || null,
+            canonical: keptMessages,
+            upstream: [],
+            toolsHash: null,
+            compression: {
+              trigger: 'compact',
+              summaryHash,
+              summaryChars: summary.text.length,
+              summaryText: summary.text.slice(0, 4000),
+              coveredMessageCount: history.length,
+              hotMessageCount: keptMessages.length,
+              contextPdf: contextPdf,
+              contextPdfScope,
+              reused: false,
+              createdAt: Date.now()
+            },
+            contextPdfScope,
+            compactedAt: Date.now()
+          });
+        } catch (error) {
+          ctx.log?.warn?.('manual compact conversation state save failed', { error: error.message });
+        }
+      }
     } catch (error) {
       ctx.log?.warn?.('manual compact PDF generation failed', { error: error.message });
     }

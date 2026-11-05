@@ -460,7 +460,7 @@ export async function handleResponses(req, res, ctx) {
       scopeKey: effectiveScope
     });
     manualCompaction = { marker: manualMarker, scopeKey: effectiveScope, contextPdfState: pdfResult.state, compression };
-    chainedConversation = [manualMarker.message, ...manualMarker.hot];
+    chainedConversation = manualMarker.hot;
     ctx.log.manualCompaction = true;
     ctx.log.compression = {
       trigger: 'manual',
