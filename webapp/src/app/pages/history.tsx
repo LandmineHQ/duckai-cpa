@@ -471,6 +471,12 @@ export function HistoryPage() {
                       >
                         {detail.injection.injected ? '已注入' : '未注入'}
                       </Badge>
+                      {detail.injection.contextPdf ? (
+                        <Badge variant="info" className="px-1.5 py-0 text-[10px]" data-testid="history-context-pdf-badge">
+                          {detail.injection.contextPdf.reused ? '上下文 PDF 复用' : '已生成上下文 PDF'}
+                          {detail.injection.contextPdf.pages ? ` · ${detail.injection.contextPdf.pages} 页` : ''}
+                        </Badge>
+                      ) : null}
                       {detail.injection.clientTools.map((tool) => (
                         <Badge key={tool} variant="outline" className="px-1.5 py-0 font-mono text-[10px]">
                           {tool}

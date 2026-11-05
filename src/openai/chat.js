@@ -49,6 +49,7 @@ import {
   pdfFileFromState,
   attachPdfFile,
   hashConversationPrefix,
+  stableAutoSessionKey,
   createToolsPdf,
   stripSpillInstruction
 } from './context-spill.js';
@@ -464,7 +465,7 @@ export function recordHistoryOnLog(
     record({
       identityId: ctx.log?.identityId || ctx.identityRoute?.identityId || null,
       identityLabel: ctx.log?.identityLabel || null,
-      sessionKey: ctx.sessionKey || null,
+      sessionKey: ctx.historySessionKey || ctx.sessionKey || null,
       model: model || ctx.log?.model || null,
       systemPrompt: typeof ctx.systemPromptSnapshot === 'string' ? ctx.systemPromptSnapshot : null,
       messages: normalized,
@@ -721,6 +722,7 @@ export async function handleChatCompletions(req, res, ctx) {
 
   const messages = normalizeChatMessages(body.messages);
   ctx.log.promptChars = messages.promptChars;
+  ctx.historySessionKey = ctx.sessionKey || stableAutoSessionKey(resolved.id, messages.conversation);
 
   const reasoning = resolveReasoningEffort(resolved.model, body.reasoning_effort ?? body.reasoning?.effort);
   const flags = resolveToolFlags(ctx.config, resolved.model, body);
@@ -952,7 +954,9 @@ export async function handleChatCompletions(req, res, ctx) {
           filename: 'client-tools.pdf',
           b64: toolsPdf.buffer.toString('base64'),
           pages: toolsPdf.pages,
-          bytes: toolsPdf.buffer.length
+          bytes: toolsPdf.buffer.length,
+          textChars: toolsPdf.textChars,
+          text: toolsPdf.text
         });
       } catch (error) {
         ctx.logger?.warn?.('client tools PDF generation failed', { error: error.message });
@@ -1025,7 +1029,9 @@ export async function handleChatCompletions(req, res, ctx) {
     protocolText,
     firstUserContent: firstInjectedUser && typeof firstInjectedUser.content === 'string' ? firstInjectedUser.content : '',
     upstreamMessageCount: duckMessages.length,
-    chain: ctx.log.conversationChain || null
+    chain: ctx.log.conversationChain || null,
+    contextPdf: ctx.log.contextPdf || null,
+    contextPdfReused: ctx.log.contextPdfReused === true
   };
   ctx.log.protocolInjected = Boolean(protocolText);
   ctx.log.upstreamMessageCount = duckMessages.length;

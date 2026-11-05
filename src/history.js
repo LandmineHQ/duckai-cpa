@@ -78,6 +78,13 @@ function normalizeInjection(raw) {
       ? Math.max(0, Math.trunc(Number(raw.upstreamMessageCount)))
       : null,
     chain: typeof raw.chain === 'string' && raw.chain ? raw.chain.slice(0, 64) : null,
+    contextPdf: raw.contextPdf && typeof raw.contextPdf === 'object'
+      ? {
+          pages: Number.isFinite(Number(raw.contextPdf.pages)) ? Number(raw.contextPdf.pages) : null,
+          bytes: Number.isFinite(Number(raw.contextPdf.bytes)) ? Number(raw.contextPdf.bytes) : null,
+          reused: raw.contextPdfReused === true || raw.contextPdf.reused === true
+        }
+      : null,
     at: Number.isFinite(raw.at) ? raw.at : Date.now()
   };
 }

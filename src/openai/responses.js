@@ -62,6 +62,7 @@ import {
   pdfFileFromState,
   attachPdfFile,
   hashConversationPrefix,
+  stableAutoSessionKey,
   createToolsPdf,
   stripSpillInstruction
 } from './context-spill.js';
@@ -385,6 +386,7 @@ export async function handleResponses(req, res, ctx) {
 
   const input = normalizeResponsesInput(body.input, { allowEmptyUser: Boolean(previousResponseId) });
   ctx.log.promptChars = input.promptChars;
+  ctx.historySessionKey = ctx.sessionKey || stableAutoSessionKey(resolved.id, input.conversation);
 
   const outputConversation = previousRecord ? outputItemsToConversation(previousRecord.output) : [];
   const chainedConversation = previousRecord
@@ -502,7 +504,9 @@ export async function handleResponses(req, res, ctx) {
           filename: 'client-tools.pdf',
           b64: toolsPdf.buffer.toString('base64'),
           pages: toolsPdf.pages,
-          bytes: toolsPdf.buffer.length
+          bytes: toolsPdf.buffer.length,
+          textChars: toolsPdf.textChars,
+          text: toolsPdf.text
         });
       } catch (error) {
         ctx.logger?.warn?.('client tools PDF generation failed', { error: error.message });
@@ -575,7 +579,9 @@ export async function handleResponses(req, res, ctx) {
     protocolText,
     firstUserContent: firstInjectedUser && typeof firstInjectedUser.content === 'string' ? firstInjectedUser.content : '',
     upstreamMessageCount: duckMessages.length,
-    chain: ctx.log.conversationChain || null
+    chain: ctx.log.conversationChain || null,
+    contextPdf: ctx.log.contextPdf || null,
+    contextPdfReused: ctx.log.contextPdfReused === true
   };
   ctx.log.protocolInjected = Boolean(protocolText);
   ctx.log.upstreamMessageCount = duckMessages.length;

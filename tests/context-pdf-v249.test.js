@@ -169,7 +169,7 @@ test('同一会话复用同一 context PDF，不每轮重新生成', async () =>
       body: { model: 'gpt-6-luna', messages: [{ role: 'user', content: BIG }, { role: 'assistant', content: 'old' }, { role: 'user', content: 'Q1' }] }
     });
     assert.equal(first.status, 200, first.text);
-    const firstPdf = duck.calls.chat[0].params.messages.at(-1).files?.[0]?.b64;
+    const firstPdf = duck.calls.chat[0].params.messages.find((m) => m.role === 'user')?.files?.[0]?.b64;
     assert.ok(firstPdf);
     const second = await v1Request(baseUrl, '/v1/chat/completions', {
       method: 'POST',
@@ -177,7 +177,7 @@ test('同一会话复用同一 context PDF，不每轮重新生成', async () =>
       body: { model: 'gpt-6-luna', messages: [{ role: 'user', content: BIG }, { role: 'assistant', content: 'old' }, { role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' }, { role: 'user', content: 'Q2' }] }
     });
     assert.equal(second.status, 200, second.text);
-    const secondPdf = duck.calls.chat.at(-1).params.messages.at(-1).files?.[0]?.b64;
+    const secondPdf = duck.calls.chat.at(-1).params.messages.find((m) => m.role === 'user')?.files?.[0]?.b64;
     assert.equal(secondPdf, firstPdf, '第二轮应复用同一个 context PDF');
   });
 });
@@ -207,7 +207,7 @@ test('Responses 同一会话复用同一 context PDF', async () => {
       ] }
     });
     assert.equal(first.status, 200, first.text);
-    const firstPdf = duck.calls.chat[0].params.messages.at(-1).files?.[0]?.b64;
+    const firstPdf = duck.calls.chat[0].params.messages.find((m) => m.role === 'user')?.files?.[0]?.b64;
     assert.ok(firstPdf);
     const second = await v1Request(baseUrl, '/v1/responses', {
       method: 'POST', headers: { 'x-session-id': 'sess-v249-resp-reuse' },
@@ -220,7 +220,7 @@ test('Responses 同一会话复用同一 context PDF', async () => {
       ] }
     });
     assert.equal(second.status, 200, second.text);
-    const secondPdf = duck.calls.chat.at(-1).params.messages.at(-1).files?.[0]?.b64;
+    const secondPdf = duck.calls.chat.at(-1).params.messages.find((m) => m.role === 'user')?.files?.[0]?.b64;
     assert.equal(secondPdf, firstPdf, 'Responses 第二轮应复用同一个 context PDF');
   });
 });

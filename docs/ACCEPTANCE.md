@@ -569,3 +569,12 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 2 | 文本持久化 | ✅ | context_pdfs.text_content + history files[].text（≤200k，不存 base64）；复用 PDF 也保留文本 |
 | 3 | 旧记录兼容 | ✅ | 旧记录无 text 时弹窗提示「未保存 PDF 文本」 |
 | 4 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |
+## 2.45 v2.52 稳定会话 + PDF 固定首条 user + 压缩可见
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 同一会话不分裂 | ✅ | 无 X-Session-Id 时用首条 user + 模型的稳定 auto key；两轮长会话历史只更新同一条 `auto:ac6aacde...` |
+| 2 | PDF 固定在首条 user | ✅ | 第一轮 `只回复 OK` 带 conversation-context.pdf；第二轮新 user 无 PDF，PDF 未移动 |
+| 3 | 压缩触发可见 | ✅ | 历史提示词注入面板显示 `上下文 PDF 复用 · 1 页` 徽章（contextPdf） |
+| 4 | client-tools.pdf 文本 | ✅ | 新记录 tools PDF 有完整文本（449 字符）；旧记录无文本 |
+| 5 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |

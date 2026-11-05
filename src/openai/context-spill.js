@@ -24,6 +24,12 @@ export function hashConversationPrefix(messages = []) {
 }
 
 /** v2.50：稳定的 PDF scope（同一会话复用同一 PDF）。 */
+export function stableAutoSessionKey(model = '', conversation = []) {
+  const firstUser = (Array.isArray(conversation) ? conversation : []).find((message) => message && message.role === 'user');
+  const seed = `${model}\n${firstUser ? String(firstUser.content || '') : ''}`;
+  return `auto:${crypto.createHash('sha1').update(seed).digest('hex').slice(0, 16)}`;
+}
+
 export function pdfScopeKey({ kind = 'chat', sessionKey = null, previousResponseId = null, model = '', conversation = [] }) {
   if (sessionKey) return `${kind}:session:${sessionKey}`;
   if (previousResponseId) return `${kind}:response:${previousResponseId}`;
@@ -45,11 +51,11 @@ export function pdfFileFromState(state) {
   };
 }
 
-/** 把已存储的 PDF 挂到最后一条 user 消息上。 */
+/** 把已存储的 PDF 挂到第一条 user 消息上（上下文 PDF 固定在会话顶部，不随每轮移动）。 */
 export function attachPdfFile(messages = [], file) {
   if (!file || !Array.isArray(messages) || !messages.length) return messages;
   let index = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
+  for (let i = 0; i < messages.length; i++) {
     if (messages[i] && messages[i].role === 'user') { index = i; break; }
   }
   if (index < 0) return messages;
@@ -177,4 +183,4 @@ export async function spillMessagesToPdf(duckMessages, options = {}) {
 
 export { PdfCapacityError };
 export { createToolsPdf };
-export default { spillMessagesToPdf, messageTextChars, stripSpillInstruction, pdfScopeKey, pdfFileFromState, attachPdfFile, createToolsPdf, PdfCapacityError };
+export default { spillMessagesToPdf, messageTextChars, stripSpillInstruction, stableAutoSessionKey, pdfScopeKey, pdfFileFromState, attachPdfFile, createToolsPdf, PdfCapacityError };

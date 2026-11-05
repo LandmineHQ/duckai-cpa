@@ -956,6 +956,7 @@ export interface HistoryInjection {
   upstreamMessageCount: number | null;
   /** prefix-reuse / rebuild / stateless / new 等链路标记。 */
   chain: string | null;
+  contextPdf?: { pages: number | null; bytes: number | null; reused: boolean } | null;
   at: number;
 }
 
