@@ -108,6 +108,22 @@ First start creates `data/config.json` and prints an **admin token** and a defau
 
 > `data/` contains secrets (tokens, identity keys, pairing codes). Keep file mode `0600`, never commit it.
 
+### Option C — Prebuilt image from GHCR
+
+The repository workflow `.github/workflows/docker.yml` builds the admin console, then builds and pushes a multi-arch image to GitHub Container Registry on every push to `main` and every `v*` tag.
+
+```bash
+# replace <owner>/<repo> with the GitHub repository path
+docker pull ghcr.io/<owner>/<repo>:latest
+
+docker run -d --name duckai-cpa -p 8787:8787 \
+  -v "$PWD/data:/app/data" \
+  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
+  ghcr.io/<owner>/<repo>:latest
+```
+
+Tag pushes also publish version tags (for example `ghcr.io/<owner>/<repo>:v0.1.0`). The workflow needs no extra secrets; it uses the repository `GITHUB_TOKEN` with `packages: write`.
+
 ### Option B — Docker
 
 ```bash
