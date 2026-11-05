@@ -578,3 +578,12 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 3 | 压缩触发可见 | ✅ | 历史提示词注入面板显示 `上下文 PDF 复用 · 1 页` 徽章（contextPdf） |
 | 4 | client-tools.pdf 文本 | ✅ | 新记录 tools PDF 有完整文本（449 字符）；旧记录无文本 |
 | 5 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |
+## 2.46 v2.53 工具协议迁移到 client-tools.pdf + 测试默认离线
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | PDF 模式不再把工具协议塞进 user 文本 | ✅ | >20k + read_file：真实上游返回 1 个 tool_call；firstUser 仅 171 字符（含 PDF 说明），不再有 9864 字符协议 |
+| 2 | 工具协议在 client-tools.pdf | ✅ | client-tools.pdf 文本 468 字符；conversation-context.pdf 26421 字符 |
+| 3 | 历史 protocolText 显示 PDF 用途 | ✅ | protocolKind=client-tools-pdf；protocolText 143 字符说明；完整工具协议在 PDF 弹窗 |
+| 4 | 测试默认不请求上游 | ✅ | page-check 默认跳过 `/test/sessions/messages` 真实消息；需 `--allow-upstream` 才执行 |
+| 5 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22（默认离线） |

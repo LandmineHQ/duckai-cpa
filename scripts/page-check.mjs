@@ -40,7 +40,9 @@ function parseArgs(argv) {
   const options = {
     baseUrl: (process.env.BASE_URL || 'http://127.0.0.1:8787').replace(/\/+$/, ''),
     adminToken: process.env.DUCKAI_CPA_ADMIN_TOKEN || process.env.ADMIN_TOKEN || '',
-    apiKey: process.env.DUCKAI_CPA_API_KEY || process.env.OPENAI_API_KEY || ''
+    apiKey: process.env.DUCKAI_CPA_API_KEY || process.env.OPENAI_API_KEY || '',
+    // 默认不向上游发真实消息；需要真实会话压缩验收时显式加 --allow-upstream
+    allowUpstream: false
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -69,6 +71,9 @@ function parseArgs(argv) {
         break;
       case arg === '--delete-device-id' || arg.startsWith('--delete-device-id='):
         options.deleteDeviceId = String(takeValue() || '');
+        break;
+      case arg === '--allow-upstream':
+        options.allowUpstream = true;
         break;
       case arg === '--inject-orphan':
         // 仅用于隔离 dataDir 的测试网关：会向真实 identity.sync.slots 注入 ghost 项。
@@ -791,6 +796,8 @@ function buildChecks(options) {
   checks.push({
     name: '手动 compact + 官方恢复码明文/下载（v2.11）',
     async run() {
+      let compactInfo = 'skipped: --allow-upstream not set';
+      if (options.allowUpstream) {
       const created = await fetchJson(base + '/admin/api/test/sessions', { headers: auth, method: 'POST', body: { title: 'pagecheck-compact' } });
       assert(created.response.status === 201, 'create session HTTP ' + created.response.status);
       const sessionId = created.json.session.id;
@@ -813,7 +820,7 @@ function buildChecks(options) {
         }
         await res.text();
       }
-      let compactInfo = 'skipped: upstream limit';
+      compactInfo = 'skipped: upstream limit';
       if (!upstreamLimited) {
         const compact = await fetchJson(base + '/admin/api/test/sessions/' + encodeURIComponent(sessionId) + '/compact', {
           headers: auth,
@@ -827,6 +834,7 @@ function buildChecks(options) {
         compactInfo = 'compact 200 + summary 持久化';
       }
       await fetchJson(base + '/admin/api/test/sessions/' + encodeURIComponent(sessionId), { headers: auth, method: 'DELETE' });
+      }
 
       // 保存现有官方恢复码（真实账号可能已配置），测试结束后恢复，避免破坏用户状态。
       const existing = await fetchJson(base + '/admin/api/sync/official-recovery-code', { headers: auth });

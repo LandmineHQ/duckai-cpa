@@ -497,7 +497,7 @@ export function HistoryPage() {
                           data-testid="history-injection-protocol"
                         >
                           <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">
-                            协议文本 protocolText（{detail.injection.protocolText.length} 字符，完整显示不截断）
+                            {detail.injection.protocolKind === 'client-tools-pdf' ? 'PDF 用途说明' : '协议文本 protocolText'}（{detail.injection.protocolText.length} 字符，完整显示不截断）
                           </summary>
                           <pre className="mt-1.5 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 text-[11px]">
                             {detail.injection.protocolText || '（空）'}

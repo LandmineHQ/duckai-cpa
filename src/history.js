@@ -78,6 +78,7 @@ function normalizeInjection(raw) {
       ? Math.max(0, Math.trunc(Number(raw.upstreamMessageCount)))
       : null,
     chain: typeof raw.chain === 'string' && raw.chain ? raw.chain.slice(0, 64) : null,
+    protocolKind: raw.protocolKind === 'client-tools-pdf' ? 'client-tools-pdf' : 'text',
     contextPdf: raw.contextPdf && typeof raw.contextPdf === 'object'
       ? {
           pages: Number.isFinite(Number(raw.contextPdf.pages)) ? Number(raw.contextPdf.pages) : null,

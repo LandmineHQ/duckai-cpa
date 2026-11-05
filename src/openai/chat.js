@@ -50,6 +50,7 @@ import {
   attachPdfFile,
   hashConversationPrefix,
   stableAutoSessionKey,
+  PDF_PURPOSE_TEXT,
   createToolsPdf,
   stripSpillInstruction
 } from './context-spill.js';
@@ -926,7 +927,7 @@ export async function handleChatCompletions(req, res, ctx) {
     ctx.historyMessages = historyMessages;
     if (guarded.trimmed) ctx.log.contextTrimmed = true;
     let upstreamMessages = guarded.messages;
-    if (clientTools.length) {
+    if (clientTools.length && !pdfSpillPlanned && !pdfReuse) {
       upstreamMessages = injectProtocolIntoFirstUser(guarded.messages, buildToolProtocol(clientTools));
     }
     duckMessages = buildDuckMessages({
@@ -1023,17 +1024,21 @@ export async function handleChatCompletions(req, res, ctx) {
     : historyMessages;
   ctx.historyMessages = historyForDisplay;
   const firstInjectedUser = duckMessages.find((message) => message && message.role === 'user');
+  const hasContextPdf = Boolean(ctx.log.contextPdf);
+  const historyProtocolText = hasContextPdf ? PDF_PURPOSE_TEXT : protocolText;
   ctx.historyInjection = {
-    injected: Boolean(protocolText),
+    injected: Boolean(historyProtocolText),
     clientTools: clientTools.map((tool) => tool.name),
-    protocolText,
+    protocolText: historyProtocolText,
+    protocolKind: hasContextPdf ? 'client-tools-pdf' : 'text',
     firstUserContent: firstInjectedUser && typeof firstInjectedUser.content === 'string' ? firstInjectedUser.content : '',
     upstreamMessageCount: duckMessages.length,
     chain: ctx.log.conversationChain || null,
     contextPdf: ctx.log.contextPdf || null,
     contextPdfReused: ctx.log.contextPdfReused === true
   };
-  ctx.log.protocolInjected = Boolean(protocolText);
+  ctx.log.protocolInjected = Boolean(protocolText && !hasContextPdf);
+  ctx.log.clientToolsPdf = hasContextPdf && clientTools.length > 0;
   ctx.log.upstreamMessageCount = duckMessages.length;
   ctx.chatSession = {
     enabled: conversationMode === 'server' && Boolean(responseStore?.enabled && ctx.sessionKey),

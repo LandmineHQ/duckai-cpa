@@ -949,8 +949,9 @@ export interface LogRetentionInfo {
 export interface HistoryInjection {
   injected: boolean;
   clientTools: string[];
-  /** 实际注入到第一条 user 消息的协议文本（完整）。 */
+  /** PDF 用途说明（client-tools-pdf 模式）或实际注入的工具协议。 */
   protocolText: string;
+  protocolKind?: 'text' | 'client-tools-pdf' | null;
   /** 实际发给上游的第一条 user 内容（含协议文本，完整）。 */
   firstUserContent: string;
   upstreamMessageCount: number | null;

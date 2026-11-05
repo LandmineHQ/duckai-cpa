@@ -38,7 +38,7 @@ test('spill：历史移入 PDF，当前 user 保留并附带 file part', async (
   const kept = spill.messages.at(-1);
   assert.equal(kept.role, 'user');
   assert.ok(kept.content.startsWith('当前问题'));
-  assert.match(kept.content, /PDF/);
+  assert.match(kept.content, /conversation-context\.pdf/);
   assert.ok(Array.isArray(kept.files) && kept.files.length === 1);
   assert.equal(kept.files[0].mimeType, 'application/pdf');
   assert.ok(kept.files[0].b64.startsWith('JVBERi0'));

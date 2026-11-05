@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 import { createContextPdf, createToolsPdf, PdfCapacityError } from './context-pdf.js';
 
 const DEFAULT_INPUT_CHAR_LIMIT = 20000;
+export const PDF_PURPOSE_TEXT = 'PDF 用途说明：附件包含 client-tools.pdf（客户端工具说明）和 conversation-context.pdf（会话历史上下文）。请先阅读工具说明，然后读取 conversation-context.pdf 的全部页面（不要只读第一页/摘要），结合当前问题继续回答。';
 const DEFAULT_MAX_PAGES = 15;
 
 export function hashConversationPrefix(messages = []) {
@@ -155,9 +156,7 @@ export async function spillMessagesToPdf(duckMessages, options = {}) {
     textChars: pdfResult.textChars
   };
 
-  const instruction =
-    '\n\n[系统提示] 附件包含 client-tools.pdf（客户端工具说明）和 context PDF（会话历史上下文）。' +
-    '请先阅读工具说明，然后读取 context PDF 的全部页面（不要只读第一页/摘要），结合当前问题继续回答。';
+  const instruction = `\n\n[系统提示] ${PDF_PURPOSE_TEXT.replace(/^PDF 用途说明：/, '')}`;
   const keepWithFile = keep.map((message, index) => {
     if (index !== 0 || message.role !== 'user') return message;
     return {
