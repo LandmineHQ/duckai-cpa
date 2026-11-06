@@ -85,6 +85,10 @@ import {
   sanitizeFileMetadata
 } from './context-spill.js';
 import { assembleContextMessages } from '../app/session/context-assembly.js';
+import {
+  prepareManualCompaction,
+  resolveManualCompactionEpoch
+} from '../app/session/manual-compaction.js';
 
 const IGNORED_INPUT_ITEM_TYPES = new Set([
   'item_reference',
@@ -432,59 +436,16 @@ export async function handleResponses(req, res, ctx) {
   }
   let manualCompaction = null;
   if (manualMarker) {
-    const manualScope = pdfScopeKey({
+    const prepared = await prepareManualCompaction({
       kind: 'responses',
-      sessionKey: conversationSessionKey,
-      conversation: manualMarker.before
-    });
-    let pdfResult = null;
-    if (
-      conversationState?.compression?.summaryHash === manualMarker.summaryHash &&
-      conversationState.contextPdfScope
-    ) {
-      pdfResult = await loadReusableCompactionPdf({
-        responsesStore: responseStore,
-        compression: conversationState.compression,
-        scopeKey: conversationState.contextPdfScope
-      });
-    }
-    const effectiveScope = pdfResult?.scopeKey || manualScope;
-    if (!pdfResult) {
-      try {
-        pdfResult = await buildManualCompactionPdf({
-          marker: manualMarker,
-          responsesStore: responseStore,
-          scopeKey: effectiveScope
-        });
-      } catch (error) {
-        if (error && error.code === 'context_pdf_capacity_exceeded') {
-          throw new OpenAIError('会话历史超过 PDF 容量（15 页），无法生成压缩上下文 PDF', {
-            status: 413,
-            type: 'invalid_request_error',
-            code: 'context_pdf_capacity_exceeded',
-            param: 'input'
-          });
-        }
-        throw error;
-      }
-    }
-    const compression = buildCompressionRecord({
+      conversationSessionKey,
+      conversationState,
       marker: manualMarker,
-      pdfFile: pdfResult.file || pdfResult.state,
-      trigger: 'manual',
-      reused: pdfResult.generated === false,
-      scopeKey: effectiveScope
+      responseStore
     });
-    manualCompaction = { marker: manualMarker, scopeKey: effectiveScope, contextPdfState: pdfResult.state, compression };
+    manualCompaction = prepared.manualCompaction;
     chainedConversation = manualMarker.hot;
-    ctx.log.manualCompaction = true;
-    ctx.log.compression = {
-      trigger: 'manual',
-      summaryHash: compression.summaryHash,
-      coveredMessageCount: compression.coveredMessageCount,
-      contextPdf: compression.contextPdf,
-      reused: compression.reused
-    };
+    Object.assign(ctx.log, prepared.logPatch);
   }
   // v2.59：authoritative session —— 旧 input 只用于 diff，canonical 由网关维护。
   let authoritativeDiff = null;
@@ -526,14 +487,9 @@ export async function handleResponses(req, res, ctx) {
       ctx.log.sessionRepaired = true;
     }
   } else if (manualCompaction) {
-    const sameCompression =
-      conversationState?.compression?.summaryHash &&
-      conversationState.compression.summaryHash === manualCompaction.compression.summaryHash &&
-      manualCompaction.compression.reused === true;
-    ctx.log.sessionEpoch = sameCompression
-      ? conversationState?.epoch || 0
-      : (conversationState?.epoch || 0) + 1;
-    ctx.log.sessionMode = sameCompression ? 'compact-reuse' : 'compact-epoch';
+    const { sessionEpoch, sessionMode } = resolveManualCompactionEpoch({ conversationState, manualCompaction });
+    ctx.log.sessionEpoch = sessionEpoch;
+    ctx.log.sessionMode = sessionMode;
   }
   ctx.historySessionKey =
     ctx.sessionKey || (previousRecord && previousRecord.sessionKey) || ctx.conversationKey || conversationSessionKey;
