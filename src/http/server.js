@@ -1,4 +1,4 @@
-﻿/**
+/**
  * HTTP server composition root for duckai-cpa v2 (pure node:http).
  *
  * Phase 1（v2.64）：HTTP 核心已拆分到 src/app/http/*，本文件保留 createServer 组合根：
@@ -70,6 +70,24 @@ export function getServiceVersion() {
  * }} options
  * @returns {import('node:http').Server & { closeGracefully: Function }}
  */
+export function createRequestHandler(options = {}) {
+  const server = createServer(options);
+  const handler = server.listeners('request')[0];
+  return {
+    handler,
+    server,
+    queue: server.queue,
+    sessions: server.sessions,
+    serviceInfo: server.serviceInfo,
+    getUpstreamHealth: server.getUpstreamHealth,
+    close: server.closeGracefully
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* createServer                                                        */
+/* ------------------------------------------------------------------ */
+
 export function createServer(options = {}) {
   const { config, store, duck } = options;
   if (!config) throw new Error('createServer: config is required');

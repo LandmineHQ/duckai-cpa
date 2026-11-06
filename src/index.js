@@ -361,7 +361,7 @@ async function main() {
   }
 
   const queue = createUpstreamQueue({ config, logger });
-  const server = createServer({
+  const serverOptions = {
     config,
     store,
     duck,
@@ -377,10 +377,24 @@ async function main() {
     syncDevices,
     chatSummaries,
     subscriptions
-  });
+  };
+  const adapterName = String(process.env.HTTP_ADAPTER || 'native').trim().toLowerCase();
+  if (adapterName !== 'native' && adapterName !== 'fastify') {
+    logger.error(`未知 HTTP_ADAPTER "${adapterName}"（仅 native|fastify）`);
+    process.exitCode = 1;
+    return;
+  }
+  let server;
   let address;
   try {
-    address = await listen(server, config.server.host, config.server.port);
+    if (adapterName === 'fastify') {
+      const { createFastifyServer } = await import('./app/http/adapter-fastify.js');
+      server = createFastifyServer(serverOptions);
+      address = await server.listen(config.server.port, config.server.host);
+    } else {
+      server = createServer(serverOptions);
+      address = await listen(server, config.server.host, config.server.port);
+    }
   } catch (error) {
     logger.error(`无法监听 ${config.server.host}:${config.server.port}`, error);
     process.exitCode = 1;
