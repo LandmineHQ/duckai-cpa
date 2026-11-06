@@ -93,10 +93,95 @@ Model IDs are resolved dynamically; aliases (e.g. `gpt-6`, `duck`) are accepted.
 
 ### Requirements
 
-- **Node.js 24+** (uses the built-in `node:sqlite`; experimental warning is expected)
-- Optional: Docker / Docker Compose
+- **Option A (prebuilt image):** Docker + Docker Compose only
+- **Option B (self-built image):** Docker + Node.js 24+
+- **Option C (npm):** Node.js 24+
 
-### Option A — Local (recommended)
+### Option A — Prebuilt image from GHCR (recommended)
+
+No repository clone is required. Create a `compose.yml` with:
+
+```yaml
+services:
+  duckai-cpa:
+    image: ghcr.io/landminehq/duckai-cpa:${DUCKAI_CPA_VERSION:-v0.1.0}
+    container_name: duckai-cpa
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      DUCKAI_CPA_HOST: "0.0.0.0"
+      DUCKAI_CPA_PORT: "8787"
+      DUCKAI_CPA_DATA_DIR: "/app/data"
+      DUCKAI_CPA_ADMIN_TOKEN: "${DUCKAI_CPA_ADMIN_TOKEN:-change-me-to-a-strong-random-admin-token}"
+      DUCKAI_CPA_VERSION: "${DUCKAI_CPA_VERSION:-v0.1.0}"
+      NODE_ENV: "production"
+    volumes:
+      - ./data:/app/data
+    stop_grace_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const p=process.env.DUCKAI_CPA_PORT||'8787';fetch('http://127.0.0.1:'+p+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+Start it:
+
+```bash
+DUCKAI_CPA_VERSION=v0.1.0 \
+  DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
+  docker compose up -d
+```
+
+Open the admin console at <http://127.0.0.1:8787/admin>. The tag comes from the manual Docker workflow; version input rules and examples are in [Prebuilt image versions](#prebuilt-image-versions).
+
+Or use the equivalent one-liner without Compose:
+
+```bash
+docker pull ghcr.io/landminehq/duckai-cpa:v0.1.0
+
+docker run -d --name duckai-cpa -p 8787:8787 \
+  -v "$PWD/data:/app/data" \
+  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
+  ghcr.io/landminehq/duckai-cpa:v0.1.0
+```
+
+### Option B — Build the Docker image locally
+
+```bash
+git clone https://github.com/LandmineHQ/duckai-cpa.git duckai-cpa
+cd duckai-cpa
+
+npm install
+npm run build:web       # the image ships the prebuilt web/ directory
+docker build -t duckai-cpa .
+docker run -d --name duckai-cpa -p 8787:8787 \
+  -v "$PWD/data:/app/data" \
+  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
+  duckai-cpa
+```
+
+Or with the repository Compose file:
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
+### Option C — Run directly with npm
 
 ```bash
 git clone https://github.com/LandmineHQ/duckai-cpa.git duckai-cpa
@@ -107,6 +192,8 @@ npm run build:web       # build the admin console into web/
 npm start               # gateway on http://127.0.0.1:8787
 ```
 
+### First start
+
 First start creates `data/config.json` and prints an **admin token** and a default **API key** once:
 
 - Admin console: <http://127.0.0.1:8787/admin>
@@ -115,65 +202,20 @@ First start creates `data/config.json` and prints an **admin token** and a defau
 
 > `data/` contains secrets (tokens, identity keys, pairing codes). Keep file mode `0600`, never commit it.
 
-### Option B — Docker
+### Prebuilt image versions
 
-```bash
-npm install && npm run build:web     # the image ships the prebuilt web/ directory
-docker build -t duckai-cpa .
-docker run -d --name duckai-cpa -p 8787:8787 \
-  -v "$PWD/data:/app/data" \
-  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
-  duckai-cpa
-```
+The GHCR `docker` workflow is manual: open **Actions → docker → Run workflow**, enter a version and a successful **build** run id.
 
-Or with Compose:
-
-```bash
-docker compose up -d --build
-docker compose logs -f
-```
-
-### Option C — Prebuilt image from GHCR
-
-The repository has two workflows:
-
-- `.github/workflows/build.yml` runs on every push: builds the admin console, trims production dependencies and uploads a `duckai-cpa-release` artifact (retained 30 days). Its run id is shown in the run summary.
-- `.github/workflows/docker.yml` is **manual only**: provide a version tag and the successful build run id, and it downloads that artifact, builds the runtime image and pushes it to GHCR (multi-arch `linux/amd64` + `linux/arm64`).
+Version input follows Docker tag rules: English letters, digits, `.`, `_` and `-`; examples: `beta.0.0.1`, `v1.0.0-beta.1`, `v0.1.0`. Non-ASCII names are not valid Docker tags. This is separate from the npm `package.json` version (npm requires semver, for example `0.0.1-beta.0`).
 
 ```text
-Actions → build (latest successful run) → copy run id
+Actions → build → copy run id
 Actions → docker → Run workflow
   version: v0.1.0
   run_id:  <build run id>
 ```
 
-Pull/run the published image:
-
-```bash
-# image built by the manual docker workflow
-docker pull ghcr.io/landminehq/duckai-cpa:v0.1.0
-
-docker run -d --name duckai-cpa -p 8787:8787 \
-  -v "$PWD/data:/app/data" \
-  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
-  ghcr.io/landminehq/duckai-cpa:v0.1.0
-```
-
-Or with Compose:
-
-```bash
-DUCKAI_CPA_VERSION=v0.1.0 \
-  DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
-  docker compose -f docker-compose.ghcr.yml up -d
-```
-
-The GHCR Compose file pins the image tag through `DUCKAI_CPA_VERSION` and passes the same value to the running service, so the dashboard version matches the image tag.
-
-The workflows use the repository `GITHUB_TOKEN` with `packages: write`; no extra secrets are required. The release image copies the artifact without running `npm install`, and removes npm/corepack from the final stage.
-
-The manual `version` input follows Docker tag rules: English letters, digits, `.`, `_` and `-` are supported, for example `beta.0.0.1`, `v1.0.0-beta.1` or `v0.1.0`. Non-ASCII names are not valid Docker tags. This workflow version is separate from the npm `package.json` version (npm requires semver, for example `0.0.1-beta.0`).
-
-Application version is not hardcoded in the frontend: the backend reads `package.json` (falling back to `0.1.0` only if unavailable), and the admin console renders `service.version` from `/admin/api/overview`. For published images the manual Docker workflow also sets `DUCKAI_CPA_VERSION` from the version input, so the image tag and the version shown in the dashboard stay in sync.
+The published image includes the build artifact's admin console and production dependencies; it does not run `npm install` at container start.
 
 ---
 
