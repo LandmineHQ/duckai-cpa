@@ -355,7 +355,7 @@ flowchart LR
     Admin --> DB
 ```
 
-- **Node.js native http**: no Express; small dependency surface (`jsdom`, `undici`, `socks`, and pure-JS `jpeg-js`/`pngjs` for image conversion).
+- **Fastify transport with native fallback**: Fastify 5 is the default HTTP transport; `HTTP_ADAPTER=native` keeps the original `node:http` implementation available for rollback. Small dependency surface otherwise (`jsdom`, `undici`, `socks`, pure-JS `jpeg-js`/`pngjs`).
 - **Challenge solver**: `X-VQD-Hash-1` rolling challenges executed via jsdom with browser-shaped stacks/signals.
 - **SSE normalization**: strict protocol mode; unknown frames abort the request instead of silently degrading.
 - **Continuation support**: tool approvals (web-search / image generation / approximate location) are resumed automatically with browser-identical payloads.

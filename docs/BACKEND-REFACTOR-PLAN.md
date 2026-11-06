@@ -790,7 +790,7 @@ node scripts/page-check.mjs --admin-token <ADMIN> --api-key <KEY>    # 真实网
 
 ## 附录 B — Phase 5 状态：可回滚 Fastify adapter（v2.66）
 
-**状态：已完成（2026-11-06），默认仍 native。**
+**状态：已完成（2026-11-06），默认已切换为 `fastify`；`HTTP_ADAPTER=native` 为回滚路径。**
 
 - 新增 `src/app/http/adapter-fastify.js`：
   - `createFastifyServer(options)`，Fastify `logger:false` / request logging 关闭；
@@ -798,12 +798,12 @@ node scripts/page-check.mjs --admin-token <ADMIN> --api-key <KEY>    # 真实网
   - 共享 handler 由 `src/http/server.js#createRequestHandler(options)` 提供（内部复用 `createServer` 的 request listener）；
   - 通配 `/` 与 `/*` 仅用于让 Fastify 接受所有路径；body/SSE/静态/路由均由共享 handler 处理，Fastify 不消费 body、不包装 SSE；
   - wrapper 提供 `listen(port, host)` / `close()` / `closeGracefully()` / `address()`。
-- `src/index.js`：`HTTP_ADAPTER=native|fastify`，默认 **native**；未知值启动报错（exitCode=1）；native 路径完全保持原 `createServer()`。
+- `src/index.js`：`HTTP_ADAPTER=native|fastify`，默认 **fastify**；`HTTP_ADAPTER=native` 可回滚到原生 node:http；未知值启动报错（exitCode=1）。
 - 依赖：`fastify` 固定主版本 `^5.x`（package.json + package-lock）；Node 24。
 - 验证（native 512/512 + build-check 16/16；native page-check 22/22；Fastify page-check 22/22）；
   Fastify 黑盒 11/11：healthz / GET / / /v1/models auth / admin auth / 静态穿越 / chat JSON body /
   chat SSE（raw + [DONE]）/ invalid JSON 400 / >4MB 413。
-- **回滚**：不设 `HTTP_ADAPTER`（或设为 `native`）即回到原生 node:http；Fastify adapter 为独立文件与依赖，
+- **回滚**：设置 `HTTP_ADAPTER=native` 即回到原生 node:http；Fastify adapter 为独立文件与依赖，
   回滚可 `git revert` 本切片；无 schema/config/API 变更，重启即恢复。
 - 已知：Fastify 5 对 `disableRequestLogging` 顶层 option 有 deprecation 警告（仅日志，不影响行为）。
 

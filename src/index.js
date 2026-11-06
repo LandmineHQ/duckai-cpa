@@ -378,7 +378,7 @@ async function main() {
     chatSummaries,
     subscriptions
   };
-  const adapterName = String(process.env.HTTP_ADAPTER || 'native').trim().toLowerCase();
+  const adapterName = String(process.env.HTTP_ADAPTER || 'fastify').trim().toLowerCase();
   if (adapterName !== 'native' && adapterName !== 'fastify') {
     logger.error(`未知 HTTP_ADAPTER "${adapterName}"（仅 native|fastify）`);
     process.exitCode = 1;
