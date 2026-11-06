@@ -1,4 +1,4 @@
-﻿# Duck.ai 错误处理与异常分析（源码逆向 + 实测）
+# Duck.ai 错误处理与异常分析（源码逆向 + 实测）
 
 > 产出：`duck-protocol`（task-7）。来源：`recon/entry.duckai.2d2656b1fcd20ced62d9.js`（duck.ai Web 前端 bundle）、
 > `recon/allchunks.js`、`recon/TEAM-NOTES.md` 抓包，以及 2026-11-01/02 的真实上游实测。
@@ -92,7 +92,7 @@
 | `action` | string | `"error"`；`"continuation-restart-required"` 用于 409（见 §7） |
 | `status` | number | HTTP 状态码副本（框架内会解析） |
 | `type` | string | `ERR_*` 错误码（see §3） |
-| `overrideCode` | string | 4 位十六进制支持码（如 `dd89`、`8e04`、`f741`、`3501`），用于客服/邮件主题 |
+| `overrideCode` | string | 4 位十六进制支持码（如 `dd89`、`8e04`、`f741`、`3501`；2026-11-06 观察到 `975b`=缺失/initial、`f741`=`q7klm` 布局 suite 指纹不符、`d78d`=`vz95n` 页面态 suite 指纹不符） |
 | `r` | string | reason / request id（`ERR_RATE_LIMIT` 时是 UUID 请求 id） |
 | `cd` | object | **anomaly 挑战数据**（见 §5），仅 `ERR_CHALLENGE` 使用 |
 | `message` | string | 服务端文案（`serverMessage`） |
@@ -321,6 +321,17 @@ bundle 中一共扫到 **153 个唯一 `ERR_*` 标识**（含同步/语音/文�
 `403 upstream_anomaly_check`（`anomaly:true`，与 api-core 的 `DUCK_CODE_MAP` 对齐），`ERR_BN_LIMIT` 映射为 `429 upstream_rate_limited`；
 两者都记录 `overrideCode` 与 `challengeData` 摘要到 `health().recentErrors`，供运维判断。
 若某次 `418` 后重新取挑战即可通过（实测常见），`DuckClient` 的传输层重试会先自愈。
+
+> **2026-11-06 重要修正（v2.62）**：当前部署下绝大多数 `418 ERR_CHALLENGE` **不是 anomaly captcha**，
+> 而是 `x-vqd-hash-1` 的 `client_hashes` 环境指纹与真实浏览器不一致：
+> 挑战随机抽 `q7klm`（布局探针）/`vz95n`（duck.ai 页面结构探针）时，旧 jsdom 求解必然算错（42 样本中 19 个，45%），
+> 服务端精确校验后返回 418（`overrideCode` 分别为 `f741` / `d78d`，`cd` 里并没有需要人工点选的 challenge）。
+> 求解器现在仿真 duck.ai 页面（`#jsa` iframe + 页面全局变量 + 布局 shim + iframe 内 eval）后可消除该类 418；
+> 详见 `docs/X-VQD-HASH-1-DEEP-ANALYSIS.md`。真正的 anomaly captcha（`cd` 内含 tile/`gk` 交互数据）仍需人工，网关保持 403 映射。
+>
+> **v2.63 附加**：`overrideCode` 现在写入 `DuckError.overrideCode` 与 `health().stats.lastOverrideCode`/
+> `overrideCodes`（按 `code:type` 计数），可直接区分 `f741`(layout)/`d78d`(page-state) 环境类 418 与 429/限流；
+> continuation 的 418 会换新挑战重试一次，`summarizeNative` 也补了 418/429 重试。
 
 ---
 

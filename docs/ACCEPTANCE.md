@@ -1,4 +1,4 @@
-# 验收实测记录（v2 / v2.1 / v2.2 / v2.3 / v2.4 · Lead 独立执行）
+﻿# 验收实测记录（v2 / v2.1 / v2.2 / v2.3 / v2.4 · Lead 独立执行）
 
 > 版本：v2（React + shadcn 控制台；BREAKING：强制 API Key / RPS 队列 / 日志拆分 / 付费模型 / 会话式连接测试 / 严格中断）
 > v2.1：会话「重新生成/重试」+ 推理（reasoning）展示与 `reasoningEncrypted` 标记。
@@ -702,3 +702,60 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 1. **图片占位在 authoritative diff/prefix-reuse 丢图**：chat diff 使用原始 body（未用 replay 结果）、prefix-reuse 的 tail 用 `normalizeChatMessages` 丢 images；已由 api-core 修复（raw images 映射回 tail；responses 同步修）。
 2. **首轮 X-Session-Epoch 缺失**：已修（首轮回写 0）。
 3. **`/v1/compact` 后 conversation_state.compression 丢失**：`epoch` 列 NOT NULL，compact 传 null 导致 INSERT 失败被吞；已修（缺省 0 + MAX 保留）。
+
+## 2.53 v2.62 x-vqd-hash-1 环境探针根因修复（偶发 418）
+
+> 主题：duck.ai JSA 挑战随机 suite + 上游精确校验 `client_hashes`；旧 jsdom 扁平环境在
+> page-state/layout suite 上必然算错 → 偶发 `418 ERR_CHALLENGE`。修复：仿真 duck.ai 页面
+> （#jsa iframe + CSP meta + `__DDG_*` 全局 + 布局 shim + iframe 内 eval）。
+> 详细分析：`docs/X-VQD-HASH-1-DEEP-ANALYSIS.md`；专项报告：`recon/2026-11-06/analysis/`。
+> 新增测试：`tests/challenge-env.test.js`（4 项）；回归：`npm test` **493 / 493 PASS**（此前 489）。
+
+| # | 需求 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 还原挑战随机 suite 目录（42 个唯一实时样本） | ✅ | 4 类：`pxjzr`(JS_API, 11)、`h8jbt`(INNER_HTML, 12)、`q7klm`(LAYOUT, 12)、`vz95n`(PAGE_STATE_JSA, 7)；tag = `challenge_id` 后缀 |
+| 2 | 证明上游在真实 chat 阶段精确校验 `client_hashes` | ✅ | 同一挑战：旧实现头 → `418 ERR_CHALLENGE`；仿真头 → `200`；`invalid-model` 探针只到 404 粗校验 |
+| 3 | 量化旧实现失败率 | ✅ | 裸 jsdom 仅 23/42（55%）与真实 Chrome 指纹一致；layout=0/12、page-state=0/7 正确，即约 45% 请求必 418 |
+| 4 | Chrome ground truth | ✅ | 真实 Chrome 156 隐藏 srcDoc iframe 执行 42 个原始载荷：仿真环境 **42/42** 逐字节一致 |
+| 5 | 修复：页面仿真 + 布局 shim + iframe 内 eval | ✅ | `src/duck/challenge.js`（v2.62）：`JSA_PAGE_HTML`、`installLayoutShims`、`_createChallengeRealm`、`_evaluateChallenge`；`legacyChallengeEnv`/`DUCKAI_LEGACY_JSA_ENV=1` 可对照 |
+| 6 | 真实上游 live 验证（修补后的 ChallengeManager） | ✅ | fresh `/status` 挑战 + 滚动挑战各一次真实 chat：**200 / 200**（`solves=2`、`solveErrors=0`、`envFallbacks=0`）；复测滚动挑战为 `q7klm` 布局 suite |
+| 7 | 四类 suite 仿真头真实 chat | ✅ | generic / innerHtml / layout / pageState 全部 200（5/5）；修复前 layout/pageState 为 418 |
+| 8 | 回归 | ✅ | `npm test` **493 / 493 PASS**（含新增 4 项：page-state、layout、legacy 对照） |
+
+### 2.53.1 结论与后续
+
+- **已验证**：偶发 418 主因是 `client_hashes` 环境指纹（page-state/layout suite），不是 challenge 链/TTL；修复后该类 418 消除。
+- **已验证**：`meta.origin/stack/duration/debug` 当前部署下不被严格校验（真实 Chrome 页面带 `file:///` 脏栈仍 200）；`server_hashes` 随机 nonce 只需回显；`debug` 恒为 XOR(“{}”)。
+- **待确认/后续**：未知第 5+ 类 suite（建议监控 `challengeRetries`/418 与 suite tag）；挑战签发时间 TTL、`/capabilities` 挑战跨链、continuation 头语义仍是状态机层面的放大器（见 `recon/2026-11-06/analysis/gateway-418-audit.md`）。
+- **部署注意**：代码改动需重启网关（`node src/index.js`）后生效；旧运行实例仍使用旧挑战求解环境。
+
+
+## 2.54 v2.63 残余 418 路径修复（continuation / 重试 / 归因 / 状态机健壮性）
+
+> 主题：在 v2.62 环境探针修复之后，继续修 `gateway-418-audit.md` §11 列出的残余路径。
+> 不改变「上游串行 / strictProtocol / 会话权威」等既有契约；新增 8 项离线回归。
+> 回归：`npm test` **501 / 501 PASS**（此前 493，新增：`challenge-lifecycle-v262.test.js` 5、
+> `summarize-retry-override.test.js` 2、`continuation.test.js` +1）。
+
+| # | 修复 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | continuation 重发不再把响应头**原始挑战 base64** 当 `x-vqd-hash-1`；改为 `acquire()` 解出的**已解值**（浏览器抓包语义） | ✅ | `src/duck/index.js` `_resumeContinuation`；`tests/continuation.test.js` 断言 header=`solved-vqd` 且 ≠ raw |
+| 2 | continuation 遇 418 自动 invalidate + 换新挑战重试一次；`continuationRetries` 计数 | ✅ | 新增 continuation 418 用例：3 次请求后成功、`continuationRetries=1` |
+| 3 | `summarizeNative` 增加 418/429 重试（最多 3 次，每次重新 acquire），并记录 `summaryRetries` | ✅ | `tests/summarize-retry-override.test.js`；418 → 200 且 header 为已解值 |
+| 4 | `overrideCode` 归因：`DuckError.overrideCode`、`stats.lastOverrideCode`、`stats.overrideCodes`（按 `code:type` 计数，health 可见） | ✅ | chat 持续 418（`d78d`）3 次尝试归因；summarize 418（`f741`）归因 |
+| 5 | 挑战可观测性：`challenge.stats()` 增加 `lastChallengeSuite`（challenge_id 后缀）、`lastClientHashes`（明文环境指纹）、`envFallbacks`、`externalChallengeSkips`、`stalePendingDropped`、`versionRefreshes` | ✅ | `tests/challenge-lifecycle-v262.test.js` |
+| 6 | 未求解滚动挑战增加 `pendingTtlMs`（默认 120s）：过旧则丢弃并重新 `/status`，避免发送已被上游视为过期的挑战 | ✅ | 同上（pendingTtlMs=20ms → stalePendingDropped=1、/status 重新请求） |
+| 7 | 版本 tag/sha 缓存 TTL 30min→5min，并在求解前按需刷新首页（`meta.stack`/`__DDG_*` 防陈旧） | ✅ | 同上（versionTtlMs=5ms → 求解前重新抓首页） |
+| 8 | `/capabilities` 等旁路挑战头改为 **idle-only 采纳**，不再覆盖进行中的滚动链（浏览器根本不消费该头） | ✅ | 同上（pending 期间采纳返回 false → externalChallengeSkips=1） |
+| 9 | `x-fe-signals.end` 改为浏览器语义（相对 `start` 的毫秒差，而非 epoch+37） | ✅ | `buildFeSignals` 用例；真实上游 /status/chat 均接受 |
+
+### 2.54.1 真实上游验证与 BLOCKED 记录
+
+- v2.62 已真实验证：fresh `/status` 挑战 + 滚动挑战各一次 chat → **200/200**（滚动挑战恰为 `q7klm` 布局 suite）。
+- v2.63 continuation 实机验证：`scripts` 侧匿名额度/出口 IP 触发上游 **`451 ERR_COUNTRY_NOT_SUPPORTED`** 软限流
+  （手动同头请求也可复现；非代码回归）。修复的正确性由离线用例锁定：
+  `tests/continuation.test.js` 断言续传 header 是**已解值**而非原始挑战、418 后续传重试成功。
+  - BLOCKED 原因：上游临时软限流（451），与本次代码无关；复现命令
+    `node recon/2026-11-06/scratch-lead/live-continuation-check.mjs`（额度恢复后可跑）。
+- 剩余未修（设计级，需产品决策）：多身份并发 / admin 旁路 `/status`（`identity-pool` 每身份队列与 usage 轮询）、
+  未知第 5+ 类 suite（已加 `lastChallengeSuite`/`lastClientHashes` 观测，出现新 overrideCode 即可发现）。

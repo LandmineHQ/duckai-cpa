@@ -90,6 +90,47 @@ test('continuation：approval 帧 → 自动批准并续传，合并内容', asy
     calls[0].headers['x-duckai-response-id'],
     `response id 应保持一致（${calls[0].headers['x-duckai-response-id']} vs ${calls[1].headers['x-duckai-response-id']}）`
   );
+  // v2.62：continuation 必须发送「已解挑战值」，不能把响应头原始 base64(挑战 JS) 当 header。
+  assert.equal(calls[1].headers['x-vqd-hash-1'], 'solved-vqd');
+  assert.notEqual(calls[1].headers['x-vqd-hash-1'], 'rolling-challenge');
+});
+
+test('continuation：418 后用新挑战重试一次成功', async () => {
+  let chatCalls = 0;
+  const fetchImpl = async (url) => {
+    chatCalls += 1;
+    if (chatCalls === 1) {
+      return sseResponse([
+        {
+          action: 'success',
+          role: 'continuation',
+          token: 'cont-token-418',
+          pendingActions: [{ kind: 'approval', approvalId: 'ap-418', purpose: 'user-location', toolName: 'LocationPrompt' }]
+        }
+      ]);
+    }
+    if (chatCalls === 2) {
+      return new Response(JSON.stringify({ action: 'error', status: 418, type: 'ERR_CHALLENGE', overrideCode: 'd78d' }), {
+        status: 418,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return sseResponse([{ action: 'success', role: 'assistant', message: '续传成功。' }, `[DONE]`]);
+  };
+  const client = new DuckClient({
+    baseUrl: 'https://sync.example.test',
+    defaultModel: 'gpt-6-luna',
+    fetchImpl,
+    humanize: { minDelayMs: 0, maxDelayMs: 0, minIntervalMs: 0, maxRetries: 2, retryBaseDelayMs: 0 }
+  });
+  challengeStub(client);
+  client._fetch = fetchImpl;
+
+  const result = await client.chat({ model: 'gpt-6-luna', messages: [{ role: 'user', content: '天气' }], approxLocation: true });
+  assert.equal(chatCalls, 3, '首次流 + 418 续传 + 重试续传');
+  assert.match(result.content, /续传成功/);
+  assert.equal(client._stats.continuationRetries, 1);
+  assert.equal(client._stats.lastOverrideCode, 'd78d');
 });
 
 test('continuation：client-output 工具无法满足 → upstream_client_tool_unsupported', async () => {

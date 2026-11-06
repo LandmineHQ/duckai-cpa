@@ -1,7 +1,7 @@
 # AGENTS.md — duckai-cpa 项目指南（给未来的 agent / 协作者）
 
 > 本文件是 **项目级** 指令。优先级：用户即时指令 > 本文件 > 全局 `~/.dsh/AGENTS.md`。
-> 最后更新：2026-11-02（v2.19）。改代码前先读本文件相应章节。
+> 最后更新：2026-11-06（v2.63）。改代码前先读本文件相应章节。
 
 ## 1. 项目是什么
 
@@ -43,7 +43,7 @@ node scripts/proxy-live-check.mjs --with-proxy
 
 ```
 src/duck/            duck.ai 协议层（唯一允许直接访问上游的地方）
-  challenge.js       x-vqd-hash-1 挑战（jsdom 执行 + 滚动挑战 lease/mutex）
+  challenge.js       x-vqd-hash-1 挑战（页面仿真 jsdom 执行 + 滚动挑战 lease/mutex）
   sse.js             SSE 解析（role/state 白名单；reasoning done.summaryText 不得当增量）
   index.js           DuckClient：chat/image/compact、strictProtocol、continuation 续传、durableStream
   models.js          静态模型目录 + capabilities（★ 模型列表真实来源见 docs/MODEL-CATALOG-SOURCE.md）
@@ -237,12 +237,24 @@ data/                运行时数据（不入库；含敏感文件）
   需自动批准 approval 并用 `{continuation:{token,responseId,responses},currentAssistant:{...}}` 重发；
   `responseId` 必须与首次请求一致；续传时去掉 `durableStream`；400 时回退
   `metadata.toolChoice={WebSearch:true}`。**重发前必须 release 挑战 lease**，否则死锁。
+  **v2.63 修复**：续传的 `x-vqd-hash-1` 必须是「滚动挑战的已解值」（浏览器抓包确认），旧实现发响应头原始
+  base64(挑战 JS) 是 P0 偏差；且 418 时自动换挑战重试一次（`continuationRetries`），不再直接暴露给用户。
 - **reasoning 重复**：reasoning `done` 帧的 `summaryText` 是全量文本，不能当增量追加。
 - **匿名额度**：出口 IP 共享，418/429/403 频发；遇到不要狂重试，等窗口/换代理。
-- **入口检测（ERR_BN_LIMIT）**：`x-vqd-hash-1.meta.stack` 必须指向当前部署的
+- **入口检测（ERR_BN_LIMIT）**：历史结论：`x-vqd-hash-1.meta.stack` 必须指向当前部署的
   `https://duck.ai/dist/duckai-dist/entry.duckai.<hash>.js`；Node 本地 `file:///` 帧会被判
   "unsupported entrypoint"（429）。`x-fe-signals` 也不要发空 events。改 challenge 相关代码后
   跑 `tests/entrypoint-meta.test.js`，排障用 `DUCKAI_NATIVE_STACK=1`。
+  **2026-11-06 复核**：当前部署下真实 Chrome 页面用 `file:///…` 脏栈仍 200，stack/duration/debug
+  均未被严格校验；历史结论保留以防其它 tier/部署生效。
+- **JSA 环境探针 suite（v2.62，偶发 418 的真根因）**：duck.ai 挑战每次随机抽一组环境探针；
+  `vz95n`（page-state：`#jsa` iframe + CSP meta + `window.top.__DDG_BE_VERSION__`/`__DDG_FE_CHAT_HASH__`）
+  与 `q7klm`（layout：`offsetWidth/getBoundingClientRect/scrollHeight > 0`）在扁平 jsdom 顶层 window 中
+  必然算错 `client_hashes`，上游真实 chat 阶段精确校验后返回 418（42 样本中约 45%）。
+  求解器必须仿真 duck.ai 页面（`#jsa` sandbox iframe + 手动注入 CSP meta + 页面全局变量 + 布局 shim +
+  **在 iframe 内 eval**），详见 `docs/X-VQD-HASH-1-DEEP-ANALYSIS.md`；回归用 `tests/challenge-env.test.js`；
+  排障开关 `DUCKAI_LEGACY_JSA_ENV=1`（切回旧扁平环境对照，生产禁用）。**改 challenge 求解环境后，
+  需用真实上游 chat 验证 page-state/layout 挑战，不能只跑单测。**
 - **durableStream**：匿名 tier 可能拒绝 → 自动降级并标记；不要在 `/signup` body 漏
   `device_id/device_name/device_type` 或 `keys[].public_key.alg/use`（上游 400 校验）。
 
@@ -338,6 +350,33 @@ data/                运行时数据（不入库；含敏感文件）
     （见 docs/PROTOCOL-ERRORS.md §3.1.1）；
   - 新增单测：`tests/model-config.test.js`、`tests/compact-api.test.js`、`tests/entrypoint-meta.test.js`。
 
+## 9.1 v2.62（2026-11-06）x-vqd-hash-1 环境探针根因修复
+
+- **根因**：挑战随机抽 4 类 suite（`pxjzr` JS_API / `h8jbt` INNER_HTML / `q7klm` LAYOUT /
+  `vz95n` PAGE_STATE_JSA，tag 即 `challenge_id` 后缀）；后两类依赖 duck.ai 页面状态，旧 jsdom
+  扁平环境算出的 `client_hashes` 与真实 Chrome 不符 → 上游精确校验后 418 `ERR_CHALLENGE`
+  （42 样本裸 jsdom 仅 23/42 正确，约 45% 请求必 418，重试后表现为「偶现」）。
+- **修复**：`src/duck/challenge.js` 改为页面仿真求解（`#jsa` iframe + CSP meta + `__DDG_*` 全局 +
+  布局 shim + iframe 内 eval）；`legacyChallengeEnv` 可对照；新增 `tests/challenge-env.test.js`。
+- **验证**：真实 Chrome ground truth 42/42 指纹一致；真实上游 fresh/rolling chat 200/200；
+  `npm test` 493/493。详见 `docs/X-VQD-HASH-1-DEEP-ANALYSIS.md`、`recon/2026-11-06/analysis/`。
+- **残余风险**：continuation 仍发响应头原始挑战（应为已解值）、未知第 5+ 类 suite、版本 tag/sha
+  30min 缓存、`/capabilities` 挑战跨链；见深度分析 §6 与 `gateway-418-audit.md` §11。
+
+## 9.2 v2.63（2026-11-06）残余 418 路径修复
+
+- **continuation**：续传 header 改为**已解值**（不再发原始挑战 base64）；418 自动换挑战重试一次。
+- **重试覆盖**：`summarizeNative` 增加 418/429 重试（最多 3 次）；`_executeChat` 逻辑不变。
+- **归因**：`DuckError.overrideCode` + `stats.lastOverrideCode` + `stats.overrideCodes`（health 可见）。
+- **观测/健壮性**：`challenge.stats()` 增加 `lastChallengeSuite`/`lastClientHashes`/`envFallbacks`/
+  `externalChallengeSkips`/`stalePendingDropped`/`versionRefreshes`；`pendingTtlMs`(120s)；`versionTtlMs` 5min +
+  求解前刷新；`/capabilities` 挑战 idle-only 采纳；`x-fe-signals.end` 改为毫秒差。
+- **测试**：`npm test` **501/501**（新增 `tests/challenge-lifecycle-v262.test.js`、
+  `tests/summarize-retry-override.test.js`、`tests/continuation.test.js` +1）。
+- **BLOCKED**：continuation 真实上游实机验证被上游临时 `451 ERR_COUNTRY_NOT_SUPPORTED` 软限流阻断
+  （手动同头请求亦复现）；额度恢复后跑 `recon/2026-11-06/scratch-lead/live-continuation-check.mjs`。
+- **未修（设计级）**：多身份并发 / admin 旁路 `/status`（`identity-pool` 每身份队列、usage 轮询）。
+
 ## 10. 文档索引
 
 | 文档 | 内容 |
@@ -352,5 +391,6 @@ data/                运行时数据（不入库；含敏感文件）
 | `docs/IDENTITY-*.md` / `PAIRING-IMPL.md` / `SYNC-DEVICES.md` | 身份/配对/Sync 设备 |
 | `docs/PROXY.md` / `PROXY-IMPL.md` | 代理配置与实现 |
 | `docs/INCIDENT-2026-11-01-device-deletes.md` | 设备误删事故复盘与恢复 |
+| `docs/X-VQD-HASH-1-DEEP-ANALYSIS.md` | x-vqd-hash-1 源码级深度分析、随机 suite、偶发 418 根因与 v2.62/v2.63 修复与验证 |
 | `docs/ACCEPTANCE.md` / `QA.md` | 版本验收记录 / 测试矩阵与限界 |
 | `ARCHITECTURE.md` / `README.md` | 总体架构与上手说明 |

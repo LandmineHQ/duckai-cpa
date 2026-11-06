@@ -599,8 +599,12 @@ export class DuckClient {
       failures: 0,
       retries: 0,
       challengeRetries: 0,
+      continuationRetries: 0,
+      summaryRetries: 0,
       limitHits418: 0,
       limitHits429: 0,
+      lastOverrideCode: null,
+      overrideCodes: {},
       durableStreamRequests: 0,
       durableStreamRejected: 0,
       authRequests: 0,
@@ -1060,89 +1064,115 @@ export class DuckClient {
     };
 
     await this._respectRateLimit(params.signal);
-    const lease = await this.challenge.acquire({ reason: `summarize:${model}` });
     const controller = new AbortController();
     const signal = this._composeSignal(params.signal, controller.signal);
-    const version = this.challenge.version || (await this.challenge.ensureVersion());
-    const identityJourneyId = this._currentJourneyId();
-    const authToken = this.identityStore && typeof this.identityStore.getAuthToken === 'function' ? this.identityStore.getAuthToken() : null;
-    if (authToken && authToken.expired) this._authExpired = true;
-    const headers = {
-      'user-agent': this.userAgent,
-      accept: 'application/json',
-      'accept-language': 'en-US,en;q=0.9',
-      'content-type': 'application/json',
-      origin: this.baseUrl,
-      referer: `${this.baseUrl}/`,
-      'x-fe-version': version,
-      'x-fe-signals': buildFeSignals(this._feSignalsEvents()),
-      'x-vqd-hash-1': lease.header,
-      'x-duckai-response-id': crypto.randomUUID(),
-      'x-ddg-journey-id': identityJourneyId,
-      ...(authToken && authToken.token ? { authorization: `Bearer ${authToken.token}` } : {}),
-      ...(params.extraHeaders || {})
-    };
-    this._stats.requests += 1;
-    this._stats.lastRequestAt = Date.now();
-    this._stats.lastModel = model;
-    let response;
-    try {
-      response = await this._fetch(`${this.baseUrl}/duckchat/v1/summarize`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal
-      });
-    } catch (error) {
-      lease.release?.();
-      throw this._mapFetchError(error, { model, signal });
-    }
-    lease.commit(response.headers);
-    // The challenge mutex is held by the lease until released; release before any invalidate()/retry
-    // path so a fallback chat request can acquire a fresh challenge instead of deadlocking.
-    lease.release?.();
-    this._stats.lastStatus = response.status;
-    const rawText = await response.text().catch(() => '');
-    let parsed = null;
-    try {
-      parsed = rawText ? JSON.parse(rawText) : null;
-    } catch {
-      parsed = null;
-    }
-    if (!response.ok) {
-      // 418 (challenge/soft limit) consumes the rolling challenge; drop it so the next request gets
-      // a fresh one (same behaviour as `_executeChat`).
-      // Any failed summarize response consumes/rolls the challenge; reset it so a fallback chat
-      // request (or the next attempt) can acquire a fresh challenge instead of hanging.
-      if (typeof this.challenge.invalidate === 'function') {
-        await this.challenge.invalidate(`summarize-${response.status}`).catch(() => {});
+    // v2.62: summarize had no 418/429 retry; a single stale rolling challenge used to surface as a
+    // permanent failure. Each attempt re-acquires (and re-solves) a challenge.
+    const attemptSummarize = async () => {
+      const lease = await this.challenge.acquire({ reason: `summarize:${model}` });
+      try {
+        const version = this.challenge.version || (await this.challenge.ensureVersion());
+        const identityJourneyId = this._currentJourneyId();
+        const authToken = this.identityStore && typeof this.identityStore.getAuthToken === 'function' ? this.identityStore.getAuthToken() : null;
+        if (authToken && authToken.expired) this._authExpired = true;
+        const headers = {
+          'user-agent': this.userAgent,
+          accept: 'application/json',
+          'accept-language': 'en-US,en;q=0.9',
+          'content-type': 'application/json',
+          origin: this.baseUrl,
+          referer: `${this.baseUrl}/`,
+          'x-fe-version': version,
+          'x-fe-signals': buildFeSignals(this._feSignalsEvents()),
+          'x-vqd-hash-1': lease.header,
+          'x-duckai-response-id': crypto.randomUUID(),
+          'x-ddg-journey-id': identityJourneyId,
+          ...(authToken && authToken.token ? { authorization: `Bearer ${authToken.token}` } : {}),
+          ...(params.extraHeaders || {})
+        };
+        this._stats.requests += 1;
+        this._stats.lastRequestAt = Date.now();
+        this._stats.lastModel = model;
+        let response;
+        try {
+          response = await this._fetch(`${this.baseUrl}/duckchat/v1/summarize`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal
+          });
+        } catch (error) {
+          throw this._mapFetchError(error, { model, signal });
+        }
+        lease.commit(response.headers);
+        // The challenge mutex is held by the lease until released; release before any invalidate()/retry
+        // path so the next attempt can acquire a fresh challenge instead of deadlocking.
+        lease.release?.();
+        this._stats.lastStatus = response.status;
+        const rawText = await response.text().catch(() => '');
+        let parsed = null;
+        try {
+          parsed = rawText ? JSON.parse(rawText) : null;
+        } catch {
+          parsed = null;
+        }
+        if (!response.ok) {
+          // Any failed summarize response consumes/rolls the challenge; reset it so the next attempt
+          // (or a fallback chat request) can acquire a fresh challenge instead of hanging.
+          if (typeof this.challenge.invalidate === 'function') {
+            await this.challenge.invalidate(`summarize-${response.status}`).catch(() => {});
+          }
+          const errorType = String((parsed && (parsed.type || parsed.errorType)) || 'ERR_SUMMARIZE_FAILED');
+          const mapped = mapUpstreamError(errorType);
+          const duckError = new DuckError(parsed && parsed.message ? String(parsed.message) : `summarize failed with HTTP ${response.status}`, {
+            status: response.status || mapped.httpStatus,
+            type: mapped.code,
+            retriable: typeof (parsed && parsed.retriable) === 'boolean' ? parsed.retriable : mapped.retriable,
+            code: errorType,
+            detail: parsed || rawText.slice(0, 300)
+          });
+          duckError.transportStatus = response.status;
+          duckError.httpStatus = response.status;
+          duckError.overrideCode = parsed && parsed.overrideCode ? String(parsed.overrideCode) : null;
+          this._noteOverrideCode(duckError.overrideCode, response.status, errorType);
+          if (parsed && parsed.fixedCostWindowUsage !== undefined) duckError.fixedCostWindowUsage = parsed.fixedCostWindowUsage;
+          throw duckError;
+        }
+        const summary = parsed && parsed.summary;
+        if (!summary || typeof summary.text !== 'string' || !summary.text.trim()) {
+          throw new DuckError('summarize response has no summary text', { status: 502, type: 'empty_summary', retriable: true, detail: parsed });
+        }
+        return {
+          ok: true,
+          text: summary.text,
+          version: Number.isFinite(Number(summary.version)) ? Number(summary.version) : null,
+          coveredPairCount: parsed && Number.isFinite(Number(parsed.coveredPairCount)) ? Number(parsed.coveredPairCount) : null,
+          fixedCostWindowUsage: (parsed && parsed.fixedCostWindowUsage) ?? null,
+          raw: parsed
+        };
+      } finally {
+        lease.release?.();
       }
-      const errorType = String((parsed && (parsed.type || parsed.errorType)) || 'ERR_SUMMARIZE_FAILED');
-      const mapped = mapUpstreamError(errorType);
-      const duckError = new DuckError(parsed && parsed.message ? String(parsed.message) : `summarize failed with HTTP ${response.status}`, {
-        status: response.status || mapped.httpStatus,
-        type: mapped.code,
-        retriable: typeof (parsed && parsed.retriable) === 'boolean' ? parsed.retriable : mapped.retriable,
-        code: errorType,
-        detail: parsed || rawText.slice(0, 300)
-      });
-      duckError.transportStatus = response.status;
-      duckError.httpStatus = response.status;
-      if (parsed && parsed.fixedCostWindowUsage !== undefined) duckError.fixedCostWindowUsage = parsed.fixedCostWindowUsage;
-      throw duckError;
-    }
-    const summary = parsed && parsed.summary;
-    if (!summary || typeof summary.text !== 'string' || !summary.text.trim()) {
-      throw new DuckError('summarize response has no summary text', { status: 502, type: 'empty_summary', retriable: true, detail: parsed });
-    }
-    return {
-      ok: true,
-      text: summary.text,
-      version: Number.isFinite(Number(summary.version)) ? Number(summary.version) : null,
-      coveredPairCount: parsed && Number.isFinite(Number(parsed.coveredPairCount)) ? Number(parsed.coveredPairCount) : null,
-      fixedCostWindowUsage: (parsed && parsed.fixedCostWindowUsage) ?? null,
-      raw: parsed
     };
+    const maxAttempts = Math.max(1, Math.min(3, this.humanize.retries + 1));
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await attemptSummarize();
+      } catch (error) {
+        lastError = error;
+        const status = error && (error.transportStatus ?? error.status);
+        if ((status === 418 || status === 429) && attempt < maxAttempts) {
+          this._stats.summaryRetries = (this._stats.summaryRetries || 0) + 1;
+          if (status === 418) this._stats.challengeRetries = (this._stats.challengeRetries || 0) + 1;
+          this.logger?.warn?.('[duck] summarize retrying after upstream error', { attempt, status });
+          await sleep(500 * attempt + Math.round(randomBetween(0, 250)));
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw lastError || new DuckError('summarize failed', { status: 502, type: 'summarize_failed', retriable: true });
   }
 
   /**
@@ -1420,6 +1450,8 @@ export class DuckClient {
         // Keep the real HTTP status separately: 418 is a *transport-level* retriable signal
         // (challenge/soft-limit) even though the gateway-facing mapping is 403/429.
         error.transportStatus = response.status;
+        error.overrideCode = parsed && parsed.overrideCode ? String(parsed.overrideCode) : null;
+        this._noteOverrideCode(error.overrideCode, response.status, upstreamType);
         error.requestId = parsed && parsed.r ? String(parsed.r) : null;
         error.challengeData = (parsed && parsed.cd) || null;
         error.fixedCostWindowUsage = (parsed && parsed.fixedCostWindowUsage) || null;
@@ -1632,27 +1664,41 @@ export class DuckClient {
     } catch {
       /* ignore */
     }
-    // 2026-11-04：continuation 必须复用「挂起流响应头里的滚动挑战」，否则上游判 incompatible。
-    const rollingChallenge = (() => {
-      try {
-        return response && response.headers && typeof response.headers.get === 'function'
-          ? response.headers.get('x-vqd-hash-1')
-          : null;
-      } catch {
-        return null;
-      }
-    })();
-    const continuationHeaders = rollingChallenge ? { 'x-vqd-hash-1': rollingChallenge } : {};
+    // v2.62: browser ground truth (2026-11-06) shows continuation resubmits the *solved* rolling
+    // challenge value, not the raw base64 challenge JS from the suspended response headers.
+    // `_attemptChat` -> `challenge.acquire()` already consumes the committed `_pending` rolling challenge
+    // and solves it, so we must not override `x-vqd-hash-1` here (the old code sent the raw challenge).
+    // A 418 on a suspended stream is safely retryable: nothing has been generated yet.
     let resumed;
-    try {
-      resumed = await this._attemptChat(nextBody, {
-        ...context,
-        continuationDepth: depth + 1,
-        body: undefined,
-        lease: null,
-        extraHeaders: { ...(context.extraHeaders || {}), ...continuationHeaders }
-      });
-    } catch (error) {
+    let continuationError = null;
+    const maxContinuationAttempts = 2;
+    for (let attempt = 1; attempt <= maxContinuationAttempts; attempt += 1) {
+      try {
+        resumed = await this._attemptChat(nextBody, {
+          ...context,
+          continuationDepth: depth + 1,
+          body: undefined,
+          lease: null,
+          extraHeaders: context.extraHeaders
+        });
+        continuationError = null;
+        break;
+      } catch (error) {
+        continuationError = error;
+        const status = error && (error.transportStatus ?? error.status);
+        if (status === 418 && attempt < maxContinuationAttempts) {
+          this._stats.continuationRetries = (this._stats.continuationRetries || 0) + 1;
+          this._stats.challengeRetries = (this._stats.challengeRetries || 0) + 1;
+          this.logger?.warn?.('[duck] continuation got 418; retrying with a fresh challenge', { attempt });
+          await this.challenge.invalidate(`continuation-418-${attempt}`).catch(() => {});
+          await sleep(500 + Math.round(randomBetween(0, 250)));
+          continue;
+        }
+        break;
+      }
+    }
+    if (!resumed) {
+      const error = continuationError;
       // v2.19: some continuations (notably user-location approval) are rejected as
       // ERR_BAD_REQUEST even with the browser-shaped payload. Fall back to an explicit Web Search
       // tool choice — the verified path for "weather"-style questions.
@@ -2261,6 +2307,25 @@ export class DuckClient {
     if (Number(status) !== 400) return false;
     const code = String(error.code || error.type || error.upstreamType || '').toLowerCase();
     return code === 'bad_request' || code === 'err_bad_request' || code === 'invalid_request' || error.status === 400;
+  }
+
+  /**
+   * v2.62: attribute upstream `overrideCode`s (e.g. `f741` layout suite mismatch, `d78d` page-state mismatch)
+   * so operators can tell environment-probe regressions from rate limits without reading raw bodies.
+   * @param {string | null | undefined} overrideCode
+   * @param {number | null | undefined} status
+   * @param {string | null | undefined} upstreamType
+   */
+  _noteOverrideCode(overrideCode, status, upstreamType) {
+    if (!overrideCode) return;
+    const code = String(overrideCode);
+    this._stats.lastOverrideCode = code;
+    if (!this._stats.overrideCodes || typeof this._stats.overrideCodes !== 'object') this._stats.overrideCodes = {};
+    const key = `${code}:${upstreamType || status || 'unknown'}`;
+    const counts = this._stats.overrideCodes;
+    if (Object.prototype.hasOwnProperty.call(counts, key) || Object.keys(counts).length < 64) {
+      counts[key] = (counts[key] || 0) + 1;
+    }
   }
 
   /** Track error stats for `health()`. @param {unknown} error @param {Record<string, any>} [extra] */

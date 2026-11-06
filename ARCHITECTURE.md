@@ -71,7 +71,7 @@ Base URL：`https://duck.ai`，全部同源、无登录（匿名 `public` 档位
    - `x-fe-version: <data-version-tag>-<data-version-sha>`（从首页 HTML 的 `<html data-version-tag=... data-version-sha=...>` 读取）
    - （可选）`x-fe-signals: base64(JSON{start,events:[],end})`
 2. 响应头 `x-vqd-hash-1` 返回 **base64 编码的混淆 JS 函数**。
-3. 在类浏览器环境执行该 JS（原始页面把它注入同源 iframe 执行），得到对象：
+3. 在**仿真 duck.ai 页面**（`#jsa` iframe，见 §2.2 第 9 条）内执行该 JS（原始页面把它注入 `#jsa` iframe 执行），得到对象：
    `{server_hashes:[...], client_hashes:[...strings...], signals:{}, meta:{v:"4",challenge_id,timestamp,debug}}`
 4. 对每个 `client_hashes` 字符串做 `SHA-256(UTF-8)` 再 base64；再补 `meta.origin="https://duck.ai"`、
    `meta.stack`（Error 栈前 5 帧文本）、`meta.duration`（毫秒字符串）。
@@ -81,8 +81,14 @@ Base URL：`https://duck.ai`，全部同源、无登录（匿名 `public` 档位
 7. 首个请求的挑战来自步骤 1；`/chat` 直接 `initial` 会 418 `ERR_CHALLENGE`。
 8. 请求头必须带 `x-duckai-client-tools: {"version":1,"capabilities":[]}`（JSON 字符串），否则带 `durableStream` 会 400、
    不带会 418。加上后实测 200。
-9. 挑战 JS 在 jsdom 中执行即可（`runScripts:'outside-only'`、`userAgent` 与请求头一致）；服务端不校验 client_hashes 的环境细节
-   （各种 debug 值均实测可 200）。
+9. **v2.62 关键（2026-11-06）**：挑战每次随机抽一组环境探针 suite，上游在真实 chat 阶段**精确校验**
+   `client_hashes`；其中 page-state suite（`#jsa` iframe 的 sandbox + srcdoc CSP meta、`window.top.__DDG_BE_VERSION__`
+   / `__DDG_FE_CHAT_HASH__`）与 layout suite（`offsetWidth/getBoundingClientRect/scrollHeight > 0`）在扁平 jsdom
+   顶层 window 中必然算错 → 418 `ERR_CHALLENGE`（表现为「偶现」）。因此求解器必须：构造 `#jsa` sandbox iframe
+   （srcdoc 带 CSP meta）、注入 `__DDG_BE_VERSION__`/`__DDG_FE_CHAT_HASH__`（取首页 `data-version-tag`/`data-version-sha`）、
+   为布局指标提供 shim，并**在 iframe realm 内 eval** 挑战表达式。详见 `docs/X-VQD-HASH-1-DEEP-ANALYSIS.md`。
+   `meta.stack` 当前部署下未严格校验（真实 Chrome 页面即使带 `file:///` 帧也 200），历史 §3.1.1 结论保留。
+   排障开关 `DUCKAI_LEGACY_JSA_ENV=1` 可切回旧环境对照（生产禁用）。
 10. 遇到 418/429 时：重新 GET /status 取新挑战 + 指数退避重试（2–3 次，带随机抖动）。
 11. 拟人化限流（humanize，防止触发风控）：全局上游请求串行（并发 1）；每请求前随机延迟（默认 400–1500ms）、
     最小请求间隔 1000ms；失败重试指数退避 1s/2s/4s + 抖动（最多 3 次）；429 冷却 60s；journey-id 每会话固定、

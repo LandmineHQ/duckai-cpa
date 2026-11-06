@@ -63,7 +63,7 @@ GET /                                   ─ 取 x-fe-version
 GET /duckchat/v1/status                 ─ 请求头 x-vqd-accept:1, x-vqd-hash-1:initial,
   │                                       x-fe-version, x-fe-signals
   ↓  响应头 x-vqd-hash-1 = base64(混淆 async IIFE 源码)
-jsdom 在 https://duck.ai/ 源内执行该 JS   ─ 得到 {server_hashes, client_hashes, signals, meta}
+jsdom 在仿真 duck.ai 页面（`#jsa` iframe）内执行该 JS   ─ 得到 {server_hashes, client_hashes, signals, meta}
   ↓
 浏览器后处理：client_hashes 逐个 SHA-256(UTF-8)→base64；
 meta 补 origin / stack / duration；btoa(JSON.stringify(...))
@@ -85,7 +85,7 @@ referer: https://duck.ai/
 x-vqd-accept: 1
 x-vqd-hash-1: initial
 x-fe-version: serp_20261030_223718_ET-61e4601227ece8af7a1ad4d69b79aafd35f91fae
-x-fe-signals: base64({"start":<ms>,"events":[],"end":<ms+37>})
+x-fe-signals: base64({"start":<epoch ms>,"events":[],"end":<距 start 的毫秒差>})
 cookie: <可选，匿名首次为空>
 ```
 
@@ -113,9 +113,17 @@ base64 解码后是一个 **表达式**（async IIFE），与站点注入 iframe
 }
 ```
 
-- `client_hashes` 原始值是**环境指纹**：第 1 项是 `navigator.userAgent`，另外两项来自 DOM 测量
-  （`offsetWidth/scrollHeight/getBoundingClientRect`、`iframe.contentWindow` 等，见 `recon/jsa-solver-pretty.txt`）。
-- `debug` 是环境校验结果的紧凑编码（1–3 个字节），实测不同取值不影响上游放行。
+- `client_hashes` 原始值是**环境指纹**：第 1 项是 `navigator.userAgent`，另外两项来自环境测量。
+  **v2.62 关键（2026-11-06 实测）**：上游会在**真实 chat 请求**阶段**精确校验**这些值；挑战每次随机抽一组
+  「探针 suite」，其中两类依赖 duck.ai 页面自身状态，必须在仿真页面里求解才能算对，否则 418 `ERR_CHALLENGE`：
+  1. **page-state**：`window.top.document.querySelector('#jsa')` 的 `sandbox="allow-scripts allow-same-origin"`
+     与 srcdoc 里的 `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline';">`；
+     `window.top.hasOwnProperty('__DDG_BE_VERSION__')` / `__DDG_FE_CHAT_HASH__`（真实值 = `data-version-tag` / `data-version-sha`）。
+  2. **layout**：`div.offsetWidth/offsetHeight/getBoundingClientRect/scrollHeight > 0`（jsdom 无布局引擎，必须 shim）。
+  其余两类（通用 JS/DOM 自检、`<p><div></p><p></div` innerHTML 解析指纹）在 jsdom 中与 Chrome 一致。
+  每类结果都是 `String(seed + 通过项数)`，seed 每挑战随机；服务端生成挑战时即知道期望值，所以能精确校验。
+- `debug` = `XOR(JSON.stringify(检查表 map), <每挑战随机 16 hex key>)`；当前所有 suite 的检查表第二列恒为
+  false，map 恒为 `{}`，故 debug 恒为 2 个不可打印字符，原样透传即可（实测不同取值不影响放行）。
 - 挑战 JS 内部会用 `atob/btoa`、`TextEncoder`、`crypto.subtle.digest` 等浏览器 API 做自检；jsdom 均可用。
 
 ### 2.4 后处理（必须与浏览器字节一致）
@@ -142,6 +150,9 @@ btoa(JSON.stringify({
    `https://duck.ai/dist/duckai-dist/entry.duckai.<hash>.js`（hash 从 homepage HTML 解析），
    不能出现 Node 的 `file:///` 或 `node:internal` 帧，否则触发 429 `ERR_BN_LIMIT`
    （"unsupported entrypoint"）。见 `docs/PROTOCOL-ERRORS.md` §3.1.1。
+   **2026-11-06 复核**：当前部署下该字段**不再严格校验**（真实 Chrome 页面用 chrome-devtools 的
+   `file:///…` 垃圾帧仍 200；本轮 418 与 stack 无关，根因是 `client_hashes` 环境指纹）。
+   历史结论保留以防其它 tier/部署生效；实现继续发送入口帧形态。
 4. `meta.duration` = 从 `atob()` 开始到后处理完成的毫秒数字符串。
 5. 输出 `btoa(JSON.stringify(payload))` → `x-vqd-hash-1` 请求头的值（实测约 1.1–1.6KB）。
 
@@ -152,26 +163,42 @@ btoa(JSON.stringify({
 - **反例（实测）**：每次请求前都重新 `GET /status` 拿新挑战、不消费响应里的滚动挑战，会**隔次** `418 ERR_CHALLENGE`。
   正确做法：首个挑战来自 `/status`，之后全部来自上一个响应头。
 - 挑战有时效性：求解后应尽快使用（实现里超过 90s 的已求解值会丢弃重取）。
+- **未求解滚动挑战的 TTL（v2.63）**：响应头拿到但长时间未求解的挑战超过 `pendingTtlMs`（默认 120s，实测窗口 >72s）
+  视为陈旧，丢弃并重新 `GET /status`，避免把上游已视为过期的挑战发出去。
+- **continuation 必须发已解值（v2.63）**：续传请求的 `x-vqd-hash-1` 是「挂起流响应头挑战的已解 payload」，
+  不是响应头原始 base64(挑战 JS)；浏览器抓包已确认。网关由 `challenge.acquire()` 消费 commit 的滚动挑战并求解。
+- **版本新鲜度（v2.63）**：`x-fe-version` 与 `meta.stack`/`__DDG_*` 依赖首页版本；缓存 TTL 5min，并在求解前按需刷新。
 - `418/429/5xx` 响应**不带**新挑战头 → 丢弃当前挑战状态，重新 `GET /status` 再求解。
+- **旁路挑战头（v2.63）**：`/capabilities` 等非 chat 响应头可能带挑战，浏览器**不消费**；网关仅在 idle（无
+  pending/solved）时采纳，避免覆盖进行中的滚动链。
 
-### 2.6 jsdom 执行要点（本项目实现）
+### 2.6 jsdom 执行要点（v2.62：仿真 duck.ai 页面）
 
 ```js
-const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
+// 页面 HTML 复刻 duck.ai：隐藏 #jsa iframe（sandbox + srcdoc 内 CSP meta）
+const dom = new JSDOM(PAGE_HTML, {
   url: 'https://duck.ai/',
   resources: { userAgent: UA },   // ← jsdom 29 必须放 resources.userAgent，top-level userAgent 会被忽略！
   pretendToBeVisual: true,
   runScripts: 'outside-only'      // 提供 window.eval + 浏览器形状的 window/navigator/document
 });
-const result = await dom.window.eval(decodedSource);  // 解码后的表达式直接 eval
+// 页面全局变量（真实值来自首页 data-version-tag / data-version-sha）
+dom.window.__DDG_BE_VERSION__ = versionTag;
+dom.window.__DDG_FE_CHAT_HASH__ = versionSha;
+// 装布局 shim（offsetWidth/offsetHeight/getBoundingClientRect/scrollHeight > 0）
+installLayoutShims(dom.window.document.getElementById('jsa').contentWindow);
+// 关键：挑战表达式在 #jsa iframe realm 内执行（与浏览器一致），而不是顶层 window
+const result = await dom.window.document.getElementById('jsa').contentWindow.eval(decodedSource);
 ```
 
-- `navigator.userAgent` 必须与请求头 `user-agent` 一致（挑战指纹里含 UA；请求头与求解环境不一致容易被判为 bot）。
-- 不需要真的创建 iframe / `__jsaCallbacks`：`window.eval` 与站点 `parent.__jsaCallbacks[n](null, <payload>)` 等价
-  （两者都在 `https://duck.ai/` 源内执行表达式）。若要更贴近浏览器，也可创建同源 iframe 注入 `<script>`，
-  实测在本环境用 iframe 执行时 jsdom 跨 realm Promise 交接不稳定，`window.eval` 更可靠。
-- 每次求解新建一个 JSDOM 实例（避免全局污染），耗时约 40–500ms。
+- `navigator.userAgent` 必须与请求头 `user-agent` 一致（挑战指纹第 1 项就是 UA）。
+- 挑战表达式**必须在 iframe realm 内执行**：page-state suite 读取的是「表达式所在 realm 的 `window.top`」，
+  在顶层 window 里 eval 时 `window === window.top`，即使伪造 DOM 也会得到错误指纹。
+- `legacyChallengeEnv`（或环境变量 `DUCKAI_LEGACY_JSA_ENV=1`）可切回旧的「空 top-level window」行为，
+  仅供对照/排障；**生产不要开启**（会稳定触发 page-state/layout suite 的 418）。
+- 每次求解新建一个 JSDOM 实例（避免全局污染），耗时约 50–300ms。
 - 环境变量 `globalThis.atob/btoa`、`TextEncoder`、`crypto.subtle` 在 jsdom window 中均可用。
+- 详细根因与验证见 `docs/X-VQD-HASH-1-DEEP-ANALYSIS.md`。
 
 ### 2.7 严格校验规则（v2，`strictProtocol: true` 默认开启）
 
@@ -228,14 +255,14 @@ duck.ai 的匿名识别不靠 cookie，而是 4 套标识叠加；网关必须�
 | `accept-language` | `en-US,en;q=0.9` | 建议 |
 | `origin` / `referer` | `https://duck.ai` / `https://duck.ai/` | |
 | `x-fe-version` | 首页 version-tag + "-" + version-sha | 版本更新后需重新抓 |
-| `x-fe-signals` | `base64({"start":ms,"events":[],"end":ms+37})` | 每次请求新生成 |
+| `x-fe-signals` | `base64({"start":epochMs,"events":[...],"end":<距 start 的毫秒差>})` | 每次请求新生成；`end` 不是 epoch |
 | `x-vqd-hash-1` | 已求解挑战 | 见 §2 |
 | `x-duckai-response-id` | uuid v4 | **每请求随机** |
 | `x-ddg-journey-id` | 32 位 hex | **每会话固定** |
 | `x-duckai-continuation` | `resubmit-context` | |
 | `x-duckai-tool-approval` | `web-search` | 浏览器始终携带 |
 | `x-duckai-consent-purposes` | `user-location,image-generation,web-search` | |
-| `x-duckai-client-tools` | `{"version":1,"capabilities":[]}` | **关键头**：缺失时带 `durableStream`/部分扩展字段会 400，不带则 418 |
+| `x-duckai-client-tools` | `{"version":1,"capabilities":[]}` | 浏览器携带的扩展头；2026-11-06 实测：匿名 + 不带 `durableStream` 时省略也可 200（保留发送以防回归） |
 
 浏览器 bundle 中还会按条件携带以下头（网关当前不发送，记录备查）：
 
