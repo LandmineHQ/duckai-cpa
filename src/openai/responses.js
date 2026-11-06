@@ -86,6 +86,12 @@ import {
 } from './context-spill.js';
 import { assembleContextMessages } from '../app/session/context-assembly.js';
 import {
+  applySessionLogFields,
+  loadAuthoritativeState,
+  prepareAuthoritativeSessionDiff,
+  replaySessionImagesFromState
+} from '../app/session/authoritative-state.js';
+import {
   prepareManualCompaction,
   resolveManualCompactionEpoch
 } from '../app/session/manual-compaction.js';
@@ -424,15 +430,12 @@ export async function handleResponses(req, res, ctx) {
     conversation: chainedConversation,
     marker: manualMarker
   });
-  let conversationState = null;
+  const conversationState = await loadAuthoritativeState({ responseStore, conversationSessionKey });
   let replayedInputConversation = input.conversation;
-  if (responseStore?.enabled && conversationSessionKey) {
-    conversationState = await responseStore.getConversation(conversationSessionKey).catch(() => null);
-    // v2.58：客户端只回放图片占位文本时，用 session 保存的真实图片补回上下文。
-    if (conversationState?.images?.length) {
-      chainedConversation = replaySessionImages(chainedConversation, conversationState.images);
-      replayedInputConversation = replaySessionImages(input.conversation, conversationState.images);
-    }
+  // v2.58：客户端只回放图片占位文本时，用 session 保存的真实图片补回上下文。
+  if (conversationState?.images?.length) {
+    chainedConversation = replaySessionImagesFromState(chainedConversation, conversationState);
+    replayedInputConversation = replaySessionImagesFromState(input.conversation, conversationState);
   }
   let manualCompaction = null;
   if (manualMarker) {
@@ -449,17 +452,17 @@ export async function handleResponses(req, res, ctx) {
   }
   // v2.59：authoritative session —— 旧 input 只用于 diff，canonical 由网关维护。
   let authoritativeDiff = null;
-  if (!manualCompaction && conversationState && !ephemeralRequest) {
-    const epochFlags = resolveEpochFlags(ctx, body);
-    authoritativeDiff = diffSession({
-      state: conversationState,
-      incoming: replayedInputConversation,
-      requestedEpoch: epochFlags.requestedEpoch,
-      fork: epochFlags.fork
-    });
-    if (authoritativeDiff.mode === 'noop') {
-      throw badRequest('no new input for this session', 'input', 'no_new_messages');
-    }
+  const preparedDiff = prepareAuthoritativeSessionDiff({
+    ctx,
+    body,
+    state: conversationState,
+    incoming: replayedInputConversation,
+    kind: 'responses',
+    manualCompaction,
+    ephemeralRequest
+  });
+  if (preparedDiff) {
+    authoritativeDiff = preparedDiff.diff;
     if (authoritativeDiff.mode === 'fork') {
       previousRecord = null;
       chainedConversation = authoritativeDiff.canonical;
@@ -478,20 +481,16 @@ export async function handleResponses(req, res, ctx) {
       input.conversation = newMessages;
       chainedConversation = [...oldCanonical, ...newMessages];
     }
-    ctx.log.sessionMode = authoritativeDiff.mode;
-    ctx.log.sessionEpoch = authoritativeDiff.epoch;
-    ctx.log.sessionAppended = authoritativeDiff.appended;
-    if (authoritativeDiff.stateRepaired) {
+    const stateRepaired = applySessionLogFields(ctx.log, authoritativeDiff);
+    if (stateRepaired) {
       previousRecord = null;
       chainedConversation = authoritativeDiff.canonical;
-      ctx.log.sessionRepaired = true;
     }
   } else if (manualCompaction) {
     const { sessionEpoch, sessionMode } = resolveManualCompactionEpoch({ conversationState, manualCompaction });
     ctx.log.sessionEpoch = sessionEpoch;
     ctx.log.sessionMode = sessionMode;
-  }
-  ctx.historySessionKey =
+  }  ctx.historySessionKey =
     ctx.sessionKey || (previousRecord && previousRecord.sessionKey) || ctx.conversationKey || conversationSessionKey;
   const reasoning = resolveReasoningEffort(
     resolved.model,

@@ -57,6 +57,12 @@ import {
 } from './context-spill.js';
 import { assembleContextMessages } from '../app/session/context-assembly.js';
 import {
+  applySessionLogFields,
+  loadAuthoritativeState,
+  prepareAuthoritativeSessionDiff,
+  replaySessionImagesFromState
+} from '../app/session/authoritative-state.js';
+import {
   prepareManualCompaction,
   resolveManualCompactionEpoch
 } from '../app/session/manual-compaction.js';
@@ -792,16 +798,11 @@ export async function handleChatCompletions(req, res, ctx) {
   });
   ctx.chatConversationKey = conversationSessionKey;
   ctx.historySessionKey = ctx.sessionKey || ctx.conversationKey || conversationSessionKey;
-  let conversationState = null;
   let sessionStateRepaired = false;
   let manualCompaction = null;
-  if (responseStore?.enabled && conversationSessionKey) {
-    conversationState = await responseStore.getConversation(conversationSessionKey).catch(() => null);
-    // v2.58：客户端只回放占位文本时，从 session 状态恢复真实图片。
-    if (conversationState?.images?.length) {
-      messages.conversation = replaySessionImages(messages.conversation, conversationState.images);
-    }
-  }
+  const conversationState = await loadAuthoritativeState({ responseStore, conversationSessionKey });
+  // v2.58：客户端只回放占位文本时，从 session 状态恢复真实图片。
+  messages.conversation = replaySessionImagesFromState(messages.conversation, conversationState);
   if (manualMarker) {
     const prepared = await prepareManualCompaction({
       kind: 'chat',
@@ -823,47 +824,39 @@ export async function handleChatCompletions(req, res, ctx) {
   }
   // v2.59：authoritative session —— 客户端旧历史只用于 diff，canonical 由网关维护。
   let authoritativeDiff = null;
-  if (!manualCompaction && conversationState && !ephemeralRequest) {
-    const epochFlags = resolveEpochFlags(ctx, body);
-    // v2.58/v2.59：先按 state.images 回放占位图片，再用于 authoritative diff（否则 canonical 丢图）。
-    const replayedIncoming = conversationState?.images?.length
-      ? replaySessionImages(rawRequestMessages, conversationState.images)
-      : rawRequestMessages;
+  {
+    const replayedIncoming = replaySessionImagesFromState(rawRequestMessages, conversationState);
     const clientIncoming = replayedIncoming.filter(
       (message) => message && !['system', 'developer'].includes(String(message.role || '').toLowerCase())
     );
-    authoritativeDiff = diffSession({
+    const preparedDiff = prepareAuthoritativeSessionDiff({
+      ctx,
+      body,
       state: conversationState,
       incoming: clientIncoming,
-      requestedEpoch: epochFlags.requestedEpoch,
-      fork: epochFlags.fork
+      kind: 'chat',
+      manualCompaction,
+      ephemeralRequest
     });
-    if (authoritativeDiff.mode === 'noop') {
-      throw badRequest('no new messages for this session', 'messages', 'no_new_messages');
+    if (preparedDiff) {
+      authoritativeDiff = preparedDiff.diff;
+      const fullCanonical = normalizeChatMessages(authoritativeDiff.canonical, { allowEmptyUser: true });
+      const rawCanonical = authoritativeDiff.canonical;
+      messages.conversation = fullCanonical.conversation.map((message, index) => {
+        const source = rawCanonical[index];
+        return {
+          ...message,
+          ...(source && Array.isArray(source.images) && source.images.length ? { images: source.images } : {})
+        };
+      });
+      messages.promptChars = fullCanonical.promptChars;
+      sessionStateRepaired = applySessionLogFields(ctx.log, authoritativeDiff);
+    } else if (manualCompaction) {
+      const { sessionEpoch, sessionMode } = resolveManualCompactionEpoch({ conversationState, manualCompaction });
+      ctx.log.sessionEpoch = sessionEpoch;
+      ctx.log.sessionMode = sessionMode;
     }
-    const fullCanonical = normalizeChatMessages(authoritativeDiff.canonical, { allowEmptyUser: true });
-    const rawCanonical = authoritativeDiff.canonical;
-    messages.conversation = fullCanonical.conversation.map((message, index) => {
-      const source = rawCanonical[index];
-      return {
-        ...message,
-        ...(source && Array.isArray(source.images) && source.images.length ? { images: source.images } : {})
-      };
-    });
-    messages.promptChars = fullCanonical.promptChars;
-    ctx.log.sessionMode = authoritativeDiff.mode;
-    ctx.log.sessionEpoch = authoritativeDiff.epoch;
-    ctx.log.sessionAppended = authoritativeDiff.appended;
-    if (authoritativeDiff.stateRepaired) {
-      sessionStateRepaired = true;
-      ctx.log.sessionRepaired = true;
-    }
-  } else if (manualCompaction) {
-    const { sessionEpoch, sessionMode } = resolveManualCompactionEpoch({ conversationState, manualCompaction });
-    ctx.log.sessionEpoch = sessionEpoch;
-    ctx.log.sessionMode = sessionMode;
   }
-
   const reasoning = resolveReasoningEffort(resolved.model, body.reasoning_effort ?? body.reasoning?.effort);
   const flags = resolveToolFlags(ctx.config, resolved.model, body);
   if (flags.dropped && flags.dropped.length) ctx.log.droppedTools = flags.dropped;
