@@ -184,6 +184,22 @@ DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
   node src/index.js
 ```
 
+For the latest **published** release, use the fixed release asset alias. GitHub Release "latest" is a pointer, not a Docker tag: `/releases/latest` resolves to the newest published non-prerelease release. Draft releases are not included until you publish them.
+
+```bash
+BASE="https://github.com/LandmineHQ/duckai-cpa/releases/latest/download"
+curl -fL -o duckai-cpa.tar.gz "${BASE}/duckai-cpa.tar.gz"
+curl -fL -o duckai-cpa.tar.gz.sha256 "${BASE}/duckai-cpa.tar.gz.sha256"
+sha256sum -c duckai-cpa.tar.gz.sha256
+tar -xzf duckai-cpa.tar.gz
+cd release
+```
+
+Every release publishes both:
+
+- versioned assets: `duckai-cpa-<version>.tar.gz` + checksum;
+- fixed alias assets: `duckai-cpa.tar.gz` + checksum, for `/releases/latest/download/`.
+
 If the GitHub Release is still a **draft**, open the release page and publish it first, then rerun the download command.
 
 The archive is built from the same commit/artifact as the Docker image; it is not the latest working tree. `data/` is created next to the extracted `release/` directory by default; set `DUCKAI_CPA_DATA_DIR` to override it.
