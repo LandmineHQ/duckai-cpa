@@ -409,3 +409,380 @@ Phase 完成标准：
 5. Phase 3 的 `ConversationService` 是否允许改变内部函数签名（对外行为不变）？
 
 确认后，建议从 **Phase 0 + Phase 1** 开始，先做低风险拆分，不同时碰 canonical/PDF 业务。
+
+---
+
+## 附录 A — Phase 3 设计稿：ConversationService 抽取（v2.65）
+
+> **前提**：Phase 0–2 已合并（`82a8014` / `ba61427` / `e6f6a3d`），基线 `npm test` **512/512**、
+> `page-check` **22/22**；`src/http/server.js` 已降到 474 行，HTTP 核心在 `src/app/http/*`。
+> **本附录只做设计审计，不改 `src/`、`tests/`**；行号均指当前 HEAD（`chat.js` 1957 行、`responses.js` 1790 行）。
+> **方向说明**：§3 曾推荐 Fastify，但用户已决策走「原生 `node:http` + 模块化」，Phase 0–2 即该方向；
+> 本附录延续该决策，不改写 §1–§10。Phase 3 不引入框架、不引入 DI 容器、不做 TS 化。
+
+### A.1 目标与非目标
+
+**目标（Phase 3 结束时）**
+
+1. 把 `chat.js` / `responses.js` 中重复的**会话流水线**（session 解析、state 加载、manual compaction、
+   PDF/tools PDF、canonical/upstream/client 保存、history 记录）收敛为共享模块；
+2. 删除 `handleChatCompletions` 与 `handleResponses` 之间可识别的重复块（当前约 **400 行**，
+   8 行滑窗检测：chat 侧 401 行 / responses 侧 396 行）；
+3. 对外可观察行为**逐字节不变**：上游 messages、`conversation_state`/`context_pdfs`/`responses`/`history`
+   行内容、SSE 事件、响应头、日志字段、错误码与错误消息。
+
+**非目标（Phase 3 明确不做）**
+
+- 不改 SSE 输出协议与 output mapper（chat chunk vs responses 事件序列分离保留）；
+- 不改 canonical / epoch / compression / prefix-cache 策略（只搬移调用，不重排、不合并条件）；
+- 不把 handler 改成 transport-neutral（Phase 5/6 再做），`(req, res, ctx)` 签名暂留；
+- 不搬移 `src/openai/*` 现有 helper 文件（Phase 3 只在 `src/app/session/` 新增，避免大范围 import 变更）；
+- 不处理 admin 连接测试（`admin/routes.js#generateAssistantReply`）的同类重复，Phase 4 再复用本层；
+- 不顺手修 bug（如 chat 流式 history 用 `guardedMessages` 而非 `historyMessages` 的既有不一致）。
+
+### A.2 两个 handler 的会话流程对照（HEAD 行号）
+
+| # | 步骤 | chat（`handleChatCompletions` L763–1432） | responses（`handleResponses` L366–911） | 差异 | 可抽取 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | body/model/ephemeral | L764–773 | L367–376 | responses 多 `instructions` 类型校验（L378–380） | 小，暂不抽 |
+| 2 | 输入归一化 | `normalizeChatMessages(body.messages)` L775 | `normalizeResponsesInput(body.input)` L407 | 形状不同 | 否 |
+| 3 | 会话链来源 | `body.messages`（客户端回放） | `previousRecord.conversation + outputItemsToConversation + input.conversation` L410–412 | responses 独有 `previous_response_id` 链 | 否 |
+| 4 | session key + manual marker | L777–789 | L413–421 | 同函数，`kind`/conversation 不同 | 是（小）→ **3C** |
+| 5 | state 加载 + 图片回放 | L790–799 | L422–431 | responses 回放两份（chained + input） | 是 → **3C** |
+| 6 | manual compaction | L800–866 | L432–487 | 结构相同，hot 应用方式不同 | 是 → **3B** |
+| 7 | authoritative diff | L868–914 | L488–526 | 输入/输出/异常路径不同，核心 `diffSession` 相同 | 部分 → **3C** |
+| 8 | reasoning/tools/systemPrompt | L916–935 | L539–561 | chat 在 authoritative 时强制复用 `conversationState.systemPrompt`；responses 用 `previousRecord.systemPrompt`/instructions | 否（语义不同） |
+| 9 | selectIdentity | L931–935 | L642–646 | 相同 | 小，暂不抽 |
+| 10 | conversation mode（server/stateless） | L936–967 | 无此概念 | chat 独有 `X-Conversation-Mode`/`X-Conversation-Delta` | 否 |
+| 11 | 会话头 | L968–993 | L792–811 | chat 优先 `ctx.sessionKey`，responses 只用 `conversationSessionKey` | 否（保持现状） |
+| 12 | PDF 规划/复用/legacy 压缩 | L1007–1103 | L563–614 | chat 有 `chatSummaries` 旧自动压缩；gating 分别用 `storedConversation` / `reusablePrefix` | 高难 → **3E（暂缓）** |
+| 13 | prefix 复用 / rebuild + protocol 注入 | L1104–1201 | L615–641 | 数据来源与 `storedConversation`/`previousRecord` 形态不同 | 否（暂留） |
+| 14 | **PDF/tools PDF 装配 + 历史展示 + injection** | **L1202–1341** | **L648–788** | **几乎逐行相同**（仅会话来源与 413 `param` 不同） | **是 → 3A（首选）** |
+| 15 | 输出 mapping / SSE | L1357–1432、L1440–1956 | L824–844、L913–1789 | 协议完全不同（chunk+[DONE] vs 命名事件+`sequence_number`+`response.failed`） | 否 |
+| 16 | 结果持久化 | conversation_state only：L1383–1431 | responses 表 L845–857 + conversation_state L858–910 | responses 多 `save()`；`nextEpoch` 逻辑完全重复 | 是 → **3D** |
+| 17 | history 记录 | 非流式 `params.historyMessages`；**流式用 `params.guardedMessages`**（既有不一致） | `params.historyMessages` | 调用点已由 `recordHistoryOnLog` 统一，无需改 | 否 |
+
+### A.3 可安全抽取的共享步骤（按“低风险高收益”排序）
+
+判定标准（同时满足才进入 3A/3B/3D）：① 不写 canonical/epoch/client_json；② 输入输出可枚举；
+③ 现有测试覆盖；④ 分支差异可用参数表达且不改变判断顺序；⑤ 不涉及 SSE 写协议。
+
+| 优先级 | 共享步骤 | 现状重复量 | 风险 | 切片 |
+| --- | --- | --- | --- | --- |
+| ★★★ | PDF 上下文装配 + client-tools.pdf + 历史展示/injection | ~140 行 × 2 | 低（纯下游转换） | **3A** |
+| ★★☆ | manual compaction 的 PDF 复用/生成 + compression record + epoch 日志 | ~60 行 × 2 | 低–中 | 3B |
+| ★★☆ | state 加载/图片回放 + `diffAuthoritativeSession` 包装 + 5 个 session log 字段 | ~25 行 × 2 | 中 | 3C |
+| ★★☆ | `nextEpoch` + `buildConversationStateWrite` | ~35 行 × 2（epoch IIFE 完全重复） | 中 | 3D |
+| ★☆☆ | session key / marker 解析、`setSessionHeaders`、resolution headers | ~15 行 × 2 | 低 | 3C/3D 顺带 |
+| — | PDF 规划（legacy compaction、gating） | ~90 行 × 2 但语义分叉 | 高 | 暂缓（3E） |
+| — | systemPrompt 组装、prefix 复用/rebuild、协议注入 | 分叉大 | 高 | 暂缓 |
+| — | 输出 mapper / SSE / with-tools 回放 | 协议不同 | 高 | Phase 5 |
+
+### A.4 最小可落地切片 3A：`src/app/session/context-assembly.js`
+
+#### A.4.1 切片边界（只搬这一段）
+
+- 来源：`chat.js` **L1202–1341**（`let spillDisplay = null` → `ctx.log.upstreamMessageCount = ...`）；
+  `responses.js` **L648–788**（`let displayHistoryMessages = canonicalConversation` → `ctx.log.upstreamMessageCount`）。
+- 该段内部包含 4 个分支：① 复用已存 context PDF + 附带 client-tools.pdf；② 生成/保存 context PDF；
+  ③ 仅 client-tools.pdf（无 context PDF）；④ 历史展示转换 + `historyInjection` + log 字段。
+- **不包含**：`pdfScopeKey()` 计算、`responseStore.getContextPdf()` 读取、`guardConversation()`、
+  `buildDuckMessages()`、`injectProtocolIntoFirstUser()`、canonical/epoch 保存、SSE。
+
+#### A.4.2 新模块
+
+```js
+// src/app/session/context-assembly.js
+import {
+  attachPdfFile, createToolsPdf, pdfFileFromState, sanitizeFileMetadata,
+  spillMessagesToPdf, stripSpillInstruction, PDF_PURPOSE_TEXT
+} from '../../openai/context-spill.js';
+import { buildToolProtocol } from '../../openai/tool-protocol.js';
+import { OpenAIError } from '../../openai/errors.js';
+
+/**
+ * 统一 chat/responses 的「context PDF 装配 + client-tools.pdf + 历史展示 + injection」。
+ * 只消费调用方已算好的会话状态；不做 session resolve / diff / epoch / 压缩决策。
+ *
+ * @param {{
+ *   kind: 'chat'|'responses',
+ *   duckMessages: Array<object>,        // 已 buildDuckMessages、尚未附 PDF
+ *   conversation: Array<object>,        // coveredCount/hash 用：chat=messages.conversation；responses=chainedConversation
+ *   historyMessages: Array<object>,     // 无 PDF 时的历史展示回退：chat=historyMessages；responses=canonicalConversation
+ *   clientTools: Array<{name:string}>,
+ *   pdfSpillConfig: { enabled?: boolean, inputCharLimit?: number, maxPages?: number },
+ *   scopeKey: string|null,              // 调用方已算好的 pdfScopeKey(...)
+ *   responseStore: object|null,
+ *   storedPdf: object|null,             // 调用方已读取的 getContextPdf(scopeKey) 结果
+ *   reuseStoredPdf: boolean,
+ *   conversationChain: string|null,     // ctx.log.conversationChain（写进 injection.chain）
+ *   compression: object|null,           // manualCompaction?.compression ?? conversationState?.compression
+ *   logger: object
+ * }} input
+ * @returns {Promise<{
+ *   duckMessages: Array<object>,        // 最终发给上游的消息（含 PDF file part / 指令文本）
+ *   displayMessages: Array<object>,     // 历史展示（stripSpillInstruction + sanitizeFileMetadata）
+ *   injection: object,                  // historyInjection 完整结构
+ *   logPatch: object,                   // 只含本次新增的 log 字段，由 handler Object.assign(ctx.log, patch)
+ *   savedContextPdf: boolean
+ * }>}
+ */
+export async function assembleContextMessages(input) { /* 按 L1202–1341 / L648–788 顺序实现 */ }
+```
+
+#### A.4.3 入参来源对照
+
+| 入参 | chat 来源（L 号） | responses 来源（L 号） |
+| --- | --- | --- |
+| `kind` | `'chat'` | `'responses'` |
+| `duckMessages` | L1193–1197 构建结果 | L635–639 构建结果 |
+| `conversation` | `messages.conversation`（L1009 已用同值算 scope） | `chainedConversation` |
+| `historyMessages` | `historyMessages`（L1186，prefix-reuse 时 L1172） | `canonicalConversation`（L630） |
+| `clientTools` | L920–921 | L546–547 |
+| `pdfSpillConfig` | L1007 | L563 |
+| `scopeKey` | L1009–1014 `pdfScope` | L579–585 `pdfScope` |
+| `responseStore` | `ctx.responsesStore` | `ctx.responsesStore` |
+| `storedPdf` | L1019 `pdfState`（含 L1034/L1040 的 manual/compression 覆盖） | L590 `pdfState`（含 L604/L608 覆盖） |
+| `reuseStoredPdf` | L1018–1031 / L1032–1045 `pdfReuse` | L589–602 / L603–614 `pdfReuse` |
+| `conversationChain` | `ctx.log.conversationChain` | 同 |
+| `compression` | `manualCompaction?.compression ?? conversationState?.compression` | 同 |
+
+#### A.4.4 返回与 handler 侧改法（chat 示例；responses 对称）
+
+```js
+// before（chat L1202–1341 整段）
+let spillDisplay = null;
+if (pdfReuse && pdfState) { ... } else if (pdfSpillConfig.enabled !== false) { ... }
+if (useClientToolsPdf && !ctx.log.contextPdf && !ctx.log.contextPdfReused) { ... }
+const protocolText = ...;
+const historyForDisplay = spillDisplay ? ... : historyMessages;
+ctx.historyMessages = historyForDisplay;
+ctx.historyInjection = { ... };
+ctx.log.protocolInjected = ...; ctx.log.clientToolsPdf = ...; ctx.log.upstreamMessageCount = ...;
+
+// after（约 10 行）
+const assembled = await assembleContextMessages({
+  kind: 'chat',
+  duckMessages,
+  conversation: messages.conversation,
+  historyMessages,
+  clientTools,
+  pdfSpillConfig,
+  scopeKey: pdfScope,
+  responseStore,
+  storedPdf: pdfState,
+  reuseStoredPdf: pdfReuse,
+  conversationChain: ctx.log.conversationChain,
+  compression: manualCompaction?.compression ?? conversationState?.compression ?? null,
+  logger: ctx.logger
+});
+duckMessages = assembled.duckMessages;
+const historyForDisplay = assembled.displayMessages;
+ctx.historyMessages = historyForDisplay;
+ctx.historyInjection = assembled.injection;
+Object.assign(ctx.log, assembled.logPatch);
+```
+
+> responses 侧仅 `kind` / `conversation` / `historyMessages` 三个入参不同；其余一致。
+
+#### A.4.5 3A 必须保持的不变量（I1–I10）
+
+| # | 不变量 | 验证点 |
+| --- | --- | --- |
+| I1 | `duckMessages` 内容/顺序/字段逐字节不变（PDF file part：`mimeType/filename/b64/pages/bytes/textChars/text`；首条 user 的 `\n\n[系统提示] 附件 client-tools.pdf …` 指令文本与位置） | 用 mock DuckClient 断言 `calls.chat.at(-1).params.messages`；与改动前 JSON 全等 |
+| I2 | 复用路径不再生成 context PDF，但仍生成/附 `client-tools.pdf` | `context-pdf-v249`「同一会话复用同一 context PDF」 |
+| I3 | `context_pdfs` 写库参数不变：`scopeKey/filename/mimeType/pages/bytes/textChars/textContent/coveredCount/coveredHash/pdfB64` | `context-pdf-v249`、`summary-pdf-compaction` |
+| I4 | 413 `context_pdf_capacity_exceeded` 的 message/status/code 不变，`param` 分别为 `messages`（chat）/`input`（responses），且发生在 tools PDF 之前 | 构造超页 PDF 用例；`http-contract` 错误矩阵 |
+| I5 | 日志字段名/值不变：`contextPdf/contextPdfReused/contextPdfMoved/contextPdfSaved/toolsPdf/protocolInjected/clientToolsPdf/upstreamMessageCount` | `logs-*`、`history-injection-v248`、`context-pdf-v249` |
+| I6 | `historyInjection` 结构与字段不变（含 `protocolKind`、`PDF_PURPOSE_TEXT`、`firstUserContent`、`chain`、`contextPdfReused`、`compression`） | `history-injection-v248`、`manual-compaction-pdf`、`summary-pdf-compaction` |
+| I7 | 历史展示转换不变：`stripSpillInstruction(...)` + `sanitizeFileMetadata(files)`；无 PDF 时原样返回 `historyMessages` | `/admin/api/history/:id` 详情断言 |
+| I8 | 异常降级不变：PDF / tools PDF 生成失败 → warn 后继续；仅 capacity 超限抛出 | 单测注入抛错 store / 超大会话 |
+| I9 | 不改变 `saveContextPdf` 的 `coveredCount` 计算（从 `conversation` 末尾找首个 `role==='user'` 的下标） | 与改动前 DB 行对比 |
+| I10 | 不改变 `historyMessages` 的传递语义：`params.historyMessages` 仍是展示视图；chat 流式仍用 `guardedMessages`（不顺手修） | 全量测试 + 对比 history 表 |
+
+#### A.4.6 3A 明确“先不要动”
+
+- `pdfScopeKey` / `hashConversationPrefix` / `messageTextChars` 的调用位置与参数（仍在 handler 的规划块）；
+- `guardConversation`、`buildDuckMessages`、`injectProtocolIntoFirstUser`、`buildToolProtocol`（除 3A 内部使用）；
+- `findCompactionMarker` / `resolveConversationSessionKey` / `resolveEpochFlags` / `diffSession`；
+- `saveConversation` / `responseStore.save` / `recordHistoryOnLog` 的调用点；
+- `ctx.chatSession` 的字段集合与 `epoch` 计算（3D 才动）；
+- PDF 生成器本身（`context-pdf.js` / `context-spill.js`）与页数/分页参数；
+- SSE writer、`openSSE`、header 设置。
+
+### A.5 后续切片（Phase 3 完整路线）
+
+**3B — manual compaction（`src/app/session/manual-compaction.js`，低–中风险）**
+
+```js
+export async function prepareManualCompaction({
+  kind, conversationSessionKey, conversationState, marker, responseStore, logger
+}) -> Promise<{
+  manualCompaction: { marker, scopeKey, contextPdfState, compression },
+  logPatch: { manualCompaction: true, compression: {...} }
+} | null>
+```
+
+- 搬 `chat.js` L800–849 与 `responses.js` L432–477（PDF 复用/生成 + `buildCompressionRecord` + 413 映射）；
+- **hot 应用留在各 handler**：chat 仍需 `normalizeChatMessages(marker.hot, {allowEmptyUser:true})` 并合并
+  `systemParts`（L850–866）；responses 仍需 `chainedConversation = marker.hot` + `input.conversation` 赋值（L478）；
+- 顺带抽 `resolveManualCompactionEpoch({conversationState, manualCompaction})`，对应 chat L905–914 / responses L527–536
+  （两段完全相同），返回 `{ sessionEpoch, sessionMode }` 写回 `ctx.log`。
+
+**3C — state 加载 + authoritative diff 包装（`src/app/session/authoritative.js`，中风险）**
+
+```js
+export async function loadConversationState({ responseStore, conversationSessionKey }) // state|null
+export function diffAuthoritativeSession({ ctx, body, state, incoming }) // { diff, epochFlags }
+export function applySessionLogFields(ctx, diff) // sessionMode/sessionEpoch/sessionAppended/sessionRepaired
+```
+
+- 搬 `chat.js` L790–799 + L868–914 与 `responses.js` L422–431 + L488–526 中**相同的骨架**；
+- 保留差异：chat 的 `incoming` 需先过滤 system/developer；responses 用 `replayedInputConversation`；
+  `noop` 报错文案（`no new messages` / `no new input`）与 `mode==='fork'`/`stateRepaired` 后的
+  canonical/previousRecord 重建逻辑仍留在各 handler；
+- 不在本切片改 `systemPrompt` 语义（chat 的 authoritative 覆盖 L927–929 与 responses 的 previousRecord 分支保持原样）。
+
+**3D — 持久化写入（`src/app/session/persistence.js`，中风险）**
+
+```js
+export function nextEpoch({ baseEpoch, requestedEpoch, state, toolsHash, systemPrompt, contextPdfSaved })
+export function buildConversationStateWrite({
+  sessionKey, model, mode, systemPrompt, canonical, upstream, toolsHash,
+  compression, contextPdfScope, compactedAt, images, state, requestedEpoch, contextPdfSaved
+})
+```
+
+- 搬两处完全重复的 epoch IIFE（chat L1415–1425 / responses L894–904）；
+- `assistantCanonical` / `assistantUpstream` 的构造保留在各 handler（chatFinal vs output items 不同）；
+- responses 的 `responseStore.save()`（L845–857）留在 handler。
+
+**3E — 可选 facade（仅在 3A–3D 后仍有明显重复时做）**
+
+- `src/app/session/index.js` 导出 `prepareConversationTurn(...)`；**不要一次性**把两个 handler 改成单入口，
+  否则回滚粒度变大、golden 对比困难。若 3A–3D 后 handler 仍 >600 行，再评估。
+
+### A.6 chat 与 responses 的差异点（Phase 3 必须保留、不能“统一掉”）
+
+1. **输入形状**：`messages`（chat role/content/tool_calls）vs `input`（items：message/function_call/function_call_output/image_generation_call）。
+2. **`previous_response_id`**：responses 一等公民（缺失/过期/`store:false` → 400 `previous_response_not_found`）；
+   chat 无此语义。
+3. **会话模式**：chat 有 `X-Conversation-Mode` / `X-Conversation-Delta` / `config.conversations.mode`（默认 stateless）；
+   responses 固定服务端 canonical + `store` 语义。
+4. **chain 来源**：chat = 客户端回放（authoritative 时只用于 diff）；responses = `previousRecord + outputItemsToConversation + input`。
+5. **`X-Session-Id` 回写**：chat 优先 `ctx.sessionKey`（header/body），responses 只用 `conversationSessionKey`（L792）。
+6. **systemPrompt 语义**：chat 在 authoritative 路径强制复用 `conversationState.systemPrompt`（L927–929）
+   以保证前缀稳定；responses 由 `previousRecord.systemPrompt` + `instructions` 组合，`instructions` 变化会触发 rebuild/新 epoch。
+7. **fork/stateRepaired 应用**：responses 会重建 `previousRecord` 并把 `input.conversation` 置为 canonical；
+   chat 只替换 `messages.conversation`。
+8. **压缩路径**：chat 多一条 `chatSummaries` 旧自动压缩（L1051–1103，依赖 `ctx.chatSummaries`）；
+   responses 没有该路径（只有 PDF 溢出 + manual marker）。**不要合并**。
+9. **PDF scope**：`pdfScopeKey({ kind:'chat'|'responses', previousResponseId?, ... })`；responses 带 `previousResponseId`，
+   scope 不同；复用 gating 分别是 `!storedConversation`（chat）与 `!reusablePrefix`（responses）。
+10. **输出协议**：chat = `data: {...}` chunk + `[DONE]`，with-tools 先收集后回放；responses = 命名事件
+    (`response.created/in_progress/output_item.added/output_text.delta/…/response.completed`，`sequence_number` 递增)，
+    流中错误发 `response.failed` + `error` 事件（L1542–1551 / L1769–1787），chat 发 `data:{error}` + `[DONE]`。
+11. **413 的 `param`**：chat `messages`，responses `input`。
+12. **持久化**：responses 额外写 `responses` 表（`store:false` 可关）；conversation_state 两者都写（ephemeral 除外）。
+13. **history 调用点**：chat 非流式用 `historyMessages`、流式用 `guardedMessages`；responses 始终 `historyMessages`。
+14. **图片-only 回退**：responses 在 complete/stream 中补 message item + 占位文本（v2.40）；chat 用 `message.images`。属输出 mapper，不动。
+15. **legacy 会话兼容**：chat 的 `conversationState.systemPrompt.includes('[对话摘要]')` 分支（L997–1006）为 chat 独有。
+
+### A.7 Phase 3 红线（契约冻结清单）
+
+1. `conversation_state`：`canonical_json` / `upstream_json` / `client_json` / `client_hash` / `tools_hash` /
+   `system_prompt` / `compression_json` / `context_pdf_scope` / `compacted_at` / `images_json` / `epoch` / `first_user_hash`
+   的**内容与写入时机**不变；普通轮次仍精确 append，不每轮 rebuild。
+2. `upstream_json` 前缀逐字节稳定：作者性 session 测试用 `deepEqual(turn2.slice(0, turn1.length), turn1)` 断言，
+   任何“重新序列化/重排字段”都视为回归。
+3. `context_pdfs`：scope key、覆盖消息数/hash、页面/字节、图片嵌入、15 页上限与 413 行为不变。
+4. `responses` / `history` / `test_sessions` 行内容不变；`injection_json` 结构不变。
+5. 工具协议：`client-tools.pdf` 始终附带；首条 user 注入位置不变；文本协议模式（pdfSpill 禁用）不变；
+   `toolsHash` 计算输入不变。
+6. 图片：`image_generation_call` 回放仍为真实 image part；JPEG→PNG ≤512px 只在 duck 层发生一次；
+   history images ≤4 张/≤6MB 结构不变。
+7. 错误码/状态码：`session_history_mismatch`、`conversation_session_conflict`、`context_pdf_capacity_exceeded`、
+   `conversation_limit_reached`、`queue_full/timeout`、`model_requires_subscription` 等全部不变。
+8. 响应头：`X-Session-Id`、`X-Session-Epoch`、`X-Duckai-*`、`X-Request-Id`、`X-Duckai-Queue-Wait` 不变。
+9. 日志字段（43 个 `ctx.log.*` 中与 session/PDF 相关的 14 个）名称与取值不变。
+10. DSH 标题请求（ephemeral）：仍跳过 diff/save，且不污染 canonical/history。
+
+### A.8 验证清单
+
+#### A.8.1 每个切片统一门禁
+
+```powershell
+npm test                                              # 512/512（Phase 3 起新增测试计入）
+node --test --test-isolation=none tests/http-contract-v264.test.js   # Phase 0 契约基线
+node scripts/build-check.mjs                          # 16/16（如动 web 才必须）
+node scripts/page-check.mjs --admin-token <ADMIN> --api-key <KEY>    # 真实网关 22/22
+```
+
+#### A.8.2 3A 专项回归（按不变量映射）
+
+| 不变量 | 必跑测试 |
+| --- | --- |
+| I1 上游 messages 逐字节 | `authoritative-session-v259`、`chat-session-v247`、`responses-chain-v246`、`client-tools-v244`（稳定前缀用例） |
+| I2/I3 PDF 复用与写库 | `context-pdf-v249`（全部）、`summary-pdf-compaction`、`manual-compaction-pdf` |
+| I4 413 | 手工构造 >15 页用例（或临时脚本），断言 `status/code/param` |
+| I5 日志字段 | `logs-split`、`logs-history-v233`、`logs-usage-v224`，并 grep `store.recordUpstream` 入参 |
+| I6 injection | `history-injection-v248`、`manual-compaction-pdf`（L219）、`summary-pdf-compaction`（L232） |
+| I7 历史展示 | `/admin/api/history/:id` 断言（现有测试） |
+| I9 coveredCount | 复跑 `context-pdf-v249`「历史记录包含 PDF 附件元数据」；对比 `context_pdfs` 行 |
+| I10 history 视图 | `openai-chat`、`openai-responses` 全量 + 流式用例 |
+
+#### A.8.3 3A 额外的“字节级”手工核验（建议在 PR 描述贴出）
+
+1. 用 mock 上游跑同一脚本化场景（chat 3 轮 + 1 个 >20k 会话 + 1 个 tools 会话；
+   responses 3 轮 + previous_response_id + 1 个 >20k 会话），记录每轮 `duck.calls.chat.at(-1).params.messages`；
+2. 对比改动前后 JSON（`JSON.stringify` 后逐字节 diff；允许的差异仅 random id/时间戳）；
+3. 用 `sqlite3 data/duckai.db "select canonical_json, upstream_json, client_json, epoch, compression_json, context_pdf_scope, images_json from conversation_state where session_key=..."` 对比；
+4. `/admin/api/history/:id` 的 `messages/injection` 对比。
+
+> 若数据目录隔离不便，可直接复用 `tests/helpers/test-server.js` + `MockDuckClient` 写一个 20 行的临时脚本放在
+> `data/tmp/`（不入库），或由 QA 在 `tests/` 增加一个 golden fixture 用例（推荐后者，Phase 3 PR 一并提交）。
+
+#### A.8.4 真实上游（可选，额度允许时）
+
+- `node scripts/smoke.js --mock --search`（离线）；
+- 需要真实缓存前缀/PDF 复用时再用 `scripts/live-check.mjs` + `page-check --allow-upstream`（先确认额度）。
+
+### A.9 风险、回滚与 PR 拆解
+
+**风险（3A 视角）**
+
+| 风险 | 缓解 |
+| --- | --- |
+| logPatch 应用时机早于 epoch 计算，`contextPdfSaved` 丢失 | handler 在返回后立即 `Object.assign(ctx.log, patch)`，再执行 3D；3A 测试断言 patch 字段 |
+| 返回数组与保存引用不一致，导致 `upstream_json` 少 PDF part | 断言 `chatSession.upstreamBeforeResponse === returned duckMessages`（引用/内容） |
+| 413 抛出点后移，导致先产生 tools PDF | 保持现有分支顺序：reuse → spill → tools PDF；超页在 spill 内抛出 |
+| 日志 warn 文案变化被测试/排障依赖 | 原样保留 `'client tools PDF generation failed'` 等文案 |
+| 显示历史数组被原地修改 | 3A 内部一律返回新数组；`stripSpillInstruction` 返回新对象（与现状一致） |
+| 把 chat 流式 history 的既有不一致“顺手修” | 列入 A.4.6 禁止项 |
+
+**回滚**
+
+- 每个切片是纯搬移 + 参数化：无 schema、无 config、无 API、无存储格式变更；
+- 回滚 = `git revert <slice commit>`；不涉及数据迁移，重启即恢复；
+- 若 3A 出现无法快速定位的 SSE/DB 回归，直接 revert，3B 之前暂停合并。
+
+**建议 PR 拆解（每 PR 独立可合并、可回滚）**
+
+| PR | 内容 | 预期净行数 | 风险 |
+| --- | --- | --- | --- |
+| 3A | `src/app/session/context-assembly.js` + 两处替换 + 单测/黄金用例 | −280 / +200 | 低 |
+| 3B | `src/app/session/manual-compaction.js` | −120 / +90 | 低–中 |
+| 3C | `src/app/session/authoritative.js` | −50 / +40 | 中 |
+| 3D | `src/app/session/persistence.js` | −70 / +50 | 中 |
+| 3E | 可选 facade / admin 复用 | 视收益 | 中 |
+
+> 3A 合并后先观察一轮（全量测试 + page-check + 一次真实网关手工会话），再做 3B。
+> 不在同一 PR 同时做 3A+3B，否则回归来源无法二分。
+
+### A.10 结论
+
+- Phase 3 的**首个可落地切片是 3A**：抽取 `assembleContextMessages()`，替换 chat L1202–1341 与
+  responses L648–788。它不触碰 canonical/epoch/SSE，是当前重复度最高、风险最低的一段。
+- 3B/3C/3D 依次推进；每一段都只搬移与参数化，禁止“顺手优化”。
+- 若 3A 合并后发现 handler 仍难读，再评估 3E facade / admin 复用；**不在 Phase 3 引入 Fastify**。
+
