@@ -32,6 +32,7 @@ on:
 permissions:
   contents: write
   packages: write
+  actions: read
 
 concurrency:
   group: release-${{ inputs.version }}
@@ -53,6 +54,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      actions: read
     uses: ./.github/workflows/docker.yml
     with:
       version: ${{ inputs.version }}
@@ -64,6 +66,7 @@ jobs:
     if: ${{ inputs.publish_github_release }}
     permissions:
       contents: write
+      actions: read
     uses: ./.github/workflows/github-release.yml
     with:
       version: ${{ inputs.version }}

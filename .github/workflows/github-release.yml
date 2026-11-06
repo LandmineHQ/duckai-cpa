@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   release:
@@ -46,6 +47,7 @@ jobs:
         id: prepare
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           RUN_ID: ${{ inputs.run_id }}
         run: |
