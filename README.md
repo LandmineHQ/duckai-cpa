@@ -204,16 +204,17 @@ First start creates `data/config.json` and prints an **admin token** and a defau
 
 ### Prebuilt image versions
 
-The GHCR `docker` workflow is manual: open **Actions → docker → Run workflow**, enter a version (default `latest`) and a successful **build** run id.
+The GHCR `docker` workflow is manual: open **Actions → docker → Run workflow**, enter a **required** version and a successful **build** run id. The Compose file and docs use `latest` by default, but the workflow itself does not default the version; enable `also_latest` to additionally publish `:latest`.
 
-When `version` is `latest` (the default), the image tag is `:latest` and the dashboard version comes from the build artifact `package.json`. For an explicit version such as `v0.1.0` or `beta.0.0.1`, the same value is used as both the image tag and the displayed application version.
+The workflow always requires a version. If you enter `latest`, the dashboard version comes from the build artifact `package.json`; for an explicit version such as `v0.1.0` or `beta.0.0.1`, the same value is used as both the image tag and the displayed application version. The `also_latest` switch additionally pushes `:latest` without changing the selected version tag.
 
 Version input follows Docker tag rules: English letters, digits, `.`, `_` and `-`; examples: `beta.0.0.1`, `v1.0.0-beta.1`, `v0.1.0`. Non-ASCII names are not valid Docker tags. This is separate from the npm `package.json` version (npm requires semver, for example `0.0.1-beta.0`).
 
 ```text
 Actions → build → copy run id
 Actions → docker → Run workflow
-  version: latest
+  version: v0.1.0
+  also_latest: true   # optional, additionally push :latest
   run_id:  <build run id>
 ```
 

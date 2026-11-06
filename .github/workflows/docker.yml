@@ -7,10 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Image version/tag (default: latest; semver, beta.0.0.1, etc.)"
+        description: "Image version/tag (required; e.g. v0.1.0 or beta.0.0.1)"
         required: true
-        default: latest
         type: string
+      also_latest:
+        description: "Also push the :latest tag"
+        required: false
+        default: false
+        type: boolean
       run_id:
         description: "Successful build workflow run id (artifact duckai-cpa-release)"
         required: true
@@ -89,6 +93,23 @@ jobs:
         shell: bash
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve image tags
+        id: tags
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          VERSION: ${{ inputs.version }}
+          ALSO_LATEST: ${{ inputs.also_latest }}
+        run: |
+          {
+            echo "value<<EOF"
+            echo "${IMAGE}:${VERSION}"
+            if [ "$ALSO_LATEST" = "true" ]; then
+              echo "${IMAGE}:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -111,8 +132,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             APP_VERSION=${{ steps.app_version.outputs.value }}
-          tags: |
-            ${{ steps.image.outputs.name }}:${{ inputs.version }}
+          tags: ${{ steps.tags.outputs.value }}
           labels: |
             org.opencontainers.image.version=${{ inputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -127,6 +147,7 @@ jobs:
             echo "### Published image"
             echo ""
             echo "- image: \`${{ steps.image.outputs.name }}:${{ inputs.version }}\`"
+            if [ "${{ inputs.also_latest }}" = "true" ]; then echo "- extra tag: \`${{ steps.image.outputs.name }}:latest\`"; fi
             echo "- application version: \`${{ steps.app_version.outputs.value }}\`"
             echo "- source build run id: \`${{ inputs.run_id }}\`"
             echo "- artifact package version: \`${{ steps.package_version.outputs.value }}\`"
