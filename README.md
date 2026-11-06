@@ -94,8 +94,9 @@ Model IDs are resolved dynamically; aliases (e.g. `gpt-6`, `duck`) are accepted.
 ### Requirements
 
 - **Option A (prebuilt image):** Docker + Docker Compose only
-- **Option B (self-built image):** Docker + Node.js 24+
-- **Option C (npm):** Node.js 24+
+- **Option B (compiled package):** Node.js 24+ only — no npm install, no source build
+
+Publishing is a manual `release` workflow (see [Publishing a version](#publishing-a-version)). `build` only produces an artifact on every push.
 
 ### Option A — Prebuilt image from GHCR (recommended)
 
@@ -141,7 +142,7 @@ volumes:
   duckai-cpa-data:
 ```
 
-The Compose file uses a **named volume**, so Docker initializes `/app/data` with the image's `node:node` ownership; no host-side `chown` is required. If you prefer a host bind mount, see [Permission error: EACCES /app/data](#permission-error-eacces-appdata).
+The Compose file uses a **named volume**, so Docker initializes `/app/data` with the image's `node:node` ownership; no host-side `chown` is required.
 
 Start it:
 
@@ -151,51 +152,41 @@ DUCKAI_CPA_VERSION=latest \
   docker compose up -d
 ```
 
-Open the admin console at <http://127.0.0.1:8787/admin>. The tag comes from the manual Docker workflow; version input rules and examples are in [Prebuilt image versions](#prebuilt-image-versions).
+Open the admin console at <http://127.0.0.1:8787/admin>.
 
-Or use the equivalent one-liner without Compose:
+Or without Compose:
 
 ```bash
 docker pull ghcr.io/landminehq/duckai-cpa:latest
 
 docker run -d --name duckai-cpa -p 8787:8787 \
-  -v "$PWD/data:/app/data" \
+  -v duckai-cpa-data:/app/data \
   -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
   ghcr.io/landminehq/duckai-cpa:latest
 ```
 
-### Option B — Build the Docker image locally
+### Option B — Run the compiled release package
+
+Every published version also has a production archive on GitHub Releases. It contains `src/`, prebuilt `web/` and production `node_modules/`; **do not run `npm install` or build from source**.
 
 ```bash
-git clone https://github.com/LandmineHQ/duckai-cpa.git duckai-cpa
-cd duckai-cpa
+VERSION=v0.1.0
+BASE="https://github.com/LandmineHQ/duckai-cpa/releases/download/${VERSION}"
 
-npm install
-npm run build:web       # the image ships the prebuilt web/ directory
-docker build -t duckai-cpa .
-docker run -d --name duckai-cpa -p 8787:8787 \
-  -v "$PWD/data:/app/data" \
-  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
-  duckai-cpa
+curl -fL -o "duckai-cpa-${VERSION}.tar.gz" "${BASE}/duckai-cpa-${VERSION}.tar.gz"
+curl -fL -o "duckai-cpa-${VERSION}.tar.gz.sha256" "${BASE}/duckai-cpa-${VERSION}.tar.gz.sha256"
+sha256sum -c "duckai-cpa-${VERSION}.tar.gz.sha256"
+
+tar -xzf "duckai-cpa-${VERSION}.tar.gz"
+cd release
+
+DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
+  node src/index.js
 ```
 
-Or with the repository Compose file:
+If the GitHub Release is still a **draft**, open the release page and publish it first, then rerun the download command.
 
-```bash
-docker compose up -d --build
-docker compose logs -f
-```
-
-### Option C — Run directly with npm
-
-```bash
-git clone https://github.com/LandmineHQ/duckai-cpa.git duckai-cpa
-cd duckai-cpa
-
-npm install
-npm run build:web       # build the admin console into web/
-npm start               # gateway on http://127.0.0.1:8787
-```
+The archive is built from the same commit/artifact as the Docker image; it is not the latest working tree. `data/` is created next to the extracted `release/` directory by default; set `DUCKAI_CPA_DATA_DIR` to override it.
 
 ### First start
 
@@ -209,15 +200,9 @@ First start creates `data/config.json` and prints an **admin token** and a defau
 
 ### Permission error: EACCES /app/data
 
-```text
-EACCES: permission denied, open '/app/data/.config.json...tmp'
-```
+The shipped Compose files use a named volume by default, so this normally only happens if you manually switch to a bind mount. The image runs as UID/GID **1000:1000**; a root-owned `./data` bind mount is not writable.
 
-The shipped `docker-compose.yml` and `docker-compose.ghcr.yml` use a **named volume** by default, so this error normally only happens if you manually switch to a bind mount.
-
-The image runs as non-root UID/GID **1000:1000**. A host bind mount such as `./data:/app/data` hides the image's `/app/data` ownership; if `./data` was created by root, the container cannot write config/SQLite files.
-
-If you intentionally use a bind mount, prepare it on Linux:
+If you intentionally use a bind mount on Linux:
 
 ```bash
 docker compose down
@@ -226,7 +211,7 @@ sudo chown -R 1000:1000 data
 docker compose up -d
 ```
 
-Or switch back to a named volume:
+Or use a named volume:
 
 ```yaml
 volumes:
@@ -236,25 +221,32 @@ volumes:
   duckai-cpa-data:
 ```
 
-> Migrating existing bind-mounted data to a named volume is not automatic; copy it first if needed.
+### Publishing a version
+
+1. Push code; the **build** workflow builds the admin console/dependency tree and uploads `duckai-cpa-release`.
+2. Open that successful **build** run and copy its run id.
+3. Run **Actions → release → Run workflow**:
+
+```text
+version: v0.1.0
+run_id:  <build run id>
+publish_ghcr: true
+publish_github_release: true
+also_latest: false    # optional, GHCR only
+```
+
+Both publish targets default to **unchecked**; the workflow refuses to run if neither is selected.
+
+- **GHCR**: publishes `ghcr.io/landminehq/duckai-cpa:<version>`; `also_latest` additionally publishes `:latest`.
+- **GitHub Release**: if the tag/release does not exist, creates a **draft** release; if it already exists, only adds/replaces the release assets (no title/notes/latest changes).
+
+The release workflow reads the selected **build artifact by run id**; it does not rebuild from the current branch.
 
 ### Prebuilt image versions
 
-The GHCR `docker` workflow is manual: open **Actions → docker → Run workflow**, enter a **required** version and a successful **build** run id. The Compose file and docs use `latest` by default, but the workflow itself does not default the version; enable `also_latest` to additionally publish `:latest`.
+The workflow `release` requires a version. `also_latest` only controls the GHCR `:latest` tag. Version input follows Docker tag rules: English letters, digits, `.`, `_` and `-`; examples: `beta.0.0.1`, `v1.0.0-beta.1`, `v0.1.0`. Non-ASCII names are not valid Docker tags. This is separate from the npm `package.json` version (npm requires semver, for example `0.0.1-beta.0`).
 
-The workflow always requires a version. If you enter `latest`, the dashboard version comes from the build artifact `package.json`; for an explicit version such as `v0.1.0` or `beta.0.0.1`, the same value is used as both the image tag and the displayed application version. The `also_latest` switch additionally pushes `:latest` without changing the selected version tag.
-
-Version input follows Docker tag rules: English letters, digits, `.`, `_` and `-`; examples: `beta.0.0.1`, `v1.0.0-beta.1`, `v0.1.0`. Non-ASCII names are not valid Docker tags. This is separate from the npm `package.json` version (npm requires semver, for example `0.0.1-beta.0`).
-
-```text
-Actions → build → copy run id
-Actions → docker → Run workflow
-  version: v0.1.0
-  also_latest: true   # optional, additionally push :latest
-  run_id:  <build run id>
-```
-
-The published image includes the build artifact's admin console and production dependencies; it does not run `npm install` at container start.
+When `version` is `latest`, the GHCR tag is `:latest` and the dashboard version comes from the build artifact `package.json`; for an explicit version such as `v0.1.0` or `beta.0.0.1`, the same value is used as both the image tag and the displayed application version.
 
 ---
 

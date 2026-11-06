@@ -1,10 +1,9 @@
 name: docker
 
-# Manual only: publish an existing build artifact to GHCR.
-# 1. Open the latest successful "build" workflow run and copy its run id.
-# 2. Run this workflow with a version (for example v0.1.0) and that run id.
+# Reusable workflow: publish an existing build artifact to GHCR.
+# Called by release.yml; do not run directly.
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       version:
         description: "Image version/tag (required; e.g. v0.1.0 or beta.0.0.1)"
@@ -56,7 +55,7 @@ jobs:
         with:
           name: duckai-cpa-release
           run-id: ${{ inputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           path: .
 
       - name: Extract release artifact
@@ -121,7 +120,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ github.token }}
 
       - name: Build and push versioned image
         uses: docker/build-push-action@v6

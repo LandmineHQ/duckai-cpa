@@ -1,0 +1,70 @@
+name: release
+
+# Single manual entry point: publish a build artifact to GHCR and create a
+# GitHub Release with the compiled runtime package.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release/image version (required; e.g. v0.1.0 or beta.0.0.1)"
+        required: true
+        type: string
+      also_latest:
+        description: "Also publish :latest to GHCR"
+        required: false
+        default: false
+        type: boolean
+      publish_ghcr:
+        description: "Publish the Docker image to GHCR"
+        required: false
+        default: false
+        type: boolean
+      publish_github_release:
+        description: "Create/update the GitHub Release asset"
+        required: false
+        default: false
+        type: boolean
+      run_id:
+        description: "Successful build workflow run id (artifact duckai-cpa-release)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require at least one publish target
+        if: ${{ !inputs.publish_ghcr && !inputs.publish_github_release }}
+        run: |
+          echo "::error::select publish_ghcr and/or publish_github_release"
+          exit 1
+
+  docker:
+    needs: validate
+    if: ${{ inputs.publish_ghcr }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker.yml
+    with:
+      version: ${{ inputs.version }}
+      also_latest: ${{ inputs.also_latest }}
+      run_id: ${{ inputs.run_id }}
+
+  github-release:
+    needs: validate
+    if: ${{ inputs.publish_github_release }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/github-release.yml
+    with:
+      version: ${{ inputs.version }}
+      run_id: ${{ inputs.run_id }}

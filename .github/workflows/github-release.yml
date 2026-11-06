@@ -1,0 +1,102 @@
+name: github-release
+
+# Reusable workflow: create/update a GitHub Release from a build artifact.
+# Called by release.yml; do not run directly.
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      run_id:
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate inputs
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::invalid version '$VERSION'"
+            exit 1
+          fi
+          if [[ ! "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::run_id must be numeric"
+            exit 1
+          fi
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: duckai-cpa-release
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: assets
+
+      - name: Prepare release asset
+        id: prepare
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          test -f assets/duckai-cpa-release.tar.gz
+          cp assets/duckai-cpa-release.tar.gz "duckai-cpa-${VERSION}.tar.gz"
+          sha256sum "duckai-cpa-${VERSION}.tar.gz" | tee "duckai-cpa-${VERSION}.tar.gz.sha256"
+          BUILD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq .head_sha)
+          test -n "$BUILD_SHA"
+          echo "build_sha=${BUILD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "asset=duckai-cpa-${VERSION}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "checksum=duckai-cpa-${VERSION}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          BUILD_SHA: ${{ steps.prepare.outputs.build_sha }}
+          ASSET: ${{ steps.prepare.outputs.asset }}
+          CHECKSUM: ${{ steps.prepare.outputs.checksum }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            # Existing release/tag: only add or replace the assets.
+            gh release upload "$VERSION" "$ASSET" "$CHECKSUM" --clobber
+            echo "RELEASE_MODE=existing" >> "$GITHUB_ENV"
+          else
+            # New tag/release: create a draft; publish it manually after review.
+            gh release create "$VERSION" \
+              --target "$BUILD_SHA" \
+              --title "$VERSION" \
+              --draft \
+              --generate-notes \
+              "$ASSET" "$CHECKSUM"
+            echo "RELEASE_MODE=draft" >> "$GITHUB_ENV"
+          fi
+
+      - name: Summary
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          RUN_ID: ${{ inputs.run_id }}
+          BUILD_SHA: ${{ steps.prepare.outputs.build_sha }}
+          ASSET: ${{ steps.prepare.outputs.asset }}
+        run: |
+          {
+            echo "### GitHub Release"
+            echo ""
+            echo "- version: \`$VERSION\`"
+            echo "- asset: \`$ASSET\`"
+            echo "- checksum: \`$ASSET.sha256\`"
+            echo "- build run id: \`$RUN_ID\`"
+            echo "- build commit: \`$BUILD_SHA\`"
+            echo "- release mode: \`${RELEASE_MODE:-unknown}\` (new=draft, existing=asset-only)"
+          } >> "$GITHUB_STEP_SUMMARY"
