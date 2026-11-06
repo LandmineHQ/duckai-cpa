@@ -1,4 +1,4 @@
-/**
+﻿/**
  * HTTP server composition root for duckai-cpa v2 (pure node:http).
  *
  * Phase 1（v2.64）：HTTP 核心已拆分到 src/app/http/*，本文件保留 createServer 组合根：
@@ -11,27 +11,17 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  notFound,
-  toOpenAIError
-} from '../openai/errors.js';
-import { handleListModels, listModelsPayload } from '../openai/models.js';
-import { handleChatCompletions } from '../openai/chat.js';
-import { handleCompact } from '../openai/compact.js';
-import { handleResponses } from '../openai/responses.js';
-import { handleImagesGenerations } from '../openai/images.js';
-import { handleAdminRequest } from '../admin/routes.js';
+import { toOpenAIError } from '../openai/errors.js';
 import { createUpstreamQueue } from '../upstream/queue.js';
 import { createSessionsStore } from '../admin/sessions.js';
 import { PROJECT_ROOT } from '../config.js';
 import { createNullLogger } from '../logger.js';
 import { readJsonBody } from '../app/http/body.js';
-import { authorizeAdmin, authorizeV1 } from '../app/http/auth.js';
 import { applyCaptureCors, applyCors } from '../app/http/cors.js';
 import { writeMalformedUrlResponse } from '../app/http/errors.js';
-import { handleFavicon, handleHealthz, handleRoot, requireMethod } from '../app/http/router.js';
-import { resolveStaticPath, serveAdminIndex, serveStaticFile } from '../app/http/static.js';
+import { createRouter } from '../app/http/router.js';
 import { createRequestContextFactory } from '../app/http/context.js';
+import { createAppRoutes } from '../app/routes/index.js';
 
 const SERVICE_NAME = 'duckai-cpa';
 
@@ -290,6 +280,17 @@ export function createServer(options = {}) {
 
   /* ---------------------------- routing ------------------------------ */
 
+  const routeDeps = {
+    config,
+    version,
+    serviceStartedAt,
+    getUpstreamHealth,
+    identities,
+    queue,
+    serviceName: SERVICE_NAME
+  };
+  const router = createRouter(createAppRoutes({ config, webDir, serviceName: SERVICE_NAME }));
+
   async function dispatch(ctx) {
     const { pathname, method } = ctx;
 
@@ -306,135 +307,9 @@ export function createServer(options = {}) {
 
     applyCors(ctx.res, config);
 
-    /* ------------------------------ public -------------------------- */
-    if (pathname === '/healthz' || pathname === '/health') {
-      await handleHealthz(ctx, {
-        serviceName: SERVICE_NAME,
-        version,
-        serviceStartedAt,
-        getUpstreamHealth,
-        identities,
-        queue
-      });
-      return;
-    }
-
-    if (pathname === '/') {
-      handleRoot(ctx, { version, config });
-      return;
-    }
-    if (pathname === '/favicon.ico') {
-      handleFavicon(ctx);
-      return;
-    }
-
-    /* --------------- public: subscription token capture ------------- */
-    // v2.25：duck.ai 页面上的书签脚本会 POST 到这个端点（无 admin token），
-    // 因此必须放在 admin 鉴权之前，并单独放开 CORS（仅允许 duck.ai / 本机来源）。
-    if (pathname === '/admin/api/subscriptions/capture') {
-      if (method === 'OPTIONS') {
-        applyCaptureCors(ctx.res, ctx.req);
-        ctx.head(204);
-        return;
-      }
-      requireMethod(ctx, ['POST'], 'POST, OPTIONS');
-      applyCaptureCors(ctx.res, ctx.req);
-      ctx.log.record = false;
-      const { handleSubscriptionCapture } = await import('../admin/subscriptions-routes.js');
-      await handleSubscriptionCapture(ctx);
-      return;
-    }
-
-    /* ---------------------------- admin API ------------------------- */
-    if (pathname === '/admin/api' || pathname.startsWith('/admin/api/')) {
-      ctx.log.record = true;
-      ctx.log.kind = 'admin';
-      const adminRoute = pathname.slice('/admin/api'.length) || '/';
-      ctx.log.endpoint = `${method} /admin/api${adminRoute}`;
-      authorizeAdmin(ctx, config);
-      await handleAdminRequest(ctx, adminRoute, method);
-      return;
-    }
-
-    /* ------------------------- admin static UI ---------------------- */
-    if (pathname === '/admin' || pathname === '/admin/' || pathname.startsWith('/admin/')) {
-      requireMethod(ctx, ['GET', 'HEAD'], 'GET, HEAD');
-      const relative = pathname === '/admin' || pathname === '/admin/' ? '' : pathname.slice('/admin/'.length);
-      if (!relative) {
-        await serveAdminIndex(ctx, { webDir, serviceName: SERVICE_NAME });
-        return;
-      }
-      const filePath = resolveStaticPath(webDir, relative);
-      if (filePath && (await serveStaticFile(ctx, filePath, { cacheControl: 'public, max-age=3600' }))) return;
-      // SPA fallback for client-side routes (no file extension → index.html).
-      if (!path.extname(relative) && !relative.startsWith('assets/')) {
-        await serveAdminIndex(ctx, { webDir, serviceName: SERVICE_NAME });
-        return;
-      }
-      ctx.text(404, 'Not found', 'text/plain; charset=utf-8');
-      return;
-    }
-
-    /* ------------------------------ OpenAI -------------------------- */
-    if (pathname.startsWith('/v1/')) {
-      ctx.log.record = true;
-      ctx.log.kind = 'upstream';
-      ctx.log.source = 'v1';
-      ctx.log.endpoint = `${method} ${pathname}`;
-      authorizeV1(ctx);
-
-      if (pathname === '/v1/models') {
-        requireMethod(ctx, ['GET', 'HEAD'], 'GET, HEAD');
-        ctx.log.endpoint = 'GET /v1/models';
-        await handleListModels(ctx.req, ctx.res, ctx);
-        return;
-      }
-
-      if (pathname.startsWith('/v1/models/')) {
-        requireMethod(ctx, ['GET', 'HEAD'], 'GET, HEAD');
-        const modelId = decodeURIComponent(pathname.slice('/v1/models/'.length));
-        const found = listModelsPayload(config).data.find((model) => model.id === modelId);
-        if (!found) throw notFound(`Model "${modelId}" not found`, 'model_not_found');
-        ctx.log.endpoint = 'GET /v1/models/:id';
-        ctx.json(200, found);
-        return;
-      }
-
-      if (pathname === '/v1/chat/completions') {
-        requireMethod(ctx, ['POST'], 'POST');
-        ctx.log.endpoint = 'POST /v1/chat/completions';
-        await handleChatCompletions(ctx.req, ctx.res, ctx);
-        return;
-      }
-
-      // v2.21: 客户端显式请求上下文压缩（429/409 后由调用方决定是否压缩）。
-      if (pathname === '/v1/compact') {
-        requireMethod(ctx, ['POST'], 'POST');
-        ctx.log.endpoint = 'POST /v1/compact';
-        await handleCompact(ctx.req, ctx.res, ctx);
-        return;
-      }
-
-      if (pathname === '/v1/responses') {
-        requireMethod(ctx, ['POST'], 'POST');
-        ctx.log.endpoint = 'POST /v1/responses';
-        await handleResponses(ctx.req, ctx.res, ctx);
-        return;
-      }
-
-      if (pathname === '/v1/images/generations') {
-        requireMethod(ctx, ['POST'], 'POST');
-        ctx.log.endpoint = 'POST /v1/images/generations';
-        await handleImagesGenerations(ctx.req, ctx.res, ctx);
-        return;
-      }
-
-      throw notFound(`Unknown request URL: ${method} ${pathname}`);
-    }
-
-    ctx.text(404, 'Not found', 'text/plain; charset=utf-8');
+    const matched = await router.dispatch(ctx, routeDeps);
+    if (!matched) ctx.text(404, 'Not found', 'text/plain; charset=utf-8');
   }
-
   /* --------------------------- http server --------------------------- */
 
   const server = http.createServer((req, res) => {

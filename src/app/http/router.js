@@ -1,6 +1,46 @@
-/** Basic route helpers: /healthz, /, /favicon.ico (Phase 1 split; responses unchanged). */
+/** Basic route helpers: /healthz, /, /favicon.ico + lightweight route registry. */
 import { methodNotAllowed } from '../../openai/errors.js';
 import { getProxyHealthSummary } from '../../admin/proxy-routes.js';
+
+/**
+ * Phase 2：轻量路由注册/分发（仍基于 node:http，不引入框架）。
+ * route: { path, prefix?, handler(ctx, deps) }
+ * - 注册顺序即匹配优先级；
+ * - prefix=true 时匹配 path 本身及 path + '/...'（不会误匹配 /adminX）。
+ */
+export function createRouter(routes = []) {
+  const list = [];
+  function add(route) {
+    if (!route || typeof route.path !== 'string' || typeof route.handler !== 'function') {
+      throw new TypeError('createRouter: route requires { path, handler }');
+    }
+    list.push(route);
+    return route;
+  }
+  for (const route of routes) add(route);
+
+  function matches(route, pathname) {
+    if (!route.prefix) return pathname === route.path;
+    if (pathname === route.path) return true;
+    return pathname.startsWith(route.path.endsWith('/') ? route.path : `${route.path}/`);
+  }
+
+  return {
+    add,
+    get routes() {
+      return list.slice();
+    },
+    /** @returns {Promise<boolean>} true = matched and handler ran; false = no route. */
+    async dispatch(ctx, deps = {}) {
+      for (const route of list) {
+        if (!matches(route, ctx.pathname)) continue;
+        await route.handler(ctx, deps);
+        return true;
+      }
+      return false;
+    }
+  };
+}
 
 export function requireMethod(ctx, allowed, allowHeader = null) {
   if (allowed.includes(ctx.method)) return;
