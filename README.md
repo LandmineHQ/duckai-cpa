@@ -8,8 +8,11 @@
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 [![OpenAI Compatible](https://img.shields.io/badge/OpenAI-API%20Compatible-412991.svg?style=flat-square&logo=openai&logoColor=white)](https://platform.openai.com/docs/api-reference)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+[![build](https://github.com/LandmineHQ/duckai-cpa/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/LandmineHQ/duckai-cpa/actions/workflows/build.yml)
 
 *Use GPT-6, Claude, Mistral and open-source models from Duck.ai through one standard OpenAI interface — with streaming SSE, web search citations, image generation, multi-account routing and a self-hosted dashboard.*
+
+**Repository:** <https://github.com/LandmineHQ/duckai-cpa> · **Actions:** <https://github.com/LandmineHQ/duckai-cpa/actions>
 
 ![DuckAI CPA admin overview](docs/assets/admin-overview.jpg)
 
@@ -96,7 +99,7 @@ Model IDs are resolved dynamically; aliases (e.g. `gpt-6`, `duck`) are accepted.
 ### Option A — Local (recommended)
 
 ```bash
-git clone <your-repo-url> duckai-cpa
+git clone https://github.com/LandmineHQ/duckai-cpa.git duckai-cpa
 cd duckai-cpa
 
 npm install
@@ -129,13 +132,13 @@ Actions → docker → Run workflow
 Pull/run the published image:
 
 ```bash
-# replace <owner>/<repo> with the GitHub repository path
-docker pull ghcr.io/<owner>/<repo>:v0.1.0
+# image built by the manual docker workflow
+docker pull ghcr.io/landminehq/duckai-cpa:v0.1.0
 
 docker run -d --name duckai-cpa -p 8787:8787 \
   -v "$PWD/data:/app/data" \
   -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
-  ghcr.io/<owner>/<repo>:v0.1.0
+  ghcr.io/landminehq/duckai-cpa:v0.1.0
 ```
 
 The workflows use the repository `GITHUB_TOKEN` with `packages: write`; no extra secrets are required. The release image copies the artifact without running `npm install`, and removes npm/corepack from the final stage.
