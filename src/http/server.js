@@ -1,34 +1,19 @@
 /**
- * HTTP server for duckai-cpa v2 (pure node:http).
+ * HTTP server composition root for duckai-cpa v2 (pure node:http).
  *
- * Responsibilities:
- *   - routing for /v1/*, /admin/api/*, /healthz, /admin (static React build)
- *   - **mandatory** Bearer API-key auth for /v1/* (admin token for /admin/api/*)
- *   - CORS (config.server.cors)
- *   - JSON body parsing with a size limit
- *   - SSE writers (unbuffered, flushHeaders, heartbeat, client-disconnect abort)
- *   - upstream RPS queue wiring (`ctx.callUpstream`) + split request logging
- *   - path-traversal-safe static file serving + SPA fallback
- *   - graceful shutdown helper (closes queue, flushes sessions/store)
- *
- * `createServer({ config, store, duck, logger, webDir, queue?, sessions? })`
- * returns a plain `http.Server` so tests can inject a mock DuckClient (and an
- * optional custom queue / sessions store).
+ * Phase 1（v2.64）：HTTP 核心已拆分到 src/app/http/*，本文件保留 createServer 组合根：
+ *   - 依赖装配（queue/sessions/identity/proxy/history...）
+ *   - 路由 dispatch（业务 handler 不变）
+ *   - 请求日志 / graceful shutdown / 对外导出
+ * 路径、鉴权、状态码、错误码、SSE 事件顺序、响应头与请求体限制保持 v2.63 行为不变。
  */
 
 import http from 'node:http';
 import fs from 'node:fs';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import {
-  badRequest,
-  errorPayload,
-  methodNotAllowed,
   notFound,
-  payloadTooLarge,
-  toOpenAIError,
-  unauthorized
+  toOpenAIError
 } from '../openai/errors.js';
 import { handleListModels, listModelsPayload } from '../openai/models.js';
 import { handleChatCompletions } from '../openai/chat.js';
@@ -36,46 +21,19 @@ import { handleCompact } from '../openai/compact.js';
 import { handleResponses } from '../openai/responses.js';
 import { handleImagesGenerations } from '../openai/images.js';
 import { handleAdminRequest } from '../admin/routes.js';
-import { getProxyHealthSummary } from '../admin/proxy-routes.js';
-import { isContextLimitError } from '../openai/context-guard.js';
 import { createUpstreamQueue } from '../upstream/queue.js';
 import { createSessionsStore } from '../admin/sessions.js';
 import { PROJECT_ROOT } from '../config.js';
 import { createNullLogger } from '../logger.js';
-import { timingSafeEqualString } from '../store.js';
+import { readJsonBody } from '../app/http/body.js';
+import { authorizeAdmin, authorizeV1 } from '../app/http/auth.js';
+import { applyCaptureCors, applyCors } from '../app/http/cors.js';
+import { writeMalformedUrlResponse } from '../app/http/errors.js';
+import { handleFavicon, handleHealthz, handleRoot, requireMethod } from '../app/http/router.js';
+import { resolveStaticPath, serveAdminIndex, serveStaticFile } from '../app/http/static.js';
+import { createRequestContextFactory } from '../app/http/context.js';
 
 const SERVICE_NAME = 'duckai-cpa';
-const MAX_BODY_BYTES = 4 * 1024 * 1024;
-const SSE_HEARTBEAT_MS = 15000;
-
-const MIME_TYPES = Object.freeze({
-  '.html': 'text/html; charset=utf-8',
-  '.htm': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.map': 'application/json; charset=utf-8',
-  '.txt': 'text/plain; charset=utf-8',
-  '.md': 'text/markdown; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
-  '.otf': 'font/otf',
-  '.wasm': 'application/wasm'
-});
-
-const CORS_ALLOW_HEADERS = 'Authorization, Content-Type, X-Requested-With, Accept, Origin, X-Api-Key';
-const CORS_ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD';
-const CORS_EXPOSE_HEADERS =
-  'X-Request-Id, X-Duckai-Model, X-Duckai-Reasoning-Effort, X-Duckai-Reasoning-Adjusted, X-Duckai-Reasoning-Note, X-Duckai-Retriable, X-Duckai-Retry-At, X-Duckai-Queue, Retry-After';
 
 /* ------------------------------------------------------------------ */
 /* Package metadata                                                    */
@@ -97,96 +55,6 @@ export function getServiceVersion() {
   const envVersion = typeof process.env.DUCKAI_CPA_VERSION === 'string' ? process.env.DUCKAI_CPA_VERSION.trim() : '';
   if (envVersion) return envVersion.slice(0, 100);
   return getPackageMeta().version || '0.1.0';
-}
-
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
-
-function mimeFor(filePath) {
-  return MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
-}
-
-function extractBearerToken(req) {
-  const header = req.headers?.authorization;
-  if (typeof header === 'string') {
-    const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-    if (match) return match[1].trim();
-  }
-  const apiKeyHeader = req.headers?.['x-api-key'];
-  if (typeof apiKeyHeader === 'string' && apiKeyHeader.trim()) return apiKeyHeader.trim();
-  return null;
-}
-
-async function readJsonBody(req) {
-  const contentLength = Number(req.headers?.['content-length']);
-  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
-    throw payloadTooLarge();
-  }
-  const chunks = [];
-  let total = 0;
-  for await (const chunk of req) {
-    total += chunk.length;
-    if (total > MAX_BODY_BYTES) throw payloadTooLarge();
-    chunks.push(chunk);
-  }
-  if (total === 0) return {};
-  const text = Buffer.concat(chunks).toString('utf8').trim();
-  if (!text) return {};
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw badRequest(`Invalid JSON body: ${error.message}`, null, 'invalid_json');
-  }
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderIntroPage({ version, config }) {
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(SERVICE_NAME)} v2</title>
-  <style>
-    :root { color-scheme: light dark; }
-    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 860px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.65; }
-    code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-    pre { background: rgba(127,127,127,.12); padding: .9rem 1rem; border-radius: .5rem; overflow-x: auto; }
-    table { border-collapse: collapse; width: 100%; }
-    td, th { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid rgba(127,127,127,.25); }
-    .tag { font-size: .8rem; opacity: .75; }
-  </style>
-</head>
-<body>
-  <h1>${escapeHtml(SERVICE_NAME)} <span class="tag">v2</span></h1>
-  <p class="tag">OpenAI-compatible gateway for duck.ai · version ${escapeHtml(version)}</p>
-  <p>管理后台：<a href="/admin/">/admin</a> · 健康检查：<a href="/healthz">/healthz</a></p>
-  <p><strong>v2 起所有 <code>/v1/*</code> 请求必须携带 API Key</strong>（<code>Authorization: Bearer sk-duck-…</code>），首次启动会自动生成 default key 并打印一次，也可在管理后台创建。</p>
-  <table>
-    <tr><th>方法</th><th>路径</th><th>说明</th></tr>
-    <tr><td>GET</td><td><code>/v1/models</code></td><td>模型列表（含免费/付费标记）</td></tr>
-    <tr><td>POST</td><td><code>/v1/chat/completions</code></td><td>对话补全（stream / web_search / image_generation / reasoning_effort）</td></tr>
-    <tr><td>POST</td><td><code>/v1/responses</code></td><td>OpenAI Responses API</td></tr>
-    <tr><td>POST</td><td><code>/v1/images/generations</code></td><td>图片生成</td></tr>
-<tr><td>POST</td><td><code>/v1/compact</code></td><td>客户端显式上下文压缩（返回摘要 + 保留的最近消息）</td></tr>
-    <tr><td>—</td><td><code>/admin/api/*</code></td><td>管理 API（adminToken）</td></tr>
-  </table>
-  <h2>快速开始</h2>
-  <pre>curl http://127.0.0.1:${escapeHtml(config.server.port)}/v1/chat/completions \\
-  -H "Authorization: Bearer $DUCKAI_CPA_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{"model":"gpt-6-luna","messages":[{"role":"user","content":"Hello"}]}'</pre>
-</body>
-</html>`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -289,17 +157,14 @@ export function createServer(options = {}) {
       logger.warn?.('failed to mark identity cooldown', { error: markError.message });
     }
   }
-  // v2.2: explicit identityStore injection (see docs/IDENTITY-SYNC.md). Tests may
-  // inject a mock; when absent the identity/sync/subscription endpoints answer
-  // 503 identity_unavailable while everything else keeps working.
+
+  // v2.2: explicit identityStore injection (see docs/IDENTITY-SYNC.md).
   const identity = options.identity || null;
-  // v2.3: explicit ProxyManager injection (docs/PROXY.md). Absent → /admin/api/proxy
-  // answers 502 proxy_unavailable; everything else keeps working (direct mode).
+  // v2.3: explicit ProxyManager injection (docs/PROXY.md).
   const proxy = options.proxy || null;
-  // v2.4: identity pool (docs/IDENTITY-POOL.md). Absent → pool endpoints answer
-  // 503 identity_pool_unavailable and /v1 falls back to the global DuckClient.
+  // v2.4: identity pool (docs/IDENTITY-POOL.md).
   const identities = options.identities || options.identityPool || null;
-  // v2.5: pairing host service (docs/PAIRING-IMPL.md); absent → pairing endpoints 503.
+  // v2.5: pairing host service (docs/PAIRING-IMPL.md).
   const pairing = options.pairing || null;
   // v2.8: DuckDuckGo Sync server-device registration service.
   const syncDevices = options.syncDevices || null;
@@ -409,500 +274,21 @@ export function createServer(options = {}) {
     getUpstreamHealth
   };
 
-  /* --------------------------- static files --------------------------- */
-
-  function resolveStaticPath(baseDir, relativePath) {
-    let decoded;
-    try {
-      decoded = decodeURIComponent(relativePath);
-    } catch {
-      return null;
-    }
-    if (!decoded || decoded.includes('\0')) return null;
-    const normalized = decoded.replace(/\\/g, '/');
-    if (normalized.startsWith('/')) return null;
-    const segments = normalized.split('/').filter((segment) => segment !== '');
-    if (segments.length === 0) return null;
-    if (segments.some((segment) => segment === '..' || segment === '.' || /^[a-zA-Z]:$/.test(segment))) {
-      return null;
-    }
-    const baseResolved = path.resolve(baseDir);
-    const resolved = path.resolve(baseResolved, ...segments);
-    if (resolved !== baseResolved && !resolved.startsWith(`${baseResolved}${path.sep}`)) return null;
-    return resolved;
-  }
-
-  async function serveStaticFile(ctx, filePath, { cacheControl = 'no-cache' } = {}) {
-    let stat;
-    try {
-      stat = await fsp.stat(filePath);
-    } catch {
-      return false;
-    }
-    if (!stat.isFile()) return false;
-    let data;
-    try {
-      data = await fsp.readFile(filePath);
-    } catch {
-      return false;
-    }
-    const headers = {
-      'Content-Type': mimeFor(filePath),
-      'Content-Length': data.length,
-      'Cache-Control': cacheControl,
-      'X-Content-Type-Options': 'nosniff'
-    };
-    ctx.res.writeHead(200, headers);
-    ctx.sent = true;
-    if (ctx.method === 'HEAD') ctx.res.end();
-    else ctx.res.end(data);
-    return true;
-  }
-
-  async function serveAdminIndex(ctx) {
-    const indexFile = path.join(webDir, 'index.html');
-    if (await serveStaticFile(ctx, indexFile, { cacheControl: 'no-cache' })) return;
-    const html = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>${SERVICE_NAME} · admin</title></head>
-<body style="font-family:system-ui,sans-serif;max-width:720px;margin:3rem auto;line-height:1.6">
-  <h1>管理后台尚未构建</h1>
-  <p>未找到 <code>web/index.html</code>（Vite 构建产物；<code>npm run build:web</code> 生成到 <code>web/</code>）。</p>
-  <p>管理 API 仍然可用：<code>GET /admin/api/overview?token=&lt;adminToken&gt;</code>。</p>
-</body></html>`;
-    ctx.text(404, html, 'text/html; charset=utf-8');
-  }
-
-  /* ------------------------------ SSE -------------------------------- */
-
-  function openSSE(ctx, extraHeaders = {}) {
-    const res = ctx.res;
-    if (res.headersSent) throw new Error('SSE stream already started');
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-      ...(Number.isFinite(ctx.log.queueWaitMs) && ctx.log.queueWaitMs > 0
-        ? { 'X-Duckai-Queue-Wait': String(Math.round(ctx.log.queueWaitMs)) }
-        : {}),
-      ...extraHeaders
-    });
-    res.flushHeaders?.();
-    ctx.log.stream = true;
-
-    let ended = false;
-    const heartbeat = setInterval(() => {
-      if (ended || res.writableEnded || res.destroyed) return;
-      try {
-        res.write(': keep-alive\n\n');
-      } catch {
-        ended = true;
-      }
-    }, SSE_HEARTBEAT_MS);
-    heartbeat.unref?.();
-
-    const writer = {
-      get closed() {
-        return ended || res.writableEnded || res.destroyed;
-      },
-      data(payload) {
-        if (this.closed) return false;
-        try {
-          const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
-          return res.write(`data: ${body}\n\n`);
-        } catch {
-          ended = true;
-          return false;
-        }
-      },
-      event(name, data) {
-        if (this.closed) return false;
-        try {
-          return res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
-        } catch {
-          ended = true;
-          return false;
-        }
-      },
-      comment(text) {
-        if (this.closed) return false;
-        try {
-          return res.write(`: ${text}\n\n`);
-        } catch {
-          ended = true;
-          return false;
-        }
-      },
-      end() {
-        if (ended) return;
-        ended = true;
-        clearInterval(heartbeat);
-        try {
-          if (!res.writableEnded && !res.destroyed) res.end();
-        } catch {
-          // ignore
-        }
-      }
-    };
-    ctx.streamWriter = writer;
-    return writer;
-  }
-
-  /* ---------------------------- request ctx -------------------------- */
-
-  function createRequestContext(req, res, pathname, url) {
-    const requestId = crypto.randomUUID();
-    const startedAt = Date.now();
-    const controller = new AbortController();
-    const abortUpstream = () => {
-      if (!controller.signal.aborted) controller.abort(new Error('client disconnected'));
-    };
-    req.on('aborted', abortUpstream);
-    res.on('close', () => {
-      if (!res.writableEnded) abortUpstream();
-    });
-
-    try {
-      res.setHeader('X-Request-Id', requestId);
-    } catch {
-      // ignore
-    }
-
-    const ctx = {
-      ...baseContext,
-      req,
-      res,
-      url,
-      pathname,
-      method: req.method || 'GET',
-      query: url.searchParams,
-      body: null,
-      signal: controller.signal,
-      requestId,
-      requestStartedAt: startedAt,
-      sent: false,
-      streamWriter: null,
-      upstreamLogged: false,
-      sessionKey: null,
-      identityRoute: null,
-      history,
-      // v2.46：Responses API response chaining 存储（previous_response_id）
-      responsesStore: options.responsesStore || null,
-      // v2.31：查询身份额度时走同一代理
-      usageFetch: proxy ? (url, init) => proxy.fetch(url, init) : null,
-      log: {
-        record: false,
-        kind: 'none',
-        source: 'v1',
-        endpoint: '',
-        model: null,
-        stream: false,
-        promptChars: 0,
-        queueWaitMs: 0,
-        identityId: null,
-        identityLabel: null,
-        sessionKey: null,
-        contextTrimmed: false,
-        upstreamStartedAt: null,
-        error: null,
-        errorDetail: null
-      },
-      /**
-       * v2.4: resolve the identity for this request (session → identity).
-       * Returns null when no pool is injected (v2.3 behaviour).
-       */
-      async selectIdentity(options = {}) {
-        if (!identities) return null;
-        const paidModel = options.paidModel === true;
-        // v2.29：连接测试等场景允许在「已绑定非订阅身份 + 付费模型」时自动改绑到订阅身份，
-        // 而不是直接 403（此前先绑定再请求，付费模型会被路由到 free 身份而失败）。
-        const rebindOnSubscriptionMismatch = options.rebindPaid === true;
-        const sessionKey = options.sessionKey !== undefined ? options.sessionKey : ctx.sessionKey;
-        let routed;
-        try {
-          routed =
-            typeof identities.routeDetailed === 'function'
-              ? await identities.routeDetailed(sessionKey || null, { paidModel, rebindOnSubscriptionMismatch })
-              : { identityId: await identities.route(sessionKey || null, { paidModel }), identity: null };
-        } catch (error) {
-          throw toOpenAIError(error);
-        }
-        const identityId = routed?.identityId ?? routed?.id ?? null;
-        let summary = routed?.identity ?? null;
-        if (!summary && identityId && typeof identities.get === 'function') {
-          try {
-            summary = await identities.get(identityId);
-          } catch {
-            summary = null;
-          }
-        }
-        ctx.identityRoute = {
-          identityId,
-          label: summary?.label ?? null,
-          bound: routed?.bound === true,
-          strategy: routed?.strategy ?? null,
-          // v2.29：是否因付费模型要求而被动改绑，以及原绑定身份
-          rebound: routed?.rebound === true,
-          reboundFrom: routed?.reboundFrom ?? null,
-          paidModel
-        };
-        if (identityId) {
-          ctx.log.identityId = identityId;
-          ctx.log.identityLabel = summary?.label ?? null;
-          try {
-            if (!ctx.res.headersSent) {
-              ctx.res.setHeader('X-Duckai-Identity-Id', identityId);
-              if (summary?.label) ctx.res.setHeader('X-Duckai-Identity-Label', String(summary.label));
-            }
-          } catch {
-            // headers already flushed (SSE) — logs still carry the identity
-          }
-        }
-        return ctx.identityRoute;
-      },
-      /** Run one duck.ai upstream call, via the routed identity runtime when available. */
-      async callUpstream(task, meta = {}) {
-        if (typeof meta.model === 'string' && meta.model) ctx.log.model = meta.model;
-        if (meta.source === 'admin-test') ctx.log.source = 'admin-test';
-        ctx.log.upstreamStartedAt = Date.now();
-        const invoke = (activeTask, runtimeInfo) => (activeTask.length >= 1 ? activeTask(runtimeInfo) : activeTask());
-        const execute = async (activeTask) => {
-          if (identities && ctx.identityRoute?.identityId) {
-            return identities.run(
-              ctx.identityRoute.identityId,
-              async (runtime) => {
-                ctx.log.queueWaitMs = Number.isFinite(runtime?.queueWaitMs) ? runtime.queueWaitMs : 0;
-                const info = {
-                  client: runtime?.client || ctx.duck,
-                  identity: runtime?.identity ?? null,
-                  identityId: runtime?.identityId ?? ctx.identityRoute.identityId,
-                  store: runtime?.store ?? null
-                };
-                return invoke(activeTask, info);
-              },
-              { signal: ctx.signal }
-            );
-          }
-          return queue.run(() => invoke(activeTask, null), {
-            signal: ctx.signal,
-            onStart: ({ queueWaitMs }) => {
-              ctx.log.queueWaitMs = queueWaitMs;
-            }
-          });
-        };
-        try {
-          return await execute(task);
-        } catch (error) {
-          const normalized = toOpenAIError(error);
-          // v2.32：额度耗尽 → 标记身份冷却（临时禁用，绑定保持不变，后续请求按需改绑）
-          await markIdentityCooldownFromError(ctx, error);
-          // v2.21: 会话上限（409）不自动压缩/裁剪，交给调用方（客户端可先 POST /v1/compact）。
-          if (normalized.code === 'conversation_limit_reached') {
-            normalized.hint =
-              '会话已达到 duck.ai 长度上限：请新建会话继续；或由客户端先调用 POST /v1/compact 生成摘要，再用摘要作 system prompt 重新发起请求。';
-            ctx.log.error = normalized.message;
-            throw normalized;
-          }
-          // v2.4 context guard: trim aggressively and retry once when enabled.
-          if (
-            typeof meta.onContextLimitRetry === 'function' &&
-            ctx.config?.context?.onLimit !== 'error' &&
-            isContextLimitError(normalized) &&
-            normalized.code !== 'conversation_limit_reached'
-          ) {
-            try {
-              const retryTask = await meta.onContextLimitRetry(normalized);
-              if (typeof retryTask === 'function') {
-                ctx.log.contextTrimmed = true;
-                return await execute(retryTask);
-              }
-            } catch (retryError) {
-              const retryNormalized = toOpenAIError(retryError);
-              ctx.log.error = retryNormalized.message;
-              throw retryError;
-            }
-          }
-          ctx.log.error = normalized.message;
-          if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
-          throw error;
-        }
-      },
-      /** Record a source="admin-test" upstream log entry (session test handler). */
-      recordUpstream(entry = {}) {
-        if (ctx.upstreamLogged) return;
-        ctx.upstreamLogged = true;
-        try {
-          ctx.store.recordUpstream({
-            source: 'admin-test',
-            endpoint: entry.endpoint || ctx.log.endpoint,
-            model: entry.model ?? ctx.log.model,
-            status: entry.status ?? 500,
-            latencyMs: entry.latencyMs ?? Math.max(0, Date.now() - (ctx.log.upstreamStartedAt || ctx.requestStartedAt)),
-            queueWaitMs: entry.queueWaitMs ?? ctx.log.queueWaitMs,
-            stream: entry.stream !== false,
-            error: entry.error ?? null,
-            errorDetail: entry.errorDetail ?? ctx.log.errorDetail ?? null,
-            identityId: entry.identityId ?? ctx.log.identityId ?? null,
-            identityLabel: entry.identityLabel ?? ctx.log.identityLabel ?? null,
-            sessionKey: entry.sessionKey ?? ctx.log.sessionKey ?? ctx.sessionKey ?? null,
-            requestId: ctx.requestId || null,
-            clientTools: ctx.log.clientTools ?? null,
-            protocolInjected: Boolean(ctx.log.protocolInjected),
-            upstreamMessageCount: ctx.log.upstreamMessageCount ?? null,
-            conversationChain: ctx.log.conversationChain ?? null
-          });
-        } catch (error) {
-          logger.warn?.('failed to record admin-test upstream log', { error: error.message });
-        }
-      },
-      json(status, payload, headers = {}) {
-        if (ctx.sent || res.writableEnded) return;
-        ctx.sent = true;
-        let body;
-        try {
-          body = Buffer.from(JSON.stringify(payload));
-        } catch {
-          body = Buffer.from('{"error":{"message":"response serialization failed","type":"server_error","code":null,"param":null}}');
-          status = 500;
-        }
-        const queueWait = Number.isFinite(ctx.log.queueWaitMs) ? Math.round(ctx.log.queueWaitMs) : 0;
-        res.writeHead(status, {
-          'Content-Type': 'application/json; charset=utf-8',
-          'Content-Length': body.length,
-          ...(queueWait > 0 ? { 'X-Duckai-Queue-Wait': String(queueWait) } : {}),
-          ...headers
-        });
-        if (ctx.method === 'HEAD') res.end();
-        else res.end(body);
-      },
-      text(status, body, contentType = 'text/plain; charset=utf-8', headers = {}) {
-        if (ctx.sent || res.writableEnded) return;
-        ctx.sent = true;
-        const buffer = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
-        res.writeHead(status, {
-          'Content-Type': contentType,
-          'Content-Length': buffer.length,
-          ...headers
-        });
-        if (ctx.method === 'HEAD') res.end();
-        else res.end(buffer);
-      },
-      head(status, headers = {}) {
-        if (ctx.sent || res.headersSent) return;
-        ctx.sent = true;
-        res.writeHead(status, headers);
-        res.end();
-      },
-      openSSE(headers = {}) {
-        return openSSE(ctx, headers);
-      },
-      sendError(error) {
-        const normalized = toOpenAIError(error);
-        ctx.log.error = normalized.message;
-        if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
-        if (res.headersSent) {
-          if (ctx.streamWriter && !ctx.streamWriter.closed) {
-            try {
-              ctx.streamWriter.data(errorPayload(normalized));
-              ctx.streamWriter.end();
-            } catch {
-              // ignore
-            }
-          } else if (!res.writableEnded) {
-            try {
-              res.end();
-            } catch {
-              // ignore
-            }
-          }
-          return;
-        }
-        if (normalized.status === 499) {
-          try {
-            res.statusCode = 499;
-            res.end();
-          } catch {
-            // ignore
-          }
-          return;
-        }
-        ctx.json(normalized.status, errorPayload(normalized), normalized.headers || {});
-      }
-    };
-
-    return ctx;
-  }
-
-  /**
-   * v2.25：capture 端点的 CORS。只允许 duck.ai（浏览器在该页面执行书签）与本机来源，
-   * 避免任意站点借用户浏览器写入订阅。
-   */
-  function applyCaptureCors(res, req) {
-    const origin = String(req?.headers?.origin || '');
-    const allowed =
-      origin === 'https://duck.ai' ||
-      origin === 'https://duckduckgo.com' ||
-      origin === 'null' ||
-      /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin);
-    if (allowed && origin) res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    // Chrome 的 Private Network Access：从公网页面（duck.ai）请求 127.0.0.1 需要显式允许
-    res.setHeader('Access-Control-Allow-Private-Network', 'true');
-    res.setHeader('Access-Control-Max-Age', '600');
-    res.setHeader('Vary', 'Origin');
-  }
-
-  function applyCors(res) {
-    if (!config.server?.cors) return;
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', CORS_ALLOW_METHODS);
-    res.setHeader('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
-    res.setHeader('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
-    res.setHeader('Access-Control-Max-Age', '86400');
-  }
-
-  /* ------------------------------ auth ------------------------------- */
-
-  /** v2: every /v1/* request requires a valid API key (managed or config-file). */
-  function authorizeV1(ctx) {
-    const token = extractBearerToken(ctx.req);
-    if (!token) {
-      throw unauthorized('Missing API key. Provide "Authorization: Bearer <api key>".', 'invalid_api_key');
-    }
-    const authorized =
-      typeof ctx.store.isAuthorizedKey === 'function'
-        ? ctx.store.isAuthorizedKey(token)
-        : Boolean(ctx.store.findManagedKey?.(token));
-    if (!authorized) {
-      throw unauthorized('Incorrect API key provided.', 'invalid_api_key');
-    }
-    ctx.store.touchKey?.(token);
-  }
-
-  function authorizeAdmin(ctx) {
-    let token = extractBearerToken(ctx.req);
-    if (!token && ctx.method === 'GET') {
-      const queryToken = ctx.query.get('token');
-      if (queryToken) token = queryToken;
-    }
-    if (!token) {
-      throw unauthorized(
-        'Missing admin token. Provide "Authorization: Bearer <adminToken>" (or ?token= for GET).',
-        'invalid_admin_token'
-      );
-    }
-    if (!timingSafeEqualString(config.auth?.adminToken || '', token)) {
-      throw unauthorized('Invalid admin token.', 'invalid_admin_token');
-    }
-  }
+  const createRequestContext = createRequestContextFactory({
+    baseContext,
+    config,
+    store,
+    duck,
+    queue,
+    identities,
+    history,
+    responsesStore: options.responsesStore || null,
+    proxy,
+    logger,
+    markIdentityCooldownFromError
+  });
 
   /* ---------------------------- routing ------------------------------ */
-
-  function requireMethod(ctx, allowed, allowHeader = null) {
-    if (allowed.includes(ctx.method)) return;
-    throw methodNotAllowed(ctx.method, allowHeader || allowed.join(', '));
-  }
 
   async function dispatch(ctx) {
     const { pathname, method } = ctx;
@@ -912,58 +298,33 @@ export function createServer(options = {}) {
       if (pathname === '/admin/api/subscriptions/capture') {
         applyCaptureCors(ctx.res, ctx.req);
       } else {
-        applyCors(ctx.res);
+        applyCors(ctx.res, config);
       }
       ctx.head(204);
       return;
     }
 
-    applyCors(ctx.res);
+    applyCors(ctx.res, config);
 
     /* ------------------------------ public -------------------------- */
     if (pathname === '/healthz' || pathname === '/health') {
-      requireMethod(ctx, ['GET', 'HEAD'], 'GET, HEAD');
-      const upstream = await getUpstreamHealth();
-      let identityPool = null;
-      if (identities && typeof identities.getSummary === 'function') {
-        try {
-          const summary = identities.getSummary() || {};
-          let busy = 0;
-          if (typeof identities.queueStats === 'function') {
-            const queueStats = await identities.queueStats();
-            busy = Number(queueStats?.totals?.inFlight) || 0;
-          }
-          identityPool = {
-            total: summary.total ?? 0,
-            enabled: summary.enabled ?? 0,
-            subscribed: summary.subscribed ?? 0,
-            busy
-          };
-        } catch {
-          identityPool = null;
-        }
-      }
-      ctx.json(200, {
-        ok: true,
-        service: SERVICE_NAME,
+      await handleHealthz(ctx, {
+        serviceName: SERVICE_NAME,
         version,
-        uptimeSec: Math.round((Date.now() - serviceStartedAt) / 1000),
-        upstream,
-        proxy: await getProxyHealthSummary(ctx),
-        identityPool,
-        queue: queue.snapshot?.() || null
+        serviceStartedAt,
+        getUpstreamHealth,
+        identities,
+        queue
       });
       return;
     }
 
     if (pathname === '/') {
-      requireMethod(ctx, ['GET', 'HEAD'], 'GET, HEAD');
-      ctx.text(200, renderIntroPage({ version, config }), 'text/html; charset=utf-8');
+      handleRoot(ctx, { version, config });
       return;
     }
     if (pathname === '/favicon.ico') {
-      requireMethod(ctx, ['GET', 'HEAD'], 'GET, HEAD');
-      ctx.head(204);
+      handleFavicon(ctx);
       return;
     }
 
@@ -990,7 +351,7 @@ export function createServer(options = {}) {
       ctx.log.kind = 'admin';
       const adminRoute = pathname.slice('/admin/api'.length) || '/';
       ctx.log.endpoint = `${method} /admin/api${adminRoute}`;
-      authorizeAdmin(ctx);
+      authorizeAdmin(ctx, config);
       await handleAdminRequest(ctx, adminRoute, method);
       return;
     }
@@ -1000,14 +361,14 @@ export function createServer(options = {}) {
       requireMethod(ctx, ['GET', 'HEAD'], 'GET, HEAD');
       const relative = pathname === '/admin' || pathname === '/admin/' ? '' : pathname.slice('/admin/'.length);
       if (!relative) {
-        await serveAdminIndex(ctx);
+        await serveAdminIndex(ctx, { webDir, serviceName: SERVICE_NAME });
         return;
       }
       const filePath = resolveStaticPath(webDir, relative);
       if (filePath && (await serveStaticFile(ctx, filePath, { cacheControl: 'public, max-age=3600' }))) return;
       // SPA fallback for client-side routes (no file extension → index.html).
       if (!path.extname(relative) && !relative.startsWith('assets/')) {
-        await serveAdminIndex(ctx);
+        await serveAdminIndex(ctx, { webDir, serviceName: SERVICE_NAME });
         return;
       }
       ctx.text(404, 'Not found', 'text/plain; charset=utf-8');
@@ -1081,8 +442,7 @@ export function createServer(options = {}) {
     try {
       url = new URL(req.url || '/', 'http://127.0.0.1');
     } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify(errorPayload(badRequest('Malformed request URL'))));
+      writeMalformedUrlResponse(res);
       return;
     }
 
