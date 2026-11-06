@@ -9,13 +9,11 @@
 #   浏览器打开 http://127.0.0.1:8787/admin
 #
 # 数据卷说明：
-#   - 默认挂载 ./data 到 /app/data（保留 config.json / keys.json / logs.json /
-#     stats.json / identity*.json / testsessions.json / pairing.json 等运行数据）
-#   - config/config.example.json 已打进镜像，作为「恢复默认配置」的基线；
-#     实际运行配置写入 data/config.json（在 data 卷内），因此只需挂载 data/
-#   - Linux 宿主机若出现 Permission denied，先执行：
-#       mkdir -p data && sudo chown -R 1000:1000 data
-#   - 也可改用下方注释掉的命名卷（首次会自动继承镜像内 node 属主）
+#   - 默认使用 named volume duckai-cpa-data 挂载到 /app/data，首次创建时自动继承
+#     镜像内 node:node 属主，避免 Linux 宿主机 bind mount 的 EACCES 问题。
+#   - 卷内保留 config.json / keys.json / logs.json / stats.json / identity*.json /
+#     testsessions.json / pairing.json 等运行数据。
+#   - 如需改用宿主机 ./data，请自行确保目录对 UID 1000 可写（chown -R 1000:1000）。
 # ---------------------------------------------------------------------------
 
 services:
@@ -23,7 +21,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: duckai-cpa:0.1.0
+      args:
+        APP_VERSION: ${DUCKAI_CPA_VERSION:-0.1.0}
+    image: duckai-cpa:${DUCKAI_CPA_VERSION:-0.1.0}
     container_name: duckai-cpa
     restart: unless-stopped
 
@@ -41,9 +41,7 @@ services:
       NODE_ENV: "production"
 
     volumes:
-      - ./data:/app/data
-      # 备选（跨平台更省心）：命名卷，注释 bind mount 后启用
-      # - duckai-cpa-data:/app/data
+      - duckai-cpa-data:/app/data
 
     # 优雅停止：给进行中的 SSE 流与原子写留时间
     stop_grace_period: 15s
@@ -71,5 +69,5 @@ services:
         max-size: "10m"
         max-file: "3"
 
-# volumes:
-#   duckai-cpa-data:
+volumes:
+  duckai-cpa-data:

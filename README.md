@@ -117,7 +117,7 @@ services:
       DUCKAI_CPA_VERSION: "${DUCKAI_CPA_VERSION:-latest}"
       NODE_ENV: "production"
     volumes:
-      - ./data:/app/data
+      - duckai-cpa-data:/app/data
     stop_grace_period: 15s
     security_opt:
       - no-new-privileges:true
@@ -136,14 +136,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  duckai-cpa-data:
 ```
 
-On Linux, the container runs as UID/GID `1000:1000` (`node`). If `./data` does not exist or is owned by root, Docker creates it as root and startup fails with `EACCES ... /app/data`. Prepare the host directory first:
-
-```bash
-mkdir -p data
-sudo chown -R 1000:1000 data
-```
+The Compose file uses a **named volume**, so Docker initializes `/app/data` with the image's `node:node` ownership; no host-side `chown` is required. If you prefer a host bind mount, see [Permission error: EACCES /app/data](#permission-error-eacces-appdata).
 
 Start it:
 
@@ -215,9 +213,11 @@ First start creates `data/config.json` and prints an **admin token** and a defau
 EACCES: permission denied, open '/app/data/.config.json...tmp'
 ```
 
-The image runs as non-root UID/GID **1000:1000**. A host bind mount such as `./data:/app/data` hides the image's `/app/data` ownership; if `./data` was created by root (for example by an earlier `docker compose up`), the container cannot write config/SQLite files.
+The shipped `docker-compose.yml` and `docker-compose.ghcr.yml` use a **named volume** by default, so this error normally only happens if you manually switch to a bind mount.
 
-Fix on Linux:
+The image runs as non-root UID/GID **1000:1000**. A host bind mount such as `./data:/app/data` hides the image's `/app/data` ownership; if `./data` was created by root, the container cannot write config/SQLite files.
+
+If you intentionally use a bind mount, prepare it on Linux:
 
 ```bash
 docker compose down
@@ -226,7 +226,7 @@ sudo chown -R 1000:1000 data
 docker compose up -d
 ```
 
-Alternative: use a named volume instead of a bind mount, so Docker initializes `/app/data` with the image's ownership:
+Or switch back to a named volume:
 
 ```yaml
 volumes:
