@@ -33,8 +33,9 @@ jobs:
           VERSION: ${{ inputs.version }}
           RUN_ID: ${{ inputs.run_id }}
         run: |
-          if [[ ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            echo "::error::version may only contain letters, digits, '.', '_' and '-'"
+          # Docker tag rule: start alphanumeric/underscore, then letters/digits/._-
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::invalid version/tag '$VERSION'. Use letters, digits, '.', '_' or '-', start with a letter/digit/underscore, max 128 chars (examples: v0.1.0, beta.0.0.1, v1.0.0-beta.1)."
             exit 1
           fi
           if [[ ! "$RUN_ID" =~ ^[0-9]+$ ]]; then

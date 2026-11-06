@@ -140,6 +140,8 @@ docker run -d --name duckai-cpa -p 8787:8787 \
 
 The workflows use the repository `GITHUB_TOKEN` with `packages: write`; no extra secrets are required. The release image copies the artifact without running `npm install`, and removes npm/corepack from the final stage.
 
+The manual `version` input follows Docker tag rules: English letters, digits, `.`, `_` and `-` are supported, for example `beta.0.0.1`, `v1.0.0-beta.1` or `v0.1.0`. Non-ASCII names are not valid Docker tags. This workflow version is separate from the npm `package.json` version (npm requires semver, for example `0.0.1-beta.0`).
+
 Application version is not hardcoded in the frontend: the backend reads `package.json` (falling back to `0.1.0` only if unavailable), and the admin console renders `service.version` from `/admin/api/overview`. For published images the manual Docker workflow also sets `DUCKAI_CPA_VERSION` from the version input, so the image tag and the version shown in the dashboard stay in sync.
 
 ### Option B — Docker
