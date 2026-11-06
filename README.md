@@ -115,6 +115,24 @@ First start creates `data/config.json` and prints an **admin token** and a defau
 
 > `data/` contains secrets (tokens, identity keys, pairing codes). Keep file mode `0600`, never commit it.
 
+### Option B — Docker
+
+```bash
+npm install && npm run build:web     # the image ships the prebuilt web/ directory
+docker build -t duckai-cpa .
+docker run -d --name duckai-cpa -p 8787:8787 \
+  -v "$PWD/data:/app/data" \
+  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
+  duckai-cpa
+```
+
+Or with Compose:
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
 ### Option C — Prebuilt image from GHCR
 
 The repository has two workflows:
@@ -141,29 +159,21 @@ docker run -d --name duckai-cpa -p 8787:8787 \
   ghcr.io/landminehq/duckai-cpa:v0.1.0
 ```
 
+Or with Compose:
+
+```bash
+DUCKAI_CPA_VERSION=v0.1.0 \
+  DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
+  docker compose -f docker-compose.ghcr.yml up -d
+```
+
+The GHCR Compose file pins the image tag through `DUCKAI_CPA_VERSION` and passes the same value to the running service, so the dashboard version matches the image tag.
+
 The workflows use the repository `GITHUB_TOKEN` with `packages: write`; no extra secrets are required. The release image copies the artifact without running `npm install`, and removes npm/corepack from the final stage.
 
 The manual `version` input follows Docker tag rules: English letters, digits, `.`, `_` and `-` are supported, for example `beta.0.0.1`, `v1.0.0-beta.1` or `v0.1.0`. Non-ASCII names are not valid Docker tags. This workflow version is separate from the npm `package.json` version (npm requires semver, for example `0.0.1-beta.0`).
 
 Application version is not hardcoded in the frontend: the backend reads `package.json` (falling back to `0.1.0` only if unavailable), and the admin console renders `service.version` from `/admin/api/overview`. For published images the manual Docker workflow also sets `DUCKAI_CPA_VERSION` from the version input, so the image tag and the version shown in the dashboard stay in sync.
-
-### Option B — Docker
-
-```bash
-npm install && npm run build:web     # the image ships the prebuilt web/ directory
-docker build -t duckai-cpa .
-docker run -d --name duckai-cpa -p 8787:8787 \
-  -v "$PWD/data:/app/data" \
-  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
-  duckai-cpa
-```
-
-Or with Compose:
-
-```bash
-docker compose up -d --build
-docker compose logs -f
-```
 
 ---
 
