@@ -1,4 +1,4 @@
-/**
+﻿/**
  * v2.31：SQLite 持久层（node:sqlite，Node 24 内置）。
  *
  * 目的：身份池 / 订阅 / 会话绑定 / 日志 / 用量 / 会话历史等「列表型」数据改用 SQLite，
@@ -15,18 +15,33 @@ import path from 'node:path';
 
 let DatabaseSync = null;
 let sqliteLoadError = null;
+let sqliteDriver = null;
 
 async function loadSqlite() {
   if (DatabaseSync) return DatabaseSync;
   if (sqliteLoadError) throw sqliteLoadError;
   try {
+    // windows 平台分支（bun exe）：Bun（含 bun 编译的 exe）没有实现 node:sqlite，
+    // 回退到 src/platform/sqlite-bun.js（bun:sqlite 兼容层）；Node 24 保持原生。
+    if (typeof Bun !== 'undefined') {
+      const mod = await import('./platform/sqlite-bun.js');
+      DatabaseSync = mod.DatabaseSync;
+      sqliteDriver = 'bun:sqlite';
+      return DatabaseSync;
+    }
     const mod = await import('node:sqlite');
     DatabaseSync = mod.DatabaseSync;
+    sqliteDriver = 'node:sqlite';
     return DatabaseSync;
   } catch (error) {
     sqliteLoadError = error;
     throw error;
   }
+}
+
+/** 当前 SQLite 驱动（`node:sqlite` | `bun:sqlite` | null；排障/测试用）。 */
+export function getSqliteDriver() {
+  return sqliteDriver;
 }
 
 const SCHEMA = `

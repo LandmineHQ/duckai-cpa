@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Configuration loading / validation / merging for duckai-cpa (v2).
  *
  * Layering (lowest → highest precedence):
@@ -21,11 +21,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 import { normalizeDuckAiCustomization } from './duck/prompt.js';
-import { fileURLToPath } from 'node:url';
+import { APP_ROOT, DEFAULT_DATA_BASE } from './platform.js';
 import { atomicWriteJson, readJsonFileSafe } from './store.js';
 
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
-export const PROJECT_ROOT = path.resolve(MODULE_DIR, '..');
+// windows 平台分支（bun exe）：源码运行时为仓库根；bun 编译 exe 中为嵌入资源
+// 所在的只读虚拟根（web/、config/、package.json 都在这里）。
+export const PROJECT_ROOT = APP_ROOT;
 
 export const LOG_LEVELS = Object.freeze(['debug', 'info', 'warn', 'error', 'silent']);
 export const REASONING_EFFORTS = Object.freeze(['none', 'minimal', 'low', 'medium', 'high']);
@@ -521,20 +522,28 @@ function sanitizeStringMap(value, { allowEmpty = true } = {}) {
 /* Paths                                                               */
 /* ------------------------------------------------------------------ */
 
-export function resolvePaths(env = process.env, rootDir = PROJECT_ROOT) {
+/**
+ * 计算运行时路径。
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {string} [rootDir] 只读资源根（web/config/package.json）；默认 PROJECT_ROOT。
+ * @param {string} [dataBase] 数据目录基准；默认 DEFAULT_DATA_BASE（编译 exe 为 exe 目录，源码为仓库根）。
+ */
+export function resolvePaths(env = process.env, rootDir = PROJECT_ROOT, dataBase = DEFAULT_DATA_BASE) {
+  const resolvedRoot = path.resolve(rootDir);
+  const resolvedDataBase = path.resolve(dataBase);
   const dataDir = env.DUCKAI_CPA_DATA_DIR
-    ? path.resolve(rootDir, String(env.DUCKAI_CPA_DATA_DIR))
-    : path.join(rootDir, 'data');
+    ? path.resolve(resolvedDataBase, String(env.DUCKAI_CPA_DATA_DIR))
+    : path.join(resolvedDataBase, 'data');
   const configPath = env.DUCKAI_CPA_CONFIG_PATH
-    ? path.resolve(rootDir, String(env.DUCKAI_CPA_CONFIG_PATH))
+    ? path.resolve(resolvedDataBase, String(env.DUCKAI_CPA_CONFIG_PATH))
     : path.join(dataDir, 'config.json');
   return {
-    rootDir,
+    rootDir: resolvedRoot,
     dataDir,
     configPath,
-    examplePath: path.join(rootDir, 'config', 'config.example.json'),
-    webDir: path.join(rootDir, 'web'),
-    packagePath: path.join(rootDir, 'package.json')
+    examplePath: path.join(resolvedRoot, 'config', 'config.example.json'),
+    webDir: path.join(resolvedRoot, 'web'),
+    packagePath: path.join(resolvedRoot, 'package.json')
   };
 }
 

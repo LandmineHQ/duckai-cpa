@@ -1,0 +1,110 @@
+name: build-windows-exe
+
+# 手动构建 Windows x64 单文件 exe（Bun `bun build --compile`）。
+# 仅 workflow_dispatch 触发；不要给 push 增加触发器（与 build.yml 的 ubuntu 构建互相独立）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-exe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-exe:
+    name: Build duckai-cpa.exe (windows-x64)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Show toolchain versions
+        shell: pwsh
+        run: |
+          node --version
+          npm --version
+          bun --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build admin console
+        run: npm run build:web
+
+      # 构建脚本会定位 PATH 中的 Bun（>= 1.4.4），幂等打 node_modules/css-tree 补丁，
+      # 再执行 bun build --compile --trim --asset=web --asset=config --asset=package.json。
+      - name: Compile Windows executable
+        run: node scripts/build-exe.mjs --skip-web-build
+
+      - name: Write RUN-README.txt
+        shell: pwsh
+        run: |
+          $readme = @'
+          DuckAI CPA — Windows x64 单文件版
+          =================================
+
+          文件:
+            duckai-cpa.exe   单文件服务（约 148 MB，无需 Node.js / node_modules）
+
+          运行:
+            1. 双击 duckai-cpa.exe（或在本目录打开 PowerShell 执行 .\duckai-cpa.exe）
+            2. 首次启动会在 exe 同目录生成 data\config.json，并打印 adminToken 与默认 API Key
+            3. 管理后台: http://127.0.0.1:8787/admin/
+            4. OpenAI 兼容接口: http://127.0.0.1:8787/v1
+
+          环境变量:
+            DUCKAI_CPA_DATA_DIR      数据目录（默认 <exe 所在目录>\data）
+            DUCKAI_CPA_CONFIG_PATH   配置文件路径（默认 <数据目录>\config.json）
+            DUCKAI_CPA_HOST          监听地址（默认 127.0.0.1）
+            DUCKAI_CPA_PORT          监听端口（默认 8787）
+            DUCKAI_CPA_ADMIN_TOKEN   覆盖管理后台 token
+
+          注意:
+            - 未签名单文件，Windows SmartScreen 可能提示，点击「更多信息 → 仍要运行」
+            - 首次启动/解压稍慢、文件较大属正常
+            - 详细构建与排障见仓库 docs/WINDOWS-BUILD.md
+          '@
+          Set-Content -Path dist/windows-x64/RUN-README.txt -Value $readme -Encoding utf8
+          Get-Item dist/windows-x64/RUN-README.txt | Select-Object Length, FullName
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: duckai-cpa-windows-x64
+          path: |
+            dist/windows-x64/duckai-cpa.exe
+            dist/windows-x64/RUN-README.txt
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Build summary
+        shell: pwsh
+        run: |
+          $exe = Get-Item dist/windows-x64/duckai-cpa.exe
+          $sizeMb = [math]::Round($exe.Length / 1MB, 1)
+          $bunVersion = (bun --version)
+          $lines = @(
+            '### Windows exe artifact',
+            '',
+            ('- commit: ' + $env:GITHUB_SHA),
+            ('- bun: ' + $bunVersion),
+            '- exe: dist/windows-x64/duckai-cpa.exe',
+            ('- size: ' + $sizeMb + ' MB'),
+            '- artifact: duckai-cpa-windows-x64 (retention 30 days)'
+          )
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

@@ -20,6 +20,8 @@ npm run dev               # 热重载
 npm run build:web         # 构建管理后台 → web/（会改 index-*.js hash）
 npm test                  # ★ 全量测试；只有它算数（见下方“测试铁律”）
 node scripts/build-check.mjs
+node scripts/build-exe.mjs     # windows 分支：bun 编译单文件 exe → dist/windows-x64/duckai-cpa.exe（需 Bun >= 1.4.4）
+node scripts/verify-exe.mjs    # windows 分支：对编译 exe 做端到端 HTTP 断言（离线）
 node scripts/page-check.mjs --admin-token <ADMIN> --api-key <KEY>   # 对真实网关
 node scripts/smoke.js --mock --search
 node scripts/live-check.mjs            # 真实上游（消耗匿名额度，先确认）
@@ -376,6 +378,24 @@ data/                运行时数据（不入库；含敏感文件）
 - **BLOCKED**：continuation 真实上游实机验证被上游临时 `451 ERR_COUNTRY_NOT_SUPPORTED` 软限流阻断
   （手动同头请求亦复现）；额度恢复后跑 `recon/2026-11-06/scratch-lead/live-continuation-check.mjs`。
 - **未修（设计级）**：多身份并发 / admin 旁路 `/status`（`identity-pool` 每身份队列、usage 轮询）。
+
+## 9.3 windows 平台分支：bun 单文件 exe（2026-11-06）
+
+- **目的**：在 main 的 Node/Docker 分发之外，额外提供 Windows x64 单文件 `duckai-cpa.exe`
+  （`bun build --compile`），目标机无需 Node.js/Bun/node_modules；`web/`、`config/`、`package.json`
+  用 `--asset` 嵌入 exe 的只读虚拟根（Windows 为 `B:\~BUN\root\`），运行时数据默认写 exe 同目录 `data/`（便携模式）。
+- **关键实现**：`src/platform.js`（编译态检测 `~BUN`/`$bunfs`、`APP_ROOT`/`EXE_DIR`/`DEFAULT_DATA_BASE`）；
+  `src/config.js` 的 `resolvePaths()` 数据基准（编译时 = exe 目录）；`src/db.js` + `src/platform/sqlite-bun.js`
+  （Bun 没有 `node:sqlite`，回退 `bun:sqlite` 兼容层）；`src/duck/prompt.js` 改为静态 JSON import
+  （编译后 `new URL(..., import.meta.url)` 会指向 exe，读不到 duckai-roles.json）。
+- **构建**：`node scripts/build-exe.mjs`（自动幂等打 `node_modules/css-tree` 两个 createRequire 补丁；
+  `BUN_BIN` 可指定 Bun >= 1.4.4），产物 `dist/windows-x64/duckai-cpa.exe` 约 148.7 MB。
+  Bun `--trim` 已默认开启，但本项目实测体积收益可忽略（约 0.5 KB）。
+- **验证**：`node scripts/verify-exe.mjs`（离线 HTTP 断言 + 重启后 adminToken 持久化）；
+  浏览器 MCP 实机访问 `/admin/`；文档 `docs/WINDOWS-BUILD.md`、`docs/WINDOWS-EXE-VERIFICATION.md`；
+  CI 工作流 `build-windows-exe` 仅手动触发。
+- **未支持**：Windows 图标、代码签名、arm64/32 位、Linux 交叉编译；Bun 的 fastify 适配器在 exe 中可用
+  （stderr 有一条 Fastify `disableRequestLogging` 弃用警告，不影响功能）。
 
 ## 10. 文档索引
 

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * v2.28：duck.ai 默认提示词生成器。
  *
  * 依据 duck.ai 前端源码（entry.duckai bundle，模块 66400 / 2347xxx–2357xxx）：
@@ -10,18 +10,18 @@
  *  - tone/length/clarity 的原文见下方常量（逐字取自源码）；assistant/user role 的整段提示词
  *    从源码对象提取到 `duckai-roles.json`（24 个 assistant role + 6 个 user role）。
  */
-import fs from 'node:fs';
+// windows 平台分支（bun exe）：duckai 角色表改为静态 JSON import。
+// 原实现用 `new URL('./duckai-roles.json', import.meta.url)` + fs 读取，
+// 但 bun 编译成单文件 exe 后 import.meta.url 指向 exe 自身，运行时读不到
+// 该资源；静态 import 由打包器内联，Node 24 与 Bun 均支持 import attributes。
+import roleTablesJson from './duckai-roles.json' with { type: 'json' };
 
-const rolesPath = new URL('./duckai-roles.json', import.meta.url);
+const FALLBACK_ROLE_TABLES = { assistant: { Default: '' }, user: { Default: '' } };
 
 let roleTables = null;
 function loadRoleTables() {
   if (roleTables) return roleTables;
-  try {
-    roleTables = JSON.parse(fs.readFileSync(rolesPath, 'utf8'));
-  } catch {
-    roleTables = { assistant: { Default: '' }, user: { Default: '' } };
-  }
+  roleTables = roleTablesJson && typeof roleTablesJson === 'object' ? roleTablesJson : FALLBACK_ROLE_TABLES;
   return roleTables;
 }
 

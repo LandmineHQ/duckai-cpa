@@ -12,6 +12,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "build:web": "vite build --config webapp/vite.config.ts --configLoader native",
+    "build:exe": "node scripts/build-exe.mjs",
     "dev:web": "vite --config webapp/vite.config.ts --configLoader native",
     "preview:web": "vite preview --config webapp/vite.config.ts --configLoader native",
     "smoke": "node scripts/smoke.js",

@@ -778,3 +778,76 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 3 | chat 保存 `upstream_json` 的 assistant 快照附带生成图片，下一轮 prefix-reuse 由 `buildUpstreamMessages` 挂到新 user | ✅ | `tests/image-only-context-v258.test.js` 生图后继续回复 |
 | 4 | 上游调试视图对 `b64` 字段脱敏 | ✅ | `tests/history-injection-v248.test.js` |
 | 5 | 现有 `sess_bde98296aebf5a8d040cdf3f` 的旧 history 记录按 test session 重建（8 条消息，图片独立） | ✅ | 详情 API 实测：user → assistant(image) → user → assistant(image) |
+
+## 2.56 windows 平台分支：Bun 单文件 exe（build + 实机验证）
+
+> 分支：`windows`（2026-11-06）。目标：在 main 的 Node/Docker 分发之外，提供 Windows x64 单文件
+> `duckai-cpa.exe`：`bun build --compile` 打包完整依赖图，`--asset` 内嵌 `web/`、`config/`、`package.json`；
+> 双击启动即运行 `src/index.js`，数据默认写到 exe 同目录 `data/`。
+> 构建机要求：Windows x64 + Node 24 + **Bun 1.4.4**（系统 bun 已从 1.3.14 升级到 1.4.4）。
+
+### 2.56.1 改动清单
+
+| 文件 | 说明 |
+| --- | --- |
+| `src/platform.js`（新增） | 编译态检测（`~BUN`/`$bunfs` 虚拟根）、`APP_ROOT`/`EXE_DIR`/`DEFAULT_DATA_BASE`；纯函数可单测 |
+| `src/config.js` | `PROJECT_ROOT` 改为 `APP_ROOT`；`resolvePaths()` 数据目录基准改为 `DEFAULT_DATA_BASE`（编译时 = exe 目录） |
+| `src/db.js` + `src/platform/sqlite-bun.js`（新增） | Bun 没有 `node:sqlite` → 回退 `bun:sqlite` 兼容层（exec/prepare/all/get/run/close、WAL、事务）；Node 24 仍走原生 `node:sqlite` |
+| `src/duck/prompt.js` | `duckai-roles.json` 改为静态 JSON import（编译后 `new URL(..., import.meta.url)` 指向 exe，运行时读不到） |
+| `scripts/build-exe.mjs`（新增） | Bun 定位/版本校验、web 产物检查、幂等 css-tree 补丁、`bun build --compile --trim --asset=…`、产物校验 |
+| `package.json` | 新增 `build:exe` 脚本 |
+| `.github/workflows/build-windows-exe.yml`（新增） | 手动 `workflow_dispatch`：windows-latest 构建并上传 artifact |
+| `tests/platform-paths.test.js`（新增） | 编译态/源码态路径解析单测 |
+| `scripts/verify-exe.mjs`（新增） | exe 端到端离线验证（HTTP 断言 + 重启持久化） |
+| `docs/WINDOWS-BUILD.md` / `docs/WINDOWS-EXE-VERIFICATION.md`（新增） | 构建与验证文档 |
+| `README.md` / `AGENTS.md` | 新增 Option C / windows 分支说明 |
+
+### 2.56.2 构建结果（已验证）
+
+- `node scripts/build-exe.mjs --skip-web-build`：**exit 0**，bundle **1630 modules**，产物
+  `dist/windows-x64/duckai-cpa.exe` = **148,663,808 字节（148.7 MB）**，compile 约 1.6–5.7s。
+- exe 元数据：ProductName `DuckAI CPA`、CompanyName `duckai-cpa`、FileVersion/ProductVersion `0.1.0.0`。
+- `--trim` 实测体积收益可忽略（与不开启相差约 0.5 KB），仍默认开启；`--skip-trim` 保留作排障。
+- `BUN_BIN` 指向 1.3.14 会被正确拒绝（版本过低）；`--skip-trim` / `--no-assets` / `--outfile` 组合均验证通过。
+- 构建前会自动把 `node_modules/css-tree/lib/{data-patch,version}.js` 的
+  `createRequire(import.meta.url)` 改为静态 JSON import（幂等；Bun 打包后运行时无法解析原写法）。
+
+### 2.56.3 验证矩阵（全部通过）
+
+| 检查 | 命令 | 结果 |
+| --- | --- | --- |
+| 全量单测 | `npm test` | **522 / 522 PASS**，exit 0 |
+| 构建产物自检 | `node scripts/build-check.mjs` | **16 / 16 PASS** |
+| 页面级检查（对编译 exe 网关） | `node scripts/page-check.mjs --base-url http://127.0.0.1:8787 --admin-token … --api-key …` | **22 / 22 PASS**（Sync 未配置 2 项 SKIP） |
+| mock 冒烟 | `node scripts/smoke.js --mock --search` | **9 / 9 PASS** |
+| exe 端到端（离线） | `node scripts/verify-exe.mjs --exe dist/windows-x64/duckai-cpa.exe --timeout 30000` | **8 / 8 PASS**（首次启动 + 重启持久化） |
+
+`verify-exe` 覆盖：`/healthz` 200 且 `ok=true`、`/admin/` 返回内嵌 HTML 且引用 3 个 `/admin/assets/*`、
+静态资源 200 + content-type、`/admin/api/overview`、`/v1/models`（20 个模型）、
+数据目录生成 `config.json` + `duckai.db`、重启后 adminToken 与默认 API Key 保持一致。
+exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`config/`），证明单文件分发成立。
+
+### 2.56.4 实机（浏览器）验证
+
+- MCP `chrome-devtools` 打开 `http://127.0.0.1:8787/admin/?token=…`：
+  概览页、设置页均正常渲染并加载真实管理 API 数据（队列配置、提示词、工具开关、日志级别），
+  控制台**无 error/warn**；截图 `docs/assets/windows-exe-admin-overview.png`
+  （本地另存 `docs/screenshots/windows-exe-admin-overview.png`）。
+- 页面内嵌资源直接由 exe 的虚拟文件系统提供（`node:fs` 读取 `B:\~BUN\root\web\…` 成功）。
+- 环境变量覆盖验证：`DUCKAI_CPA_PORT=18787` + `DUCKAI_CPA_DATA_DIR=<绝对路径>` 启动成功，
+  数据写入指定目录；默认模式数据写在 exe 同目录 `data/`，重启复用同一 adminToken / 身份。
+
+### 2.56.5 依赖运行验证（编译 exe 内）
+
+编译一个 `--trim` 探针 exe，验证打包后主要依赖可用：`createContextPdf`/`createToolsPdf`
+（pdf-lib + fontkit，含 Windows 系统中文字体）、`gpt-tokenizer`、`jpeg-js`、`pngjs`、`socks` 均输出正常。
+
+### 2.56.6 已知限制 / BLOCKED
+
+- **真实上游未在 exe 中验证**：本沙箱出口 IP 访问 `duck.ai` 返回 `451 ERR_COUNTRY_NOT_SUPPORTED`
+  （与 v2.63 记录一致），因此 exe 内真实 chat/image 未验收；协议层由 Node 单测覆盖，
+  `/healthz` 在离线时按设计降级为 `upstream.ok=false`（仍 200），`verify-exe` 已按离线语义断言。
+- **Fastify 弃用警告**：exe 默认 fastify 适配器在 Bun 下可正常服务，stderr 有一条
+  `FSTDEP023 disableRequestLogging deprecated`（不影响功能）。
+- 未做 Windows 图标、代码签名、arm64/32 位、Linux 交叉编译；SmartScreen/杀软误报已在文档说明。
+- CI `build-windows-exe` 仅做了本地 YAML/PowerShell 语法校验，未在 GitHub 实际运行。

@@ -95,6 +95,7 @@ Model IDs are resolved dynamically; aliases (e.g. `gpt-6`, `duck`) are accepted.
 
 - **Option A (prebuilt image):** Docker + Docker Compose only
 - **Option B (compiled package):** Node.js 24+ only — no npm install, no source build
+- **Option C (Windows exe):** nothing on the target machine — the build itself needs Windows x64 + Node.js 24+ + Bun 1.4.4+ (see below)
 
 Publishing is a manual `release` workflow (see [Publishing a version](#publishing-a-version)). `build` only produces an artifact on every push.
 
@@ -201,6 +202,41 @@ sha256sum duckai-cpa.tar.gz
 If the GitHub Release is still a **draft**, open the release page and publish it first, then rerun the download command.
 
 The archive is built from the same commit/artifact as the Docker image; it is not the latest working tree. `data/` is created next to the extracted `release/` directory by default; set `DUCKAI_CPA_DATA_DIR` to override it.
+
+### Option C — Windows single-file executable (`windows` branch)
+
+The **`windows`** branch packages the whole gateway — backend, prebuilt admin console and default config — into a **single `duckai-cpa.exe`** using Bun's `bun build --compile`. The target machine needs no Node.js, no npm and no extra files.
+
+![Windows exe admin console](docs/assets/windows-exe-admin-overview.png)
+
+Build requirements: Windows 10/11 x64, Node.js 24+ (to build the admin console) and **Bun >= 1.4.4**.
+
+```powershell
+git checkout windows
+npm ci
+npm run build:web
+npm run build:exe        # or: node scripts/build-exe.mjs
+```
+
+The build embeds `web/`, `config/config.example.json` and `package.json` into the executable (Bun `--asset`); runtime data lives next to the exe (portable layout):
+
+```text
+dist/windows-x64/
+├─ duckai-cpa.exe
+└─ data/                 # created on first start: config.json, duckai.db, identity.json ...
+```
+
+Double-click `duckai-cpa.exe` or start it from a terminal (a console window is kept on purpose). On first start it creates `data/config.json` and prints the **admin token** and a default **API key** once:
+
+- Admin console: <http://127.0.0.1:8787/admin/>
+- Health check: `http://127.0.0.1:8787/healthz`
+- OpenAI-compatible base URL: `http://127.0.0.1:8787/v1`
+
+Environment overrides: `DUCKAI_CPA_DATA_DIR` (default `<exeDir>/data`), `DUCKAI_CPA_CONFIG_PATH`, `DUCKAI_CPA_HOST`, `DUCKAI_CPA_PORT`, `DUCKAI_CPA_ADMIN_TOKEN`.
+
+Details and troubleshooting: [docs/WINDOWS-BUILD.md](docs/WINDOWS-BUILD.md). Rebuild/verify commands: `node scripts/build-exe.mjs`, `node scripts/verify-exe.mjs`.
+
+> The executable is unsigned, so Windows SmartScreen may warn on the first launch (**More info → Run anyway**). Put it in a writable folder — `Program Files` is read-only for a non-elevated process; set `DUCKAI_CPA_DATA_DIR` in that case.
 
 ### First start
 
