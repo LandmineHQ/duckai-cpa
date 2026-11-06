@@ -169,34 +169,28 @@ docker run -d --name duckai-cpa -p 8787:8787 \
 
 Every published version also has a production archive on GitHub Releases. It contains `src/`, prebuilt `web/` and production `node_modules/`; **do not run `npm install` or build from source**.
 
+The command below always downloads the latest **published** release; no version needs to be specified:
+
 ```bash
-VERSION=v0.1.0
-BASE="https://github.com/LandmineHQ/duckai-cpa/releases/download/${VERSION}"
+BASE="https://github.com/LandmineHQ/duckai-cpa/releases/latest/download"
 
-curl -fL -o "duckai-cpa-${VERSION}.tar.gz" "${BASE}/duckai-cpa-${VERSION}.tar.gz"
+curl -fL -o duckai-cpa.tar.gz "${BASE}/duckai-cpa.tar.gz"
 
-tar -xzf "duckai-cpa-${VERSION}.tar.gz"
+tar -xzf duckai-cpa.tar.gz
 cd release
 
 DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
   node src/index.js
 ```
 
-For the latest **published** release, use the fixed release asset alias. GitHub Release "latest" is a pointer, not a Docker tag: `/releases/latest` resolves to the newest published non-prerelease release. Draft releases are not included until you publish them.
+GitHub Release "latest" is a pointer, not a Docker tag: `/releases/latest` resolves to the newest published non-prerelease release. Draft releases are not included until you publish them.
 
-```bash
-BASE="https://github.com/LandmineHQ/duckai-cpa/releases/latest/download"
-curl -fL -o duckai-cpa.tar.gz "${BASE}/duckai-cpa.tar.gz"
-tar -xzf duckai-cpa.tar.gz
-cd release
-```
+Each release contains:
 
-Every release publishes both:
+- fixed alias `duckai-cpa.tar.gz` — used by `/releases/latest/download/`;
+- versioned `duckai-cpa-<version>.tar.gz` — only for explicitly pinning an old release.
 
-- versioned asset: `duckai-cpa-<version>.tar.gz`;
-- fixed alias asset: `duckai-cpa.tar.gz`, for `/releases/latest/download/`.
-
-GitHub computes a SHA-256 digest for every release asset automatically (release page / REST API `digest` field); no extra `.sha256` asset is needed. If you want to verify it in a terminal:
+GitHub computes a SHA-256 digest for every release asset automatically (release page / REST API `digest` field); no extra `.sha256` asset is needed. To verify the downloaded latest archive:
 
 ```bash
 gh api repos/LandmineHQ/duckai-cpa/releases/latest \
