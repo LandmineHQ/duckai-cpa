@@ -1222,10 +1222,21 @@ export async function handleChatCompletions(req, res, ctx) {
             content: String(ctx.chatFinal.content || ''),
             ...(finalImages.length ? { images: finalImages } : {})
           };
+    // 图片生成没有对应的 assistant 图片消息；把真实图片挂在 assistant 快照上，
+    // 下一轮 prefix-reuse 时 buildUpstreamMessages 会把它转交给紧随其后的 user，
+    // 避免 assistant 空消息后直接接 user 导致图片被丢弃。
     const assistantUpstream =
       Array.isArray(ctx.chatFinal.toolCalls) && ctx.chatFinal.toolCalls.length
-        ? { role: 'assistant', content: formatToolCallsForHistory(ctx.chatFinal.toolCalls) }
-        : { role: 'assistant', content: String(ctx.chatFinal.content || '') };
+        ? {
+            role: 'assistant',
+            content: formatToolCallsForHistory(ctx.chatFinal.toolCalls),
+            ...(finalImages.length ? { images: finalImages } : {})
+          }
+        : {
+            role: 'assistant',
+            content: String(ctx.chatFinal.content || ''),
+            ...(finalImages.length ? { images: finalImages } : {})
+          };
     try {
       const canonicalFinal = [...session.canonicalBefore, assistantCanonical];
       const statePayload = buildConversationStateWrite({

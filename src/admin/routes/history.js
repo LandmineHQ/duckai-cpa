@@ -61,6 +61,10 @@ if (parts.length === 3 && parts[2] === 'upstream') {
     if (value && typeof value === 'object') {
       const out = {};
       for (const [key, item] of Object.entries(value)) {
+        if (key === 'b64') {
+          out[key] = `[image data, ${String(item).length} chars]`;
+          continue;
+        }
         if (key === 'image' || key === 'dataUrl') {
           out[key] = redact(String(item), depth + 1);
           continue;

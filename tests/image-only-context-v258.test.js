@@ -261,6 +261,56 @@ test('chat 跨轮：同 session 占位文本回放时上游仍带真实 image pa
   }
 });
 
+test('chat 生图后直接继续回复：图片挂到新 user，不拼接到生图请求', async () => {
+  const env = await setup();
+  const sessionKey = 'sess-qa-image-then-reply-chat';
+  try {
+    env.duck.enqueueChat(imageOnly());
+    env.duck.enqueueChat({ textDeltas: ['这是继续回答。'] });
+    const first = await v1Request(env.baseUrl, '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'x-session-id': sessionKey },
+      body: {
+        model: 'gpt-6-luna',
+        messages: [{ role: 'user', content: '画一只橘猫' }],
+        tools: [{ type: 'image_generation' }]
+      }
+    });
+    assert.equal(first.status, 200, first.text);
+
+    // 客户端只发送新的 user 回复，不回放 assistant 图片消息。
+    const second = await v1Request(env.baseUrl, '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'x-session-id': sessionKey },
+      body: { model: 'gpt-6-luna', messages: [{ role: 'user', content: '继续描述这张图' }] }
+    });
+    assert.equal(second.status, 200, second.text);
+
+    const upstream = buildUpstreamMessages(env.duck.calls.chat.at(-1)?.params?.messages || []);
+    const imageUsers = upstream.filter(
+      (message) =>
+        message.role === 'user' &&
+        Array.isArray(message.content) &&
+        message.content.some((part) => part && part.type === 'image')
+    );
+    assert.equal(imageUsers.length, 1, '图片应只挂到新 user 上');
+    const imageUserText = imageUsers[0].content
+      .filter((part) => part && part.type === 'text')
+      .map((part) => part.text)
+      .join('');
+    assert.equal(imageUserText, '继续描述这张图', '图片应与新 user 文本同一条消息，而不是拼到生图请求');
+    assert.ok(!imageUsers[0].content.some((part) => part.type === 'text' && String(part.text).includes('画一只橘猫')));
+
+    const firstUser = upstream.find(
+      (message) => message.role === 'user' && Array.isArray(message.content) && message.content.some((part) => part?.type === 'text')
+    );
+    assert.ok(firstUser, '应保留生图请求 user');
+    assert.ok(!firstUser.content.some((part) => part.type === 'image'), '生图请求本身不应被追加图片');
+  } finally {
+    await env.cleanup();
+  }
+});
+
 /* ------------------------------------------------------------------ */
 /* 4) 连续两轮图片不丢                                                  */
 /* ------------------------------------------------------------------ */
