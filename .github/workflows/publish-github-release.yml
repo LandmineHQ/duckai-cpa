@@ -1,8 +1,8 @@
-name: release-github
+name: Publish GitHub Release
 
 # Manual only: create/update the GitHub Release assets from an existing build
-# artifact. This is separate from release-ghcr on purpose, so GHCR image
-# options never appear in the GitHub Release form.
+# artifact. This is the only workflow that publishes a GitHub Release.
+# The Docker image workflow is separate: publish-docker-image.yml.
 on:
   workflow_dispatch:
     inputs:
@@ -20,7 +20,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: release-github-${{ inputs.version }}
+  group: publish-github-release-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -28,7 +28,7 @@ jobs:
     permissions:
       contents: write
       actions: read
-    uses: ./.github/workflows/github-release.yml
+    uses: ./.github/workflows/reusable-github-release.yml
     with:
       version: ${{ inputs.version }}
       run_id: ${{ inputs.run_id }}

@@ -1,8 +1,8 @@
-name: release-ghcr
+name: Publish Docker image (GHCR)
 
 # Manual only: publish an existing build artifact to GHCR.
-# Inputs are intentionally limited to the image target so this workflow cannot
-# be confused with the GitHub Release workflow.
+# This is the only workflow that publishes a Docker image.
+# The GitHub Release workflow is separate: publish-github-release.yml.
 on:
   workflow_dispatch:
     inputs:
@@ -26,7 +26,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: release-ghcr-${{ inputs.version }}
+  group: publish-docker-image-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -35,7 +35,7 @@ jobs:
       contents: read
       packages: write
       actions: read
-    uses: ./.github/workflows/docker.yml
+    uses: ./.github/workflows/reusable-docker-image.yml
     with:
       version: ${{ inputs.version }}
       also_latest: ${{ inputs.also_latest }}

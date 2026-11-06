@@ -243,7 +243,7 @@ volumes:
 2. Open that successful **build** run and copy its run id.
 3. Choose the target workflow:
 
-**GHCR image — `Actions → release-ghcr → Run workflow`**
+**GHCR image — `Actions → Publish Docker image (GHCR) → Run workflow`**
 
 ```text
 version: v0.1.0
@@ -255,7 +255,7 @@ also_latest: false
 - `also_latest: true` additionally pushes `:latest`;
 - no GitHub Release inputs appear in this form.
 
-**GitHub Release — `Actions → release-github → Run workflow`**
+**GitHub Release — `Actions → Publish GitHub Release → Run workflow`**
 
 ```text
 version: v0.1.0
@@ -270,7 +270,7 @@ The two workflows are intentionally separate so an image publish cannot accident
 
 ### Prebuilt image versions
 
-The `release-ghcr` workflow requires a version. `also_latest` only controls the GHCR `:latest` tag. Version input follows Docker tag rules: English letters, digits, `.`, `_` and `-`; examples: `beta.0.0.1`, `v1.0.0-beta.1`, `v0.1.0`. Non-ASCII names are not valid Docker tags. This is separate from the npm `package.json` version (npm requires semver, for example `0.0.1-beta.0`).
+The `Publish Docker image (GHCR)` workflow requires a version. `also_latest` only controls the GHCR `:latest` tag. Version input follows Docker tag rules: English letters, digits, `.`, `_` and `-`; examples: `beta.0.0.1`, `v1.0.0-beta.1`, `v0.1.0`. Non-ASCII names are not valid Docker tags. This is separate from the npm `package.json` version (npm requires semver, for example `0.0.1-beta.0`).
 
 When `version` is `latest`, the GHCR tag is `:latest` and the dashboard version comes from the build artifact `package.json`; for an explicit version such as `v0.1.0` or `beta.0.0.1`, the same value is used as both the image tag and the displayed application version.
 

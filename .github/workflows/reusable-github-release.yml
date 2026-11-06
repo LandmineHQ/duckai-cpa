@@ -1,7 +1,7 @@
-name: github-release
+name: "Reusable: publish GitHub Release"
 
 # Reusable workflow: create/update a GitHub Release from a build artifact.
-# Called by release-github.yml; do not run directly.
+# Called by publish-github-release.yml. Do not run directly.
 on:
   workflow_call:
     inputs:

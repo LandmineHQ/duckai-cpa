@@ -1,7 +1,7 @@
-name: docker
+name: "Reusable: publish Docker image"
 
 # Reusable workflow: publish an existing build artifact to GHCR.
-# Called by release-ghcr.yml; do not run directly.
+# Called by publish-docker-image.yml. Do not run directly.
 on:
   workflow_call:
     inputs:
