@@ -759,3 +759,22 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
     `node recon/2026-11-06/scratch-lead/live-continuation-check.mjs`（额度恢复后可跑）。
 - 剩余未修（设计级，需产品决策）：多身份并发 / admin 旁路 `/status`（`identity-pool` 每身份队列与 usage 轮询）、
   未知第 5+ 类 suite（已加 `lastChallengeSuite`/`lastClientHashes` 观测，出现新 overrideCode 即可发现）。
+
+## 2.55 图片生成后继续回复的会话历史修复（v2.64）
+
+> 问题：连接测试「图片-only」assistant 后继续发送下一条 user，连接测试页正确，但「会话历史」把下一条 user
+> 拼接到生图请求后面，assistant 图片丢失。
+>
+> 根因：`buildConversation()` 只接受非空文本，跳过了 `content:'' + images` 的 assistant，导致历史 transcript
+> 把两条 user 合并；同时 chat 的 `upstream_json` 没有保存生成图片，prefix-reuse 下一轮丢失图片。
+>
+> 回归：`npm test` **514 / 514 PASS**（新增 `sessions.test.js` 图片历史用例、`image-only-context-v258.test.js`
+> 生图后继续回复用例）。
+
+| # | 修复 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | `buildConversation()` 保留图片-only assistant（content 空但有 `images`），不再与相邻 user 合并 | ✅ | `tests/sessions.test.js` |
+| 2 | 连接测试写入 history 时保留消息 images；历史详情/列表对 `sess_*` 优先使用 `test_sessions` 消息（兼容旧记录） | ✅ | `src/admin/routes/sessions.js`、`src/admin/routes/history.js` |
+| 3 | chat 保存 `upstream_json` 的 assistant 快照附带生成图片，下一轮 prefix-reuse 由 `buildUpstreamMessages` 挂到新 user | ✅ | `tests/image-only-context-v258.test.js` 生图后继续回复 |
+| 4 | 上游调试视图对 `b64` 字段脱敏 | ✅ | `tests/history-injection-v248.test.js` |
+| 5 | 现有 `sess_bde98296aebf5a8d040cdf3f` 的旧 history 记录按 test session 重建（8 条消息，图片独立） | ✅ | 详情 API 实测：user → assistant(image) → user → assistant(image) |

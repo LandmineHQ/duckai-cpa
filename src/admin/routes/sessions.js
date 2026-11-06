@@ -154,20 +154,27 @@ function validateSessionSettings(ctx, body, { isCreate = false } = {}) {
  * @returns {Array<{role: 'user'|'assistant', content: string}>}
  */
 function buildConversation(historyMessages, { appendUserContent } = {}) {
-  /** @type {Array<{role: 'user'|'assistant', content: string}>} */
+  /** @type {Array<{role: 'user'|'assistant', content: string, images?: Array<any>}>} */
   const conversation = [];
-  const push = (role, text) => {
-    if (!text || !text.trim()) return;
+  const push = (role, text, images = []) => {
+    const cleanImages = Array.isArray(images) ? images.filter(Boolean) : [];
+    if ((!text || !text.trim()) && !cleanImages.length) return;
     if (conversation.length > 0 && conversation[conversation.length - 1].role === role) {
-      conversation[conversation.length - 1].content = `${conversation[conversation.length - 1].content}\n\n${text}`;
+      const last = conversation[conversation.length - 1];
+      last.content = [last.content, text].filter((part) => part && part.trim()).join('\n\n');
+      if (cleanImages.length) last.images = [...(last.images || []), ...cleanImages];
       return;
     }
-    conversation.push({ role, content: text });
+    conversation.push({
+      role,
+      content: text || '',
+      ...(cleanImages.length ? { images: cleanImages } : {})
+    });
   };
   for (const message of Array.isArray(historyMessages) ? historyMessages : []) {
     if (!message || (message.role !== 'user' && message.role !== 'assistant')) continue;
     if (message.role === 'assistant' && message.error) continue; // never replay failed turns
-    push(message.role, typeof message.content === 'string' ? message.content : '');
+    push(message.role, typeof message.content === 'string' ? message.content : '', message.images);
   }
   while (conversation.length > 0 && conversation[0].role === 'assistant') conversation.shift();
   if (appendUserContent !== undefined) push('user', appendUserContent);
@@ -847,7 +854,8 @@ async function generateAssistantReply(ctx, params) {
       const transcript = [
         ...(Array.isArray(conversation) ? conversation : []).map((message) => ({
           role: message.role,
-          content: message.content
+          content: message.content,
+          ...(Array.isArray(message.images) && message.images.length ? { images: message.images } : {})
         })),
         {
           role: 'assistant',

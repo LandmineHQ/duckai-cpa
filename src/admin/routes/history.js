@@ -1,4 +1,4 @@
-﻿import { notFound } from '../../openai/errors.js';
+import { notFound } from '../../openai/errors.js';
 import { requireMethod } from './helpers.js';
 
 export async function handleHistory(ctx, parts, method, route) {
@@ -15,6 +15,20 @@ if (parts.length === 1) {
     limit: Number(ctx.query.get('limit')) || 200,
     identityId: ctx.query.get('identityId') || null
   });
+  // v2.64：历史列表的 messageCount 以连接测试会话为准，修复旧记录被合并后的计数。
+  if (ctx.sessions && typeof ctx.sessions.getSession === 'function') {
+    for (const group of result.groups || []) {
+      for (const item of group.items || []) {
+        if (!item || !item.sessionKey || !item.sessionKey.startsWith('sess_')) continue;
+        try {
+          const testSession = await ctx.sessions.getSession(item.sessionKey);
+          if (Array.isArray(testSession?.messages)) item.messageCount = testSession.messages.length;
+        } catch {
+          // keep the recorded count
+        }
+      }
+    }
+  }
   ctx.json(200, { ok: true, ...result, stats: ctx.history.stats() });
   return;
 }
@@ -102,7 +116,26 @@ if (parts.length === 2) {
   requireMethod(ctx, ['GET', 'HEAD']);
   const detail = ctx.history.get(historyId);
   if (!detail) throw notFound(`history "${historyId}" not found`, 'history_not_found');
-  ctx.json(200, { ok: true, item: detail });
+  // v2.64：连接测试会话以 test_sessions 为准；旧的 history 记录可能由之前
+  // buildConversation 丢弃图片 assistant 的逻辑生成（生图请求与下一条 user 被合并）。
+  // 读取时优先使用 test session 的消息，修复历史遗留记录，同时不修改数据库。
+  let item = detail;
+  if (
+    detail.sessionKey &&
+    detail.sessionKey.startsWith('sess_') &&
+    ctx.sessions &&
+    typeof ctx.sessions.getSession === 'function'
+  ) {
+    try {
+      const testSession = await ctx.sessions.getSession(detail.sessionKey);
+      if (Array.isArray(testSession?.messages) && testSession.messages.length > 0) {
+        item = { ...detail, messages: testSession.messages, messageCount: testSession.messages.length };
+      }
+    } catch {
+      // fall back to the history record
+    }
+  }
+  ctx.json(200, { ok: true, item });
   return;
 }
 throw notFound(`Unknown admin endpoint: ${method} ${route}`);

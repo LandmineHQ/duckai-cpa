@@ -19,6 +19,7 @@ import fs from 'node:fs/promises';
 import {
   startTestServer,
   withServer,
+  makeConfig,
   request,
   adminRequest,
   adminHeaders,
@@ -27,6 +28,7 @@ import {
   isPNG
 } from './helpers/test-server.js';
 import { MockDuckClient, DEFAULT_SOURCES, PNG_1X1_B64 } from './helpers/mock-duck.js';
+import { createHistoryStore } from '../src/history.js';
 
 /** 把 gateway 传给 DuckClient 的 messages 归一化为 `role:text` 便于断言。 */
 function normalizeMessages(messages) {
@@ -228,6 +230,41 @@ test('SSE 富事件：reasoning/search/image 在 done 之前且写入 assistant 
     assert.equal(done.message.images.length, 1);
     assert.ok(isPNG(decodeImageBase64(done.message.images[0].b64)));
   });
+});
+
+test('会话历史：图片-only assistant 不被合并到下一条 user', async () => {
+  const duck = new MockDuckClient();
+  duck.enqueueChat({ textDeltas: [], images: [{ b64: PNG_1X1_B64, format: 'png' }] });
+  duck.enqueueChat({ textDeltas: ['好的'] });
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'qa-sess-history-'));
+  const history = await createHistoryStore({ dataDir, config: makeConfig(), logger: null });
+  try {
+    await withServer({ duck, dataDir, history }, async ({ baseUrl }) => {
+    const created = await createSession(baseUrl, { model: 'gpt-6-luna' });
+    const sessionId = created.json.session.id;
+    await postMessage(baseUrl, sessionId, { content: '生成一张图' });
+    await postMessage(baseUrl, sessionId, { content: '将黑色改为黄色' });
+
+    const list = await adminRequest(baseUrl, '/admin/api/history');
+    const item = (list.json.groups || [])
+      .flatMap((group) => group.items || [])
+      .find((entry) => entry.sessionKey === sessionId);
+    assert.ok(item, 'history should contain the test session');
+    const detail = await adminRequest(baseUrl, `/admin/api/history/${item.id}`);
+    const messages = detail.json.item.messages || [];
+    assert.deepEqual(
+      messages.map((message) => message.role),
+      ['user', 'assistant', 'user', 'assistant']
+    );
+    assert.equal(messages[0].content, '生成一张图');
+    assert.equal(messages[1].content, '');
+    assert.equal(messages[1].images?.length, 1);
+    assert.equal(messages[2].content, '将黑色改为黄色');
+    assert.ok(!messages[0].content.includes('将黑色改为黄色'), '生图请求不能被下一条 user 污染');
+    });
+  } finally {
+    await history.close?.();
+  }
 });
 
 test('自动标题：未传 title 时取首条用户消息前 30 字符', async () => {
