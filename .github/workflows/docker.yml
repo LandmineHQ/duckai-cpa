@@ -7,8 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Image version/tag (for example v0.1.0)"
+        description: "Image version/tag (default: latest; semver, beta.0.0.1, etc.)"
         required: true
+        default: latest
         type: string
       run_id:
         description: "Successful build workflow run id (artifact duckai-cpa-release)"
@@ -70,6 +71,19 @@ jobs:
           VERSION=$(node -p "require('./release/package.json').version")
           echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve application version
+        id: app_version
+        shell: bash
+        env:
+          TAG_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$TAG_VERSION" = "latest" ]; then
+            APP_VERSION=$(node -p "require('./release/package.json').version")
+          else
+            APP_VERSION="$TAG_VERSION"
+          fi
+          echo "value=${APP_VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Compute lowercase image name
         id: image
         shell: bash
@@ -96,7 +110,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
-            APP_VERSION=${{ inputs.version }}
+            APP_VERSION=${{ steps.app_version.outputs.value }}
           tags: |
             ${{ steps.image.outputs.name }}:${{ inputs.version }}
           labels: |
@@ -113,6 +127,7 @@ jobs:
             echo "### Published image"
             echo ""
             echo "- image: \`${{ steps.image.outputs.name }}:${{ inputs.version }}\`"
+            echo "- application version: \`${{ steps.app_version.outputs.value }}\`"
             echo "- source build run id: \`${{ inputs.run_id }}\`"
             echo "- artifact package version: \`${{ steps.package_version.outputs.value }}\`"
             echo "- revision: \`${{ github.sha }}\`"

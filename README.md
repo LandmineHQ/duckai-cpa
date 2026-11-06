@@ -104,7 +104,7 @@ No repository clone is required. Create a `compose.yml` with:
 ```yaml
 services:
   duckai-cpa:
-    image: ghcr.io/landminehq/duckai-cpa:${DUCKAI_CPA_VERSION:-v0.1.0}
+    image: ghcr.io/landminehq/duckai-cpa:${DUCKAI_CPA_VERSION:-latest}
     container_name: duckai-cpa
     restart: unless-stopped
     ports:
@@ -114,7 +114,7 @@ services:
       DUCKAI_CPA_PORT: "8787"
       DUCKAI_CPA_DATA_DIR: "/app/data"
       DUCKAI_CPA_ADMIN_TOKEN: "${DUCKAI_CPA_ADMIN_TOKEN:-change-me-to-a-strong-random-admin-token}"
-      DUCKAI_CPA_VERSION: "${DUCKAI_CPA_VERSION:-v0.1.0}"
+      DUCKAI_CPA_VERSION: "${DUCKAI_CPA_VERSION:-latest}"
       NODE_ENV: "production"
     volumes:
       - ./data:/app/data
@@ -141,7 +141,7 @@ services:
 Start it:
 
 ```bash
-DUCKAI_CPA_VERSION=v0.1.0 \
+DUCKAI_CPA_VERSION=latest \
   DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
   docker compose up -d
 ```
@@ -151,12 +151,12 @@ Open the admin console at <http://127.0.0.1:8787/admin>. The tag comes from the 
 Or use the equivalent one-liner without Compose:
 
 ```bash
-docker pull ghcr.io/landminehq/duckai-cpa:v0.1.0
+docker pull ghcr.io/landminehq/duckai-cpa:latest
 
 docker run -d --name duckai-cpa -p 8787:8787 \
   -v "$PWD/data:/app/data" \
   -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
-  ghcr.io/landminehq/duckai-cpa:v0.1.0
+  ghcr.io/landminehq/duckai-cpa:latest
 ```
 
 ### Option B — Build the Docker image locally
@@ -204,14 +204,16 @@ First start creates `data/config.json` and prints an **admin token** and a defau
 
 ### Prebuilt image versions
 
-The GHCR `docker` workflow is manual: open **Actions → docker → Run workflow**, enter a version and a successful **build** run id.
+The GHCR `docker` workflow is manual: open **Actions → docker → Run workflow**, enter a version (default `latest`) and a successful **build** run id.
+
+When `version` is `latest` (the default), the image tag is `:latest` and the dashboard version comes from the build artifact `package.json`. For an explicit version such as `v0.1.0` or `beta.0.0.1`, the same value is used as both the image tag and the displayed application version.
 
 Version input follows Docker tag rules: English letters, digits, `.`, `_` and `-`; examples: `beta.0.0.1`, `v1.0.0-beta.1`, `v0.1.0`. Non-ASCII names are not valid Docker tags. This is separate from the npm `package.json` version (npm requires semver, for example `0.0.1-beta.0`).
 
 ```text
 Actions → build → copy run id
 Actions → docker → Run workflow
-  version: v0.1.0
+  version: latest
   run_id:  <build run id>
 ```
 

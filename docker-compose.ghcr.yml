@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # DuckAI CPA — run the prebuilt GHCR image with Compose.
 #
-#   DUCKAI_CPA_VERSION=v0.1.0 docker compose -f docker-compose.ghcr.yml up -d
+#   DUCKAI_CPA_VERSION=latest docker compose -f docker-compose.ghcr.yml up -d
 #
 # Pin a published version explicitly; the value is also used as the image tag.
 # Mount a persistent data volume and set a strong admin token before exposing
@@ -10,7 +10,7 @@
 
 services:
   duckai-cpa:
-    image: ghcr.io/landminehq/duckai-cpa:${DUCKAI_CPA_VERSION:-v0.1.0}
+    image: ghcr.io/landminehq/duckai-cpa:${DUCKAI_CPA_VERSION:-latest}
     container_name: duckai-cpa
     restart: unless-stopped
 
@@ -22,7 +22,7 @@ services:
       DUCKAI_CPA_PORT: "8787"
       DUCKAI_CPA_DATA_DIR: "/app/data"
       DUCKAI_CPA_ADMIN_TOKEN: "${DUCKAI_CPA_ADMIN_TOKEN:-change-me-to-a-strong-random-admin-token}"
-      DUCKAI_CPA_VERSION: "${DUCKAI_CPA_VERSION:-v0.1.0}"
+      DUCKAI_CPA_VERSION: "${DUCKAI_CPA_VERSION:-latest}"
       NODE_ENV: "production"
 
     volumes:
