@@ -84,6 +84,7 @@ import {
   stripSpillInstruction,
   sanitizeFileMetadata
 } from './context-spill.js';
+import { assembleContextMessages } from '../app/session/context-assembly.js';
 
 const IGNORED_INPUT_ITEM_TYPES = new Set([
   'item_reference',
@@ -645,147 +646,28 @@ export async function handleResponses(req, res, ctx) {
     await ctx.selectIdentity({ paidModel });
   }
 
-  let displayHistoryMessages = canonicalConversation;
-  let spillDisplay = null;
-  if (pdfReuse && pdfState) {
-    const storedFile = pdfFileFromState(pdfState);
-    if (storedFile) duckMessages = attachPdfFile(duckMessages, storedFile);
-    if (clientTools.length) {
-      try {
-        const toolsPdf = await createToolsPdf({
-          toolProtocol: buildToolProtocol(clientTools),
-          toolNames: clientTools.map((tool) => tool.name),
-          maxPages: 1
-        });
-        duckMessages = attachPdfFile(duckMessages, {
-          mimeType: 'application/pdf',
-          filename: 'client-tools.pdf',
-          b64: toolsPdf.buffer.toString('base64'),
-          pages: toolsPdf.pages,
-          bytes: toolsPdf.buffer.length,
-          textChars: toolsPdf.textChars,
-          text: toolsPdf.text
-        });
-      } catch (error) {
-        ctx.logger?.warn?.('client tools PDF generation failed', { error: error.message });
-      }
-    }
-    spillDisplay = duckMessages;
-    ctx.log.contextPdfReused = true;
-    ctx.log.contextPdf = { pages: pdfState.pages, bytes: pdfState.bytes, reused: true };
-  } else if (pdfSpillConfig.enabled !== false) {
-    try {
-      const spill = await spillMessagesToPdf(duckMessages, {
-        inputCharLimit: Number(pdfSpillConfig.inputCharLimit) || 20000,
-        maxPages: Number(pdfSpillConfig.maxPages) || 15,
-        toolProtocol: clientTools.length ? buildToolProtocol(clientTools) : '',
-        toolNames: clientTools.map((tool) => tool.name)
-      });
-      if (spill) {
-        duckMessages = spill.messages;
-        spillDisplay = spill.messages;
-        ctx.log.contextPdf = spill.pdf;
-        ctx.log.contextPdfMoved = spill.movedMessages;
-        if (responseStore?.enabled && pdfScope && spill.file) {
-          let coveredCount = chainedConversation.length;
-          for (let i = chainedConversation.length - 1; i >= 0; i--) {
-            if (chainedConversation[i].role === 'user') {
-              coveredCount = i;
-              break;
-            }
-          }
-          await responseStore.saveContextPdf({
-            scopeKey: pdfScope,
-            filename: spill.file.filename,
-            mimeType: spill.file.mimeType,
-            pages: spill.pdf.pages,
-            bytes: spill.pdf.bytes,
-            textChars: spill.pdf.textChars,
-            textContent: spill.file.text || '',
-            coveredCount,
-            coveredHash: hashConversationPrefix(chainedConversation.slice(0, coveredCount)),
-            pdfB64: spill.file.b64
-          });
-          ctx.log.contextPdfSaved = true;
-        }
-      }
-    } catch (error) {
-      if (error && error.code === 'context_pdf_capacity_exceeded') {
-        throw new OpenAIError('上下文超过 PDF 容量（15 页），请调用 /v1/compact 手动压缩后重试', {
-          status: 413,
-          type: 'invalid_request_error',
-          code: 'context_pdf_capacity_exceeded',
-          param: 'input'
-        });
-      }
-      ctx.logger?.warn?.('context PDF spill failed; continuing without spill', { error: error.message });
-    }
-  }
-
-  if (useClientToolsPdf && !ctx.log.contextPdf && !ctx.log.contextPdfReused) {
-    const already = duckMessages.some(
-      (message) => Array.isArray(message.files) && message.files.some((file) => file.filename === 'client-tools.pdf')
-    );
-    if (!already) {
-      try {
-        const toolsPdf = await createToolsPdf({
-          toolProtocol: buildToolProtocol(clientTools),
-          toolNames: clientTools.map((tool) => tool.name),
-          maxPages: 1,
-          includeContext: false
-        });
-        duckMessages = attachPdfFile(duckMessages, {
-          mimeType: 'application/pdf',
-          filename: 'client-tools.pdf',
-          b64: toolsPdf.buffer.toString('base64'),
-          pages: toolsPdf.pages,
-          bytes: toolsPdf.buffer.length,
-          textChars: toolsPdf.textChars,
-          text: toolsPdf.text
-        });
-        const firstUser = duckMessages.find((message) => message.role === 'user');
-        if (firstUser) {
-          const instruction = '\n\n[系统提示] 附件 client-tools.pdf 是本次会话的客户端工具说明，请先阅读再按需调用工具。';
-          duckMessages = duckMessages.map((message) =>
-            message === firstUser ? { ...message, content: String(message.content || '') + instruction } : message
-          );
-        }
-        spillDisplay = duckMessages;
-        ctx.log.toolsPdf = { pages: toolsPdf.pages, bytes: toolsPdf.buffer.length };
-      } catch (error) {
-        ctx.logger?.warn?.('client tools PDF generation failed', { error: error.message });
-      }
-    }
-  }
-  const protocolText = clientTools.length ? buildToolProtocol(clientTools) : '';
-  displayHistoryMessages = spillDisplay
-    ? spillDisplay.map((message) => ({
-        ...message,
-        content: stripSpillInstruction(String(message.content || '').replace(protocolText, '')),
-        files: sanitizeFileMetadata(message.files)
-      }))
-    : canonicalConversation;
-  const firstInjectedUser = duckMessages.find((message) => message && message.role === 'user');
-  const hasContextPdf = Boolean(ctx.log.contextPdf);
-  const hasToolsPdf = Boolean(ctx.log.toolsPdf);
-  const hasPdfMode = hasContextPdf || hasToolsPdf;
-  const historyProtocolText = hasPdfMode ? PDF_PURPOSE_TEXT : protocolText;
-  ctx.historyInjection = {
-    injected: Boolean(historyProtocolText),
-    clientTools: clientTools.map((tool) => tool.name),
-    protocolText: historyProtocolText,
-    protocolKind: hasPdfMode ? 'client-tools-pdf' : 'text',
-    firstUserContent: firstInjectedUser && typeof firstInjectedUser.content === 'string' ? firstInjectedUser.content : '',
-    upstreamMessageCount: duckMessages.length,
-    chain: ctx.log.conversationChain || null,
-    contextPdf: ctx.log.contextPdf || null,
-    toolsPdf: ctx.log.toolsPdf || null,
-    contextPdfReused: ctx.log.contextPdfReused === true,
-    ...(manualCompaction ? { compression: manualCompaction.compression } : {})
-  };
-  ctx.log.protocolInjected = Boolean(protocolText && !hasPdfMode);
-  ctx.log.clientToolsPdf = hasPdfMode && clientTools.length > 0;
-  ctx.log.upstreamMessageCount = duckMessages.length;
+  const assembled = await assembleContextMessages({
+    kind: 'responses',
+    duckMessages,
+    conversation: chainedConversation,
+    historyMessages: canonicalConversation,
+    clientTools,
+    pdfSpillConfig,
+    inputCharLimit: Number(pdfSpillConfig.inputCharLimit) || 20000,
+    scopeKey: pdfScope,
+    responseStore,
+    storedPdf: pdfState,
+    reuseStoredPdf: pdfReuse,
+    useClientToolsPdf,
+    conversationChain: ctx.log.conversationChain,
+    compression: manualCompaction?.compression || null,
+    logger: ctx.logger
+  });
+  duckMessages = assembled.duckMessages;
+  const displayHistoryMessages = assembled.displayMessages;
+  ctx.historyMessages = displayHistoryMessages;
+  ctx.historyInjection = assembled.injection;
+  Object.assign(ctx.log, assembled.logPatch);
 
   const stream = body.stream === true;
   ctx.log.stream = stream;
