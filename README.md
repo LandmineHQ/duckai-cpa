@@ -174,8 +174,6 @@ VERSION=v0.1.0
 BASE="https://github.com/LandmineHQ/duckai-cpa/releases/download/${VERSION}"
 
 curl -fL -o "duckai-cpa-${VERSION}.tar.gz" "${BASE}/duckai-cpa-${VERSION}.tar.gz"
-curl -fL -o "duckai-cpa-${VERSION}.tar.gz.sha256" "${BASE}/duckai-cpa-${VERSION}.tar.gz.sha256"
-sha256sum -c "duckai-cpa-${VERSION}.tar.gz.sha256"
 
 tar -xzf "duckai-cpa-${VERSION}.tar.gz"
 cd release
@@ -189,16 +187,22 @@ For the latest **published** release, use the fixed release asset alias. GitHub 
 ```bash
 BASE="https://github.com/LandmineHQ/duckai-cpa/releases/latest/download"
 curl -fL -o duckai-cpa.tar.gz "${BASE}/duckai-cpa.tar.gz"
-curl -fL -o duckai-cpa.tar.gz.sha256 "${BASE}/duckai-cpa.tar.gz.sha256"
-sha256sum -c duckai-cpa.tar.gz.sha256
 tar -xzf duckai-cpa.tar.gz
 cd release
 ```
 
 Every release publishes both:
 
-- versioned assets: `duckai-cpa-<version>.tar.gz` + checksum;
-- fixed alias assets: `duckai-cpa.tar.gz` + checksum, for `/releases/latest/download/`.
+- versioned asset: `duckai-cpa-<version>.tar.gz`;
+- fixed alias asset: `duckai-cpa.tar.gz`, for `/releases/latest/download/`.
+
+GitHub computes a SHA-256 digest for every release asset automatically (release page / REST API `digest` field); no extra `.sha256` asset is needed. If you want to verify it in a terminal:
+
+```bash
+gh api repos/LandmineHQ/duckai-cpa/releases/latest \
+  --jq '.assets[] | select(.name == "duckai-cpa.tar.gz") | .digest'
+sha256sum duckai-cpa.tar.gz
+```
 
 If the GitHub Release is still a **draft**, open the release page and publish it first, then rerun the download command.
 

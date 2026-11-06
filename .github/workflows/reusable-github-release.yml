@@ -60,15 +60,11 @@ jobs:
           test -f assets/duckai-cpa-release.tar.gz
           cp assets/duckai-cpa-release.tar.gz "duckai-cpa-${VERSION}.tar.gz"
           cp assets/duckai-cpa-release.tar.gz "duckai-cpa.tar.gz"
-          sha256sum "duckai-cpa-${VERSION}.tar.gz" | tee "duckai-cpa-${VERSION}.tar.gz.sha256"
-          sha256sum "duckai-cpa.tar.gz" | tee "duckai-cpa.tar.gz.sha256"
           BUILD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq .head_sha)
           test -n "$BUILD_SHA"
           echo "build_sha=${BUILD_SHA}" >> "$GITHUB_OUTPUT"
           echo "asset=duckai-cpa-${VERSION}.tar.gz" >> "$GITHUB_OUTPUT"
-          echo "checksum=duckai-cpa-${VERSION}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
           echo "latest_asset=duckai-cpa.tar.gz" >> "$GITHUB_OUTPUT"
-          echo "latest_checksum=duckai-cpa.tar.gz.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Create or update GitHub Release
         shell: bash
@@ -77,13 +73,11 @@ jobs:
           VERSION: ${{ inputs.version }}
           BUILD_SHA: ${{ steps.prepare.outputs.build_sha }}
           ASSET: ${{ steps.prepare.outputs.asset }}
-          CHECKSUM: ${{ steps.prepare.outputs.checksum }}
           LATEST_ASSET: ${{ steps.prepare.outputs.latest_asset }}
-          LATEST_CHECKSUM: ${{ steps.prepare.outputs.latest_checksum }}
         run: |
           if gh release view "$VERSION" >/dev/null 2>&1; then
             # Existing release/tag: only add or replace the assets.
-            gh release upload "$VERSION" "$ASSET" "$CHECKSUM" "$LATEST_ASSET" "$LATEST_CHECKSUM" --clobber
+            gh release upload "$VERSION" "$ASSET" "$LATEST_ASSET" --clobber
             echo "RELEASE_MODE=existing" >> "$GITHUB_ENV"
           else
             # New tag/release: create a draft; publish it manually after review.
@@ -92,7 +86,7 @@ jobs:
               --title "$VERSION" \
               --draft \
               --generate-notes \
-              "$ASSET" "$CHECKSUM" "$LATEST_ASSET" "$LATEST_CHECKSUM"
+              "$ASSET" "$LATEST_ASSET"
             echo "RELEASE_MODE=draft" >> "$GITHUB_ENV"
           fi
 
@@ -111,7 +105,6 @@ jobs:
             echo "- version: \`$VERSION\`"
             echo "- asset: \`$ASSET\`"
             echo "- latest alias: \`$LATEST_ASSET\` (for /releases/latest/download)"
-            echo "- checksum: \`$ASSET.sha256\`"
             echo "- build run id: \`$RUN_ID\`"
             echo "- build commit: \`$BUILD_SHA\`"
             echo "- release mode: \`${RELEASE_MODE:-unknown}\` (new=draft, existing=asset-only)"
