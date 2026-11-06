@@ -1,0 +1,34 @@
+name: release-github
+
+# Manual only: create/update the GitHub Release assets from an existing build
+# artifact. This is separate from release-ghcr on purpose, so GHCR image
+# options never appear in the GitHub Release form.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release/tag version (required; e.g. v0.1.0 or 0.1.0-beta.0)"
+        required: true
+        type: string
+      run_id:
+        description: "Successful build workflow run id (artifact duckai-cpa-release)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-github-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  github-release:
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/github-release.yml
+    with:
+      version: ${{ inputs.version }}
+      run_id: ${{ inputs.run_id }}

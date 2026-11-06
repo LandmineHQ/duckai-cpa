@@ -1,7 +1,7 @@
 name: github-release
 
 # Reusable workflow: create/update a GitHub Release from a build artifact.
-# Called by release.yml; do not run directly.
+# Called by release-github.yml; do not run directly.
 on:
   workflow_call:
     inputs:
@@ -34,6 +34,12 @@ jobs:
             echo "::error::run_id must be numeric"
             exit 1
           fi
+
+      # gh release commands need a git repository context.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Download build artifact
         uses: actions/download-artifact@v4
