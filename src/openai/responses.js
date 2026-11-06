@@ -90,7 +90,11 @@ import {
   loadAuthoritativeState,
   prepareAuthoritativeSessionDiff,
   replaySessionImagesFromState
-} from '../app/session/authoritative-state.js';
+} from '../app/session/authoritative-state.js';import {
+  buildConversationStateWrite,
+  nextEpoch,
+  saveConversationState
+} from '../app/session/conversation-save.js';
 import {
   prepareManualCompaction,
   resolveManualCompactionEpoch
@@ -714,7 +718,7 @@ export async function handleResponses(req, res, ctx) {
             : message
         );
         const canonicalFinal = [...canonicalConversation, ...assistantCanonical];
-        await responseStore.saveConversation({
+        const statePayload = buildConversationStateWrite({
           sessionKey: stateKey,
           model: resolved.id,
           mode: 'responses',
@@ -726,20 +730,15 @@ export async function handleResponses(req, res, ctx) {
           contextPdfScope: manualCompaction?.scopeKey || conversationState?.contextPdfScope || null,
           compactedAt: manualCompaction ? Date.now() : conversationState?.compactedAt || null,
           images: mergeStoredImages(conversationState?.images, outputImages),
-          client: clientViewOf(canonicalFinal),
-          firstUserHash: firstUserHash(canonicalFinal),
-          epoch: (() => {
-            const base = conversationState?.epoch || 0;
-            let value = ctx.log.sessionEpoch != null ? ctx.log.sessionEpoch : base;
-            const toolsSystemChanged =
-              conversationState &&
-              ((toolsHash || null) !== (conversationState.toolsHash || null) ||
-                (systemPrompt || '') !== (conversationState.systemPrompt || ''));
-            if (toolsSystemChanged && value === base) value = base + 1;
-            if (ctx.log.contextPdfSaved && value === base) value = base + 1;
-            return value;
-          })()
+          epoch: nextEpoch({
+            state: conversationState,
+            sessionEpoch: ctx.log.sessionEpoch,
+            toolsHash,
+            systemPrompt,
+            contextPdfSaved: ctx.log.contextPdfSaved
+          })
         });
+        await saveConversationState({ store: responseStore, payload: statePayload });
       } catch (error) {
         ctx.logger?.warn?.('failed to save responses canonical conversation state', { error: error.message });
       }

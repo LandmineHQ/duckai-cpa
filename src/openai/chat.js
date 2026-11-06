@@ -61,7 +61,11 @@ import {
   loadAuthoritativeState,
   prepareAuthoritativeSessionDiff,
   replaySessionImagesFromState
-} from '../app/session/authoritative-state.js';
+} from '../app/session/authoritative-state.js';import {
+  buildConversationStateWrite,
+  nextEpoch,
+  saveConversationState
+} from '../app/session/conversation-save.js';
 import {
   prepareManualCompaction,
   resolveManualCompactionEpoch
@@ -1224,7 +1228,7 @@ export async function handleChatCompletions(req, res, ctx) {
         : { role: 'assistant', content: String(ctx.chatFinal.content || '') };
     try {
       const canonicalFinal = [...session.canonicalBefore, assistantCanonical];
-      await session.store.saveConversation({
+      const statePayload = buildConversationStateWrite({
         sessionKey: session.sessionKey,
         model: resolved.id,
         mode: session.mode,
@@ -1236,20 +1240,15 @@ export async function handleChatCompletions(req, res, ctx) {
         contextPdfScope: session.contextPdfScope || null,
         compactedAt: session.compactedAt || null,
         images: mergeStoredImages(session.images, finalImages),
-        client: clientViewOf(canonicalFinal),
-        firstUserHash: firstUserHash(canonicalFinal),
-        epoch: (() => {
-          const base = conversationState?.epoch || 0;
-          let value = ctx.log.sessionEpoch != null ? ctx.log.sessionEpoch : base;
-          const toolsSystemChanged =
-            conversationState &&
-            ((session.toolsHash || null) !== (conversationState.toolsHash || null) ||
-              (session.systemPrompt || '') !== (conversationState.systemPrompt || ''));
-          if (toolsSystemChanged && value === base) value = base + 1;
-          if (ctx.log.contextPdfSaved && value === base) value = base + 1;
-          return value;
-        })()
+        epoch: nextEpoch({
+          state: conversationState,
+          sessionEpoch: ctx.log.sessionEpoch,
+          toolsHash: session.toolsHash,
+          systemPrompt: session.systemPrompt,
+          contextPdfSaved: ctx.log.contextPdfSaved
+        })
       });
+      await saveConversationState({ store: session.store, payload: statePayload });
       ctx.log.conversationState = 'saved';
     } catch (error) {
       ctx.logger?.warn?.('failed to save conversation state', { error: error.message });
