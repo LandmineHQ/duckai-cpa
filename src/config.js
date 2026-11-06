@@ -1170,7 +1170,15 @@ export async function loadConfig({ env = process.env, rootDir = PROJECT_ROOT, lo
 
   // Persist only the file-backed layer, before env overrides are applied.
   if (firstRun || generatedAdminToken || migration.changed) {
-    await atomicWriteJson(paths.configPath, merged);
+    try {
+      await atomicWriteJson(paths.configPath, merged);
+    } catch (error) {
+      if (error && error.code === 'EACCES') {
+        const uid = typeof process.getuid === 'function' ? process.getuid() : 'unknown';
+        error.message += ` (process UID ${uid}; make ${paths.dataDir || 'the data directory'} writable by that UID, e.g. sudo chown -R 1000:1000 ./data, or use a named volume)`;
+      }
+      throw error;
+    }
     logger?.info?.(`created/updated runtime config at ${paths.configPath}`, { firstRun });
   }
 

@@ -6,6 +6,11 @@
 # Pin a published version explicitly; the value is also used as the image tag.
 # Mount a persistent data volume and set a strong admin token before exposing
 # this service beyond localhost.
+#
+# Linux bind-mount note: the image runs as UID/GID 1000:1000. If ./data is
+# missing, Docker creates it as root and the container fails with EACCES.
+# Prepare it first:
+#   mkdir -p data && sudo chown -R 1000:1000 data
 # ---------------------------------------------------------------------------
 
 services:

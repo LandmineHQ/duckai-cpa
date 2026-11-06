@@ -138,6 +138,13 @@ services:
         max-file: "3"
 ```
 
+On Linux, the container runs as UID/GID `1000:1000` (`node`). If `./data` does not exist or is owned by root, Docker creates it as root and startup fails with `EACCES ... /app/data`. Prepare the host directory first:
+
+```bash
+mkdir -p data
+sudo chown -R 1000:1000 data
+```
+
 Start it:
 
 ```bash
@@ -201,6 +208,35 @@ First start creates `data/config.json` and prints an **admin token** and a defau
 - API landing page: <http://127.0.0.1:8787/>
 
 > `data/` contains secrets (tokens, identity keys, pairing codes). Keep file mode `0600`, never commit it.
+
+### Permission error: EACCES /app/data
+
+```text
+EACCES: permission denied, open '/app/data/.config.json...tmp'
+```
+
+The image runs as non-root UID/GID **1000:1000**. A host bind mount such as `./data:/app/data` hides the image's `/app/data` ownership; if `./data` was created by root (for example by an earlier `docker compose up`), the container cannot write config/SQLite files.
+
+Fix on Linux:
+
+```bash
+docker compose down
+mkdir -p data
+sudo chown -R 1000:1000 data
+docker compose up -d
+```
+
+Alternative: use a named volume instead of a bind mount, so Docker initializes `/app/data` with the image's ownership:
+
+```yaml
+volumes:
+  - duckai-cpa-data:/app/data
+
+volumes:
+  duckai-cpa-data:
+```
+
+> Migrating existing bind-mounted data to a named volume is not automatic; copy it first if needed.
 
 ### Prebuilt image versions
 
