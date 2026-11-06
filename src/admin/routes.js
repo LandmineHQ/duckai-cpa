@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Admin API for duckai-cpa v2 (`/admin/api/*`).
  *
  * Contract: docs/ADMIN_API_V2.md. Authentication is enforced by
@@ -19,22 +19,9 @@
  */
 
 import {
-  applyConfigPatch,
-  deepApply,
-  deepClone,
-  redactConfig,
-  resetConfig,
-  RESTART_REQUIRED_PATHS
-} from '../config.js';
-import {
-  adminCatalogItems,
-  getModelToolPolicy,
   isPaidModel,
-  modelConfigPayload,
   resolveModel,
-  resolveReasoningEffort,
-  validateModelOverrides,
-  validateModelToolPolicy
+  resolveReasoningEffort
 } from '../openai/models.js';
 import {
   buildDuckMessages,
@@ -61,21 +48,18 @@ import { handleIdentityRoutes } from './identity-routes.js';
 import { handleProxyRoutes } from './proxy-routes.js';
 import { handleIdentityPoolRoutes } from './identity-pool-routes.js';
 import { handleSubscriptionRoutes } from './subscriptions-routes.js';
+import { friendlyErrorMessage, methodNotAllowed, requireMethod } from './routes/helpers.js';
+import { handleHealth, handleOverview } from './routes/overview.js';
+import { handleModels, handleModelsConfig, handleModelsConfigReset, handleModelsRefresh } from './routes/models.js';
+import { handleGetConfig, handlePutConfig, handleResetConfig } from './routes/config.js';
+import { handleLogs, handleLogsDownload, handleLogsRetention, handleUsage } from './routes/logs.js';
+import { handleKeys } from './routes/keys.js';
+import { handleHistory } from './routes/history.js';
 import { badRequest, conflict, normalizeFinishReason, notFound, toOpenAIError } from '../openai/errors.js';
-
-const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
 /* ------------------------------------------------------------------ */
-
-function methodNotAllowed(ctx, allow) {
-  return Object.assign(new Error(`Method ${ctx.method} not allowed for ${ctx.pathname}`), {
-    status: 405,
-    code: 'method_not_allowed',
-    headers: { Allow: allow }
-  });
-}
 
 function sessionBusyError(sessionId) {
   const error = conflict(`Session "${sessionId}" is already streaming a response`, 'session_busy');
@@ -84,121 +68,17 @@ function sessionBusyError(sessionId) {
   return error;
 }
 
-function requireMethod(ctx, allow) {
-  const allowed = Array.isArray(allow) ? allow : [allow];
-  if (!allowed.includes(ctx.method)) throw methodNotAllowed(ctx, allowed.join(', '));
-}
-
-function getByDottedPath(object, dotted) {
-  return dotted.split('.').reduce((node, key) => (node && typeof node === 'object' ? node[key] : undefined), object);
-}
-
-function friendlyErrorMessage(error) {
-  const normalized = toOpenAIError(error);
-  if (normalized.status === 429) {
-    return '上游请求受限（429）：匿名额度/队列限制，请稍后重试或降低请求频率。';
-  }
-  if (normalized.status >= 500) return `上游请求失败（${normalized.status}）：${normalized.message}`;
-  return normalized.message;
-}
-
 /* ------------------------------------------------------------------ */
 /* Overview / health / models                                          */
 /* ------------------------------------------------------------------ */
 
-async function handleOverview(ctx) {
-  requireMethod(ctx, ['GET', 'HEAD']);
-  const upstream = await ctx.getUpstreamHealth();
-  const stats = ctx.store.getStats();
-  const queue = ctx.queue?.snapshot?.() || null;
-  const rateLimited =
-    typeof upstream.rateLimited === 'boolean'
-      ? upstream.rateLimited
-      : Boolean(stats.upstream.lastRateLimitAt && Date.now() - stats.upstream.lastRateLimitAt < RATE_LIMIT_WINDOW_MS);
 
-  let identities = null;
-  if (ctx.identities) {
-    try {
-      const summary = ctx.identities.getSummary?.() || {};
-      const items = (await ctx.identities.list?.()) || [];
-      identities = {
-        pool: {
-          total: summary.total ?? items.length,
-          enabled: summary.enabled ?? items.filter((item) => item.enabled).length,
-          subscribed: summary.subscribed ?? items.filter((item) => item.subscribed).length,
-          activeId: summary.activeId ?? null,
-          bindingCount: summary.bindingCount ?? 0,
-          maxIdentities: summary.maxIdentities ?? ctx.config?.pool?.maxIdentities ?? null
-        },
-        items: items.map((item) => ({
-          id: item.id,
-          label: item.label,
-          enabled: item.enabled === true,
-          subscribed: item.subscribed === true,
-          journeyId: item.journeyId ?? null,
-          fingerprint: item.fingerprint ?? null,
-          sessions: item.sessions ?? 0,
-          requests: item.requests ?? 0,
-          queue: item.queue || { waiting: 0, inFlight: 0, rps: 1 }
-        }))
-      };
-    } catch {
-      identities = null;
-    }
-  }
 
-  ctx.json(200, {
-    service: {
-      name: 'duckai-cpa',
-      version: ctx.version,
-      uptimeSec: Math.round((Date.now() - ctx.serviceStartedAt) / 1000)
-    },
-    upstream: { ...upstream, rateLimited, queue },
-    identities,
-    stats,
-    models: adminCatalogItems(ctx.config),
-    // v2.24：token 消耗总览（分模型 / 分身份×模型）+ 日志保留策略
-    tokens: typeof ctx.store.getUsage === 'function' ? ctx.store.getUsage() : null,
-    logRetention: typeof ctx.store.getLogRetention === 'function' ? ctx.store.getLogRetention() : null,
-    recentUpstream: ctx.store.getLogs({ kind: 'upstream', limit: 10 }).items,
-    recentAdmin: ctx.store.getLogs({ kind: 'admin', limit: 10 }).items
-  });
-}
-
-async function handleHealth(ctx) {
-  requireMethod(ctx, ['GET', 'HEAD']);
-  const upstream = await ctx.getUpstreamHealth();
-  ctx.json(200, {
-    ok: true,
-    upstream: {
-      ok: upstream.ok === true,
-      challengeOk: upstream.challengeOk === true,
-      ...(upstream.version ? { version: upstream.version } : {}),
-      ...(upstream.rateLimited !== undefined ? { rateLimited: upstream.rateLimited } : {})
-    },
-    queue: ctx.queue?.snapshot?.() || null,
-    version: ctx.version
-  });
-}
-
-async function handleModels(ctx) {
-  requireMethod(ctx, ['GET', 'HEAD']);
-  ctx.json(200, { items: adminCatalogItems(ctx.config) });
-}
 
 /**
  * v2.22 危险操作：把模型配置**全部**重置为默认值（覆盖参数 + 工具开关 + 严格模式）。
  * 前端「模型配置 → 危险操作」卡片使用，需要二次确认后调用。
  */
-async function handleModelsConfigReset(ctx) {
-  requireMethod(ctx, ['POST'], 'POST');
-  if (!ctx.config.models || typeof ctx.config.models !== 'object') ctx.config.models = {};
-  ctx.config.models.overrides = {};
-  ctx.config.models.tools = { dropUnsupported: true, perModel: {} };
-  await ctx.store.saveConfig(ctx.config);
-  ctx.logger?.warn?.('model config reset to defaults');
-  ctx.json(200, { ok: true, ...modelConfigPayload(ctx.config) });
-}
 
 /**
  * v2.22 刷新模型目录/上游能力：
@@ -206,301 +86,43 @@ async function handleModelsConfigReset(ctx) {
  * - 本端点会重新读取上游 `/duckchat/v1/capabilities`（flags/实验）并返回快照，便于确认
  *   上游是否有新的实验/开关；同时返回当前模型数量与目录来源，避免误以为能"刷新模型列表"。
  */
-async function handleModelsRefresh(ctx) {
-  requireMethod(ctx, ['POST'], 'POST');
-  const before = ctx.duck?.health ? await ctx.duck.health() : null;
-  const startedAt = Date.now();
-  let probe = null;
-  let probeError = null;
-  try {
-    probe = ctx.duck?.health ? await ctx.duck.health({ probe: true }) : null;
-  } catch (error) {
-    probeError = error.message;
-  }
-  const catalog = adminCatalogItems(ctx.config);
-  ctx.json(200, {
-    ok: !probeError,
-    catalogSource: 'static',
-    catalogNote:
-      '模型元数据为内置静态目录（src/duck/models.js），随网关版本更新；duck.ai 没有 /models 端点，/capabilities 只含 flags/实验。',
-    modelCount: catalog.length,
-    modelsVersion: catalog.map((item) => item.id).join(','),
-    capabilities: probe?.capabilities ?? before?.capabilities ?? null,
-    upstreamVersion: probe?.version ?? before?.version ?? null,
-    challengeOk: probe?.challengeOk ?? before?.challengeOk ?? null,
-    latencyMs: Date.now() - startedAt,
-    probedAt: Date.now(),
-    error: probeError
-  });
-}
 
 /**
  * v2.21 模型配置页：每个模型的上下文/输出上限覆盖（默认 duck.ai 实测值）。
  *   GET  /admin/api/models/config  → { items:[{id,defaults,override,effective}], limits, defaults }
  *   PUT  /admin/api/models/config  ← { overrides: { modelId: { ... } | null } }（整体替换）
  */
-async function handleModelsConfig(ctx) {
-  if (ctx.method === 'GET' || ctx.method === 'HEAD') {
-    ctx.json(200, modelConfigPayload(ctx.config));
-    return;
-  }
-  if (ctx.method !== 'PUT' && ctx.method !== 'POST') {
-    throw methodNotAllowed(ctx, 'GET, PUT');
-  }
-  const body = ctx.body && typeof ctx.body === 'object' ? ctx.body : null;
-  if (!body) throw badRequest('请求体必须是 JSON 对象');
-  const { overrides, errors } = validateModelOverrides(body.overrides);
-  if (errors.length) {
-    throw badRequest(errors.join('；'), 'overrides', 'invalid_model_override');
-  }
-  if (!ctx.config.models || typeof ctx.config.models !== 'object') ctx.config.models = {};
-  ctx.config.models.overrides = overrides;
-
-  // v2.22：每模型工具开关 + 不支持工具的处理策略
-  if (body.tools !== undefined) {
-    const current = getModelToolPolicy(ctx.config);
-    const { policy, errors } = validateModelToolPolicy(body.tools, adminCatalogItems(ctx.config));
-    if (errors.length) {
-      throw badRequest(errors.join('；'), 'tools', 'invalid_model_override');
-    }
-    ctx.config.models.tools = {
-      dropUnsupported:
-        policy.dropUnsupported === null ? current.dropUnsupported : policy.dropUnsupported !== false,
-      perModel: body.tools.perModel === undefined ? current.perModel : policy.perModel
-    };
-  }
-
-  await ctx.store.saveConfig(ctx.config);
-  ctx.json(200, modelConfigPayload(ctx.config));
-}
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
 /* ------------------------------------------------------------------ */
 
-async function handleGetConfig(ctx) {
-  requireMethod(ctx, ['GET', 'HEAD']);
-  ctx.json(200, { config: redactConfig(ctx.config) });
-}
 
-async function handlePutConfig(ctx) {
-  requireMethod(ctx, ['PUT', 'POST']);
-  let patch = ctx.body;
-  if (patch && typeof patch === 'object' && !Array.isArray(patch) && patch.config && typeof patch.config === 'object') {
-    patch = patch.config;
-  }
-  const result = applyConfigPatch(ctx.config, patch);
-  await ctx.store.saveConfig(ctx.config);
-  // v2.30：pool 配置（如 bindingTtlDays）实时生效（池对象读取的是同一个 config 引用）
-  try {
-    if (result.changes.includes('pool.bindingTtlDays')) ctx.identities?.pruneBindings?.();
-  } catch (error) {
-    ctx.logger?.warn?.('failed to apply pool settings', { error: error.message });
-  }
-  // v2.8: keep the persisted identity deviceName in sync with config.identity.deviceName.
-  try {
-    await ctx.syncDevices?.ensureDeviceName?.();
-  } catch (error) {
-    ctx.logger?.warn?.('failed to apply identity.deviceName', { error: error.message });
-  }
-  try {
-    ctx.logger?.setLevel?.(ctx.config.logging.level);
-  } catch {
-    // ignore logger update failures
-  }
-  ctx.json(200, {
-    ok: true,
-    config: redactConfig(ctx.config),
-    restartRequired: result.restartRequired,
-    ...(result.ignored.length ? { ignored: result.ignored } : {}),
-    // upstream / allowPaidModels / auth changes apply live; queue reads config live
-    applied: result.changes
-  });
-}
 
-async function handleResetConfig(ctx) {
-  requireMethod(ctx, ['POST']);
-  const before = deepClone({
-    server: { host: ctx.config.server.host, port: ctx.config.server.port },
-    duck: {
-      baseUrl: ctx.config.duck.baseUrl,
-      userAgent: ctx.config.duck.userAgent,
-      challenge: ctx.config.duck.challenge,
-      humanize: ctx.config.duck.humanize
-    }
-  });
-  const reset = await resetConfig({
-    currentConfig: ctx.config,
-    apiKeys: ctx.store.getManagedKeyStrings?.() || []
-  });
-  deepApply(ctx.config, reset.config);
-  await ctx.store.saveConfig(ctx.config);
-  try {
-    ctx.logger?.setLevel?.(ctx.config.logging.level);
-  } catch {
-    // ignore
-  }
-  const restartRequired =
-    RESTART_REQUIRED_PATHS.some(
-      (dotted) => JSON.stringify(getByDottedPath(before, dotted)) !== JSON.stringify(getByDottedPath(ctx.config, dotted))
-    ) || JSON.stringify(before.duck?.humanize) !== JSON.stringify(ctx.config.duck?.humanize);
-  ctx.json(200, {
-    ok: true,
-    config: redactConfig(ctx.config),
-    restartRequired
-  });
-}
 
 /* ------------------------------------------------------------------ */
 /* Logs                                                                */
 /* ------------------------------------------------------------------ */
 
-function normalizeLogKind(ctx, { strict = false } = {}) {
-  const raw = ctx.query.get('kind');
-  if (raw === null || raw === '') return 'upstream';
-  if (raw === 'upstream' || raw === 'admin') return raw;
-  if (strict) throw badRequest('"kind" must be "upstream" or "admin"', 'kind', 'invalid_kind');
-  return 'upstream';
-}
 
 /**
  * v2.24：日志下载。`GET /admin/api/logs/download?kind=upstream|admin&format=json|jsonl|csv`
  * 附件下载，包含当前缓冲区内的全部日志（受保留策略约束）。
  */
-async function handleLogsDownload(ctx) {
-  requireMethod(ctx, ['GET', 'HEAD']);
-  const kind = normalizeLogKind(ctx, { strict: true });
-  const formatRaw = (ctx.query.get('format') || 'jsonl').toLowerCase();
-  const format = ['json', 'jsonl', 'csv'].includes(formatRaw) ? formatRaw : 'jsonl';
-  const items = ctx.store.getLogs({ kind, limit: 20000, offset: 0 }).items;
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const fileName = `duckai-cpa-${kind}-logs-${ts}.${format === 'csv' ? 'csv' : format === 'json' ? 'json' : 'jsonl'}`;
-
-  let body;
-  if (format === 'json') {
-    body = JSON.stringify({ kind, exportedAt: Date.now(), total: items.length, items }, null, 2);
-  } else if (format === 'csv') {
-    const columns =
-      kind === 'upstream'
-        ? ['ts', 'id', 'source', 'endpoint', 'model', 'status', 'latencyMs', 'queueWaitMs', 'stream', 'identityId', 'identityLabel', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'error']
-        : ['ts', 'id', 'endpoint', 'method', 'status', 'latencyMs', 'error'];
-    const escape = (value) => {
-      const str = value === null || value === undefined ? '' : String(value);
-      return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
-    };
-    const rows = items.map((item) => {
-      const tokens = item.tokens || {};
-      const record = { ...item, prompt_tokens: tokens.prompt, completion_tokens: tokens.completion, total_tokens: tokens.total };
-      return columns.map((column) => escape(record[column])).join(',');
-    });
-    body = [columns.join(','), ...rows].join('\n');
-  } else {
-    body = items.map((item) => JSON.stringify(item)).join('\n');
-  }
-
-  const contentType =
-    format === 'csv' ? 'text/csv; charset=utf-8' : format === 'json' ? 'application/json; charset=utf-8' : 'application/x-ndjson; charset=utf-8';
-  ctx.text(200, body, contentType, {
-    'Content-Disposition': `attachment; filename="${fileName}"`,
-    'X-Log-Count': String(items.length)
-  });
-}
 
 /**
  * v2.24：日志保留策略。
  *   GET  /admin/api/logs/retention → { maxEntries, maxAgeDays, upstreamCount, adminCount }
  *   PUT  /admin/api/logs/retention ← { maxEntries, maxAgeDays }（立即裁剪并持久化）
  */
-async function handleLogsRetention(ctx) {
-  if (ctx.method === 'GET' || ctx.method === 'HEAD') {
-    ctx.json(200, ctx.store.getLogRetention());
-    return;
-  }
-  if (ctx.method !== 'PUT' && ctx.method !== 'POST') throw methodNotAllowed(ctx, 'GET, PUT');
-  const body = ctx.body && typeof ctx.body === 'object' ? ctx.body : {};
-  const maxEntries = Number(body.maxEntries);
-  const maxAgeDays = Number(body.maxAgeDays);
-  if (!Number.isFinite(maxEntries) && !Number.isFinite(maxAgeDays)) {
-    throw badRequest('至少需要提供 maxEntries 或 maxAgeDays', 'maxEntries', 'invalid_log_retention');
-  }
-  if (Number.isFinite(maxEntries) && (maxEntries < 10 || maxEntries > 20000)) {
-    throw badRequest('maxEntries 需在 10–20000 之间', 'maxEntries', 'invalid_log_retention');
-  }
-  if (Number.isFinite(maxAgeDays) && (maxAgeDays < 0 || maxAgeDays > 365)) {
-    throw badRequest('maxAgeDays 需在 0–365 之间（0 = 不按时间淘汰）', 'maxAgeDays', 'invalid_log_retention');
-  }
-  const result = ctx.store.setLogRetention({
-    ...(Number.isFinite(maxEntries) ? { maxEntries } : {}),
-    ...(Number.isFinite(maxAgeDays) ? { maxAgeDays } : {})
-  });
-  if (!ctx.config.logging || typeof ctx.config.logging !== 'object') ctx.config.logging = {};
-  ctx.config.logging.maxEntries = result.maxEntries;
-  ctx.config.logging.maxAgeDays = result.maxAgeDays;
-  await ctx.store.saveConfig(ctx.config);
-  ctx.json(200, result);
-}
 
 /** v2.24：token 消耗总览（分模型 / 分身份×模型）。 */
-async function handleUsage(ctx) {
-  requireMethod(ctx, ['GET', 'HEAD']);
-  const model = ctx.query.get('model');
-  const identityId = ctx.query.get('identityId') || ctx.query.get('identity');
-  ctx.json(200, ctx.store.getUsage({ model, identityId }));
-}
 
-async function handleLogs(ctx) {
-  if (ctx.method === 'DELETE') {
-    const kind = normalizeLogKind(ctx, { strict: true });
-    ctx.json(200, ctx.store.clearLogs(kind));
-    return;
-  }
-  requireMethod(ctx, ['GET', 'HEAD']);
-  const kind = normalizeLogKind(ctx, { strict: true });
-  const limit = Number.parseInt(ctx.query.get('limit') ?? '50', 10);
-  const offset = Number.parseInt(ctx.query.get('offset') ?? '0', 10);
-  ctx.json(
-    200,
-    ctx.store.getLogs({
-      kind,
-      limit: Number.isFinite(limit) ? limit : 50,
-      offset: Number.isFinite(offset) ? offset : 0
-    })
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /* API keys                                                            */
 /* ------------------------------------------------------------------ */
 
-async function handleKeys(ctx, keyId) {
-  if (!keyId) {
-    if (ctx.method === 'GET' || ctx.method === 'HEAD') {
-      ctx.json(200, { items: ctx.store.listKeys() });
-      return;
-    }
-    if (ctx.method === 'POST') {
-      const label = ctx.body && typeof ctx.body === 'object' && typeof ctx.body.label === 'string' ? ctx.body.label : 'api-key';
-      const created = ctx.store.createKey(label);
-      if (!Array.isArray(ctx.config.auth.apiKeys)) ctx.config.auth.apiKeys = [];
-      if (!ctx.config.auth.apiKeys.includes(created.key)) ctx.config.auth.apiKeys.push(created.key);
-      await ctx.store.saveConfig(ctx.config);
-      ctx.json(201, {
-        id: created.id,
-        label: created.label,
-        key: created.key,
-        createdAt: created.createdAt
-      });
-      return;
-    }
-    throw methodNotAllowed(ctx, 'GET, POST');
-  }
-
-  requireMethod(ctx, ['DELETE']);
-  const deleted = ctx.store.deleteKey(keyId);
-  if (!deleted) throw notFound(`API key "${keyId}" not found`, 'key_not_found');
-  if (deleted.removedFromConfig) await ctx.store.saveConfig(ctx.config);
-  ctx.json(200, { ok: true, id: keyId });
-}
 
 /* ------------------------------------------------------------------ */
 /* Connection-test sessions                                            */
@@ -1536,110 +1158,8 @@ export async function handleAdminRequest(ctx, route, method) {
       if (parts.length === 2 && parts[1] === 'refresh') return handleModelsRefresh(ctx);
       if (parts.length !== 1) throw notFound(`Unknown admin endpoint: ${method} ${route}`);
       return handleModels(ctx);
-    // v2.31：会话历史（只读，按身份分组）
-    case 'history': {
-      if (!ctx.history) {
-        throw new OpenAIError('会话历史不可用（SQLite 未就绪）', {
-          status: 503,
-          type: 'server_error',
-          code: 'history_unavailable'
-        });
-      }
-      if (parts.length === 1) {
-        requireMethod(ctx, ['GET', 'HEAD']);
-        const result = ctx.history.list({
-          limit: Number(ctx.query.get('limit')) || 200,
-          identityId: ctx.query.get('identityId') || null
-        });
-        ctx.json(200, { ok: true, ...result, stats: ctx.history.stats() });
-        return;
-      }
-      const historyId = decodeURIComponent(parts[1]);
-      // v2.48：调试视图——查看该会话最近一次实际发给 duck.ai 的 upstream messages（脱敏）
-      if (parts.length === 3 && parts[2] === 'upstream') {
-        requireMethod(ctx, ['GET', 'HEAD']);
-        if (!ctx.responsesStore) {
-          throw new OpenAIError('上游请求调试视图不可用（SQLite 未就绪）', {
-            status: 503,
-            type: 'server_error',
-            code: 'responses_store_unavailable'
-          });
-        }
-        const detail = ctx.history.get(historyId);
-        if (!detail) throw notFound(`history "${historyId}" not found`, 'history_not_found');
-        const sessionKey = detail.sessionKey || null;
-        let source = null;
-        let record = null;
-        let updatedAt = null;
-        if (sessionKey) {
-          const conversation = await ctx.responsesStore.getConversation(sessionKey);
-          const latest = await ctx.responsesStore.getLatestBySession(sessionKey);
-          if (conversation && (!latest || (conversation.updatedAt || 0) >= (latest.createdAt || 0))) {
-            source = 'conversation_state';
-            record = conversation;
-            updatedAt = conversation.updatedAt;
-          } else if (latest) {
-            source = 'response';
-            record = latest;
-            updatedAt = latest.createdAt;
-          }
-        }
-        const redact = (value, depth = 0) => {
-          if (depth > 8) return '[truncated depth]';
-          if (typeof value === 'string') {
-            if (value.startsWith('data:image/')) {
-              const match = value.match(/^data:(image\/[^;]+);base64,/);
-              return `[image data${match ? ` ${match[1]}` : ''}, ${value.length} chars]`;
-            }
-            return value.length > 20000 ? `${value.slice(0, 20000)}…(truncated)` : value;
-          }
-          if (Array.isArray(value)) return value.slice(0, 200).map((item) => redact(item, depth + 1));
-          if (value && typeof value === 'object') {
-            const out = {};
-            for (const [key, item] of Object.entries(value)) {
-              if (key === 'image' || key === 'dataUrl') {
-                out[key] = redact(String(item), depth + 1);
-                continue;
-              }
-              out[key] = redact(item, depth + 1);
-            }
-            return out;
-          }
-          return value;
-        };
-        const messages = record
-          ? source === 'conversation_state'
-            ? record.upstream
-            : record.upstream && record.upstream.length
-              ? record.upstream
-              : record.conversation
-          : [];
-        ctx.json(200, {
-          ok: true,
-          sessionKey,
-          source,
-          updatedAt,
-          messageCount: Array.isArray(messages) ? messages.length : 0,
-          injection: detail.injection || null,
-          messages: redact(messages)
-        });
-        return;
-      }
-      if (parts.length === 2) {
-        if (ctx.method === 'DELETE') {
-          const removed = ctx.history.remove(historyId);
-          ctx.json(removed ? 200 : 404, removed ? { ok: true } : { ok: false, error: { code: 'history_not_found' } });
-          return;
-        }
-        requireMethod(ctx, ['GET', 'HEAD']);
-        const detail = ctx.history.get(historyId);
-        if (!detail) throw notFound(`history "${historyId}" not found`, 'history_not_found');
-        ctx.json(200, { ok: true, item: detail });
-        return;
-      }
-      throw notFound(`Unknown admin endpoint: ${method} ${route}`);
-    }
-    case 'health':
+    case 'history':
+      return handleHistory(ctx, parts, method, route);    case 'health':
       if (parts.length !== 1) throw notFound(`Unknown admin endpoint: ${method} ${route}`);
       return handleHealth(ctx);
     case 'test':
