@@ -396,6 +396,11 @@ data/                运行时数据（不入库；含敏感文件）
   CI 工作流 `build-windows-exe` 仅手动触发。
 - **未支持**：Windows 图标、代码签名、arm64/32 位、Linux 交叉编译；Bun 的 fastify 适配器在 exe 中可用
   （stderr 有一条 Fastify `disableRequestLogging` 弃用警告，不影响功能）。
+- **代理（Bun/exe）**：undici `ProxyAgent` 在 Bun 下不可用（ECONNRESET/timeout），`src/duck/proxy.js`
+  运行时切换为 Bun 原生 `fetch(url,{proxy})`（HTTP/HTTPS）；SOCKS 仍走 undici、未验证可靠性。
+  回归：`tests/proxy-bun-fetch.test.js`；验收见 `docs/ACCEPTANCE.md` §2.56.7。
+- **控制台**：exe 是控制台程序，双击后窗口常驻（关窗即停止）；首次启动的 adminToken/API Key
+  打印在这个窗口。用脚本启动时重定向 stdout/stderr 即可静默。
 
 ## 10. 文档索引
 

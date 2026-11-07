@@ -1,4 +1,4 @@
-﻿# 验收实测记录（v2 / v2.1 / v2.2 / v2.3 / v2.4 · Lead 独立执行）
+# 验收实测记录（v2 / v2.1 / v2.2 / v2.3 / v2.4 · Lead 独立执行）
 
 > 版本：v2（React + shadcn 控制台；BREAKING：强制 API Key / RPS 队列 / 日志拆分 / 付费模型 / 会话式连接测试 / 严格中断）
 > v2.1：会话「重新生成/重试」+ 推理（reasoning）展示与 `reasoningEncrypted` 标记。
@@ -844,10 +844,40 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 
 ### 2.56.6 已知限制 / BLOCKED
 
-- **真实上游未在 exe 中验证**：本沙箱出口 IP 访问 `duck.ai` 返回 `451 ERR_COUNTRY_NOT_SUPPORTED`
-  （与 v2.63 记录一致），因此 exe 内真实 chat/image 未验收；协议层由 Node 单测覆盖，
-  `/healthz` 在离线时按设计降级为 `upstream.ok=false`（仍 200），`verify-exe` 已按离线语义断言。
+- **真实上游（直连）不可用**：本沙箱出口 IP 直接访问 `duck.ai` 返回 `451 ERR_COUNTRY_NOT_SUPPORTED`
+  （与 v2.63 记录一致）；`/healthz` 在直连降级时为 `upstream.ok=false`（仍 200），
+  `verify-exe` 按离线语义断言。**经本机 HTTP 代理（127.0.0.1:10808）的真实上游链路已在 §2.56.7 验证通过**
+  （`/status` 200、chat 非流式/流式均 200）。
 - **Fastify 弃用警告**：exe 默认 fastify 适配器在 Bun 下可正常服务，stderr 有一条
   `FSTDEP023 disableRequestLogging deprecated`（不影响功能）。
 - 未做 Windows 图标、代码签名、arm64/32 位、Linux 交叉编译；SmartScreen/杀软误报已在文档说明。
 - CI `build-windows-exe` 仅做了本地 YAML/PowerShell 语法校验，未在 GitHub 实际运行。
+
+### 2.56.7 exe 内 HTTP 代理异常修复（Bun fetch proxy）
+
+> 现象（用户反馈）：exe 启用 HTTP 代理 `127.0.0.1:10808` 后，管理后台「测试连接」失败、
+> 出口 IP 获取失败，`/healthz` 上游异常（451 / challenge_fetch_failed），`/v1/chat/completions` 无法出网；
+> **同一代理在 Node 源码模式下完全正常**。
+
+- **根因**：Bun 运行时（含 `bun build --compile` exe）与 undici `ProxyAgent` 不兼容——
+  CONNECT/TLS 行为不一致，表现为 `ECONNRESET` / `TimeoutError`（`undici.fetch(...,{dispatcher})`）；
+  Node 24 无此问题。Bun 原生 `fetch(url,{proxy})` 实测正常：经同一代理访问
+  `https://duck.ai/duckchat/v1/status` → 200、`https://api.ipify.org` → 200（exitIp `70.39.202.155`）。
+- **修复**（`src/duck/proxy.js`）：运行时检测 Bun（`globalThis.Bun.version`）；HTTP/HTTPS 代理在 Bun 下
+  改用原生 fetch 的 `proxy` 选项（`fetch()` 与 `test()` 两条路径都切换），Node 源码模式保持 undici。
+  Bun 下 http(s) 不再创建 `ProxyAgent`（`getDispatcher()` 返回 undefined），`active` 状态由原生 proxy 路径维持；
+  SOCKS4/5 仍走 undici，Bun 下未验证可靠性（启动/更新时打 warn 提示改用 HTTP 代理）。
+- **回归**：新增 `tests/proxy-bun-fetch.test.js`（5 用例：proxy URI 构造、fetch 走原生 proxy 且不带 dispatcher、
+  noProxy/禁用直连、test() target + exit IP、显式 host/port 覆盖）；`proxy-manager` / `proxy-api` 25/25 全绿；
+  全量 `npm test` **527 / 527 PASS**。
+- **编译 exe 实测**（Bun 1.4.4、`127.0.0.1:10808` HTTP 代理）：
+  - `POST /admin/api/proxy/test` → `{"ok":true,"status":200,"latencyMs":483,"exitIp":"70.39.202.155"}`；
+  - `/healthz` → `upstream.ok=true`、`upstreamStatus:"0"`、`challengeOk=true`；
+  - 真实 `/v1/chat/completions`：非流式 200（"proxy-ok"）、流式 200（SSE chunks 正常）；
+  - 管理后台「代理」页测试连接通过（HTTP 200 / 延迟 696ms / 出口 IP `70.39.202.155`），
+    截图 `docs/assets/windows-exe-proxy-fixed.png`；概览页「上游正常」截图更新
+    `docs/assets/windows-exe-admin-overview.png`；
+  - `page-check` 对修复后 exe **22/22 PASS**；`verify-exe` **8/8 PASS**；`npm test` **527/527 PASS**。
+- **控制台**：exe 为控制台程序，双击后控制台窗口常驻前台（服务运行期间窗口保持，首次启动的
+  adminToken/API Key 打印在该窗口）；本次演示实例也已在可见控制台窗口运行（pid 15464）。
+  文档 `docs/WINDOWS-BUILD.md` §5 / §7.1 已补充。

@@ -23,6 +23,37 @@ import socksPackage from 'socks';
 
 const { SocksClient } = socksPackage;
 
+/**
+ * Bun 运行时检测（含 `bun build --compile` 生成的单文件 exe）。
+ *
+ * Bun 的原生 `fetch` 支持 per-request `proxy` 选项，但 undici 的 `ProxyAgent`
+ * 在 Bun 下不可用（CONNECT/TLS 行为不一致：表现为 ECONNRESET / timeout，
+ * 见 windows 分支 docs/ACCEPTANCE.md §2.56.7）。因此 HTTP/HTTPS 代理在 Bun 下
+ * 改用原生 fetch；Node 运行时仍使用 undici（既有行为与测试不变）。
+ */
+const BUN_RUNTIME = (() => {
+  try {
+    return typeof globalThis.Bun !== 'undefined' && typeof globalThis.Bun.version === 'string';
+  } catch {
+    return false;
+  }
+})();
+
+/**
+ * 把 http(s) 代理配置拼成 `scheme://[user:pass@]host:port`。
+ * @param {{ type?: string, host: string, port: number, username?: string, password?: string }} config
+ * @returns {string}
+ */
+export function buildHttpProxyUri(config) {
+  const scheme = config.type === 'https' ? 'https' : 'http';
+  const auth =
+    config.username || config.password
+      ? `${encodeURIComponent(config.username || '')}:${encodeURIComponent(config.password || '')}@`
+      : '';
+  const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
+  return `${scheme}://${auth}${host}:${config.port}`;
+}
+
 export const PROXY_TYPES = Object.freeze(['http', 'https', 'socks4', 'socks5']);
 export const DEFAULT_PROXY_CONFIG = Object.freeze({
   enabled: false,
@@ -289,6 +320,15 @@ export class ProxyManager {
     this._rawConfig = isPlainObject(proxySource) ? { ...proxySource } : {};
     this.logger = options.logger || null;
     this._directFetch = typeof options.fetchImpl === 'function' ? options.fetchImpl : undiciFetch;
+    // Bun 运行时（尤其是编译 exe）：http(s) 代理改用原生 fetch 的 `proxy` 选项。
+    // 测试可显式注入 bunRuntime/nativeFetch 来模拟，不依赖真实 Bun 进程。
+    this._bunRuntime = options.bunRuntime === undefined ? BUN_RUNTIME : options.bunRuntime === true;
+    this._nativeFetch =
+      typeof options.nativeFetch === 'function'
+        ? options.nativeFetch
+        : typeof globalThis.fetch === 'function'
+          ? globalThis.fetch.bind(globalThis)
+          : null;
     this._config = normalizeProxyConfig({ ...DEFAULT_PROXY_CONFIG, ...proxySource });
     /** @type {import('undici').Dispatcher | null} */
     this._dispatcher = null;
@@ -347,7 +387,7 @@ export class ProxyManager {
     return {
       enabled: this._config.enabled,
       mode: this._config.enabled ? this._config.type : 'direct',
-      active: Boolean(this._config.enabled && this._dispatcher),
+      active: Boolean(this._config.enabled && (this._dispatcher || this._getBunProxyUri(this._config))),
       lastTestOk: this._status.lastTestOk,
       lastTestLatencyMs: this._status.lastTestLatencyMs,
       exitIp: this._status.exitIp
@@ -422,6 +462,18 @@ export class ProxyManager {
     return this._dispatcher;
   }
 
+  /**
+   * Bun 运行时下 HTTP/HTTPS 代理使用原生 fetch 的 `proxy` 选项。
+   * @param {Record<string, any>} [config]
+   * @returns {string|null} 代理 URI；不需要/不支持时返回 null（走 undici 或直连）。
+   */
+  _getBunProxyUri(config = this._config) {
+    if (!this._bunRuntime || !this._nativeFetch) return null;
+    if (!config || config.enabled !== true) return null;
+    if (config.type !== 'http' && config.type !== 'https') return null;
+    return buildHttpProxyUri(config);
+  }
+
   /** Bound fetch that automatically uses the proxy dispatcher (except for noProxy hosts). */
   getFetch() {
     return (url, init = {}) => this.fetch(url, init);
@@ -437,8 +489,13 @@ export class ProxyManager {
     if (this.shouldBypass(url)) {
       return this._directFetch(url, init);
     }
+    const { dispatcher: _ignoredDispatcher, ...rest } = init || {};
+    const bunProxyUri = this._getBunProxyUri();
+    if (bunProxyUri) {
+      return this._nativeFetch(url, { ...rest, proxy: bunProxyUri });
+    }
     const dispatcher = this.getDispatcher();
-    return undiciFetch(url, { ...init, dispatcher });
+    return undiciFetch(url, { ...rest, dispatcher });
   }
 
   /**
@@ -507,14 +564,19 @@ export class ProxyManager {
       bypassNoProxy: Boolean(requestedProxy && bypassTestUrl)
     };
     let temporary = null;
+    // Bun 运行时 http(s) 代理：用原生 fetch 的 proxy 选项，不建 undici dispatcher。
+    const nativeProxyUri = useProxy ? this._getBunProxyUri(merged) : null;
     const startedAt = Date.now();
     try {
       validateProxyConfig(merged, { requireHostPort: requestedProxy });
-      temporary = useProxy ? this._buildDispatcher(merged) : null;
-      const fetchImpl = temporary
-        ? (input, init) => undiciFetch(input, { ...init, dispatcher: temporary })
-        : this._directFetch;
-      const response = await fetchImpl(target, {
+      temporary = useProxy && !nativeProxyUri ? this._buildDispatcher(merged) : null;
+      const fetchWithProxy = (input, init = {}) => {
+        const { dispatcher: _ignoredDispatcher, ...rest } = init || {};
+        if (nativeProxyUri) return this._nativeFetch(input, { ...rest, proxy: nativeProxyUri });
+        if (temporary) return undiciFetch(input, { ...rest, dispatcher: temporary });
+        return this._directFetch(input, rest);
+      };
+      const response = await fetchWithProxy(target, {
         method: 'GET',
         redirect: 'manual',
         signal: AbortSignal.timeout(merged.timeoutMs),
@@ -528,9 +590,12 @@ export class ProxyManager {
       // Exit IP check must run **before** the temporary dispatcher is closed (v2.3 QA bug #2).
       if (result.ok) {
         const bypassIp = this._shouldBypassForConfig(merged.ipCheckUrl, merged.noProxy);
-        const ipFetch = temporary && !bypassIp
-          ? (input, init) => undiciFetch(input, { ...init, dispatcher: temporary })
-          : this._directFetch;
+        const ipFetch = (input, init = {}) => {
+          const { dispatcher: _ignoredDispatcher, ...rest } = init || {};
+          if (nativeProxyUri && !bypassIp) return this._nativeFetch(input, { ...rest, proxy: nativeProxyUri });
+          if (temporary && !bypassIp) return undiciFetch(input, { ...rest, dispatcher: temporary });
+          return this._directFetch(input, rest);
+        };
         try {
           const ipResponse = await ipFetch(merged.ipCheckUrl, {
             method: 'GET',
@@ -566,7 +631,7 @@ export class ProxyManager {
     // Persist test result in the manager status (docs/PROXY.md §3.3).
     this._status = {
       ...this._status,
-      active: Boolean(this._config.enabled && this._dispatcher),
+      active: Boolean(this._config.enabled && (this._dispatcher || this._getBunProxyUri(this._config))),
       mode: this._config.enabled ? this._config.type : 'direct',
       lastTestAt: testedAt,
       lastTestOk: result.ok,
@@ -597,6 +662,9 @@ export class ProxyManager {
     if (/certificate|tls|ssl|self.signed|unable to verify|handshake/i.test(message)) {
       return { ok: false, status: null, error: message, code: 'proxy_tls_failed' };
     }
+    if (/UnsupportedProxyProtocol/i.test(message)) {
+      return { ok: false, status: null, error: message, code: 'proxy_unsupported' };
+    }
     if (error instanceof ProxyError) {
       return { ok: false, status: null, error: message, code: 'invalid_proxy' };
     }
@@ -606,13 +674,10 @@ export class ProxyManager {
   /** Build a dispatcher for `config` (does not mutate manager state). */
   _buildDispatcher(config) {
     if (config.type === 'http' || config.type === 'https') {
-      const scheme = config.type === 'https' ? 'https' : 'http';
-      const auth = config.username || config.password
-        ? `${encodeURIComponent(config.username || '')}:${encodeURIComponent(config.password || '')}@`
-        : '';
-      const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
-      const uri = `${scheme}://${auth}${host}:${config.port}`;
-      return new ProxyAgent({ uri, ...(config.timeoutMs ? { timeout: config.timeoutMs } : {}) });
+      return new ProxyAgent({
+        uri: buildHttpProxyUri(config),
+        ...(config.timeoutMs ? { timeout: config.timeoutMs } : {})
+      });
     }
     if (config.type === 'socks4' || config.type === 'socks5') {
       return new Agent({ connect: createSocksConnector(config, { logger: this.logger }), ...(config.timeoutMs ? { timeout: config.timeoutMs } : {}) });
@@ -634,8 +699,20 @@ export class ProxyManager {
       if (previous) this._retire(previous);
       return;
     }
-    this._dispatcher = this._buildDispatcher(this._config);
-    this._status.active = true;
+    const bunProxyUri = this._getBunProxyUri(this._config);
+    if (bunProxyUri) {
+      // Bun 运行时 http(s) 代理走原生 fetch，不需要（也不应使用）undici dispatcher。
+      this._status.active = true;
+    } else {
+      this._dispatcher = this._buildDispatcher(this._config);
+      this._status.active = true;
+      if (this._bunRuntime && (this._config.type === 'socks4' || this._config.type === 'socks5')) {
+        this.logger?.warn?.(
+          '[duck:proxy] SOCKS 代理在 Bun/单文件 exe 下依赖 undici + node:net/tls，可靠性未验证；' +
+            '如遇连接异常请改用 HTTP/HTTPS 代理'
+        );
+      }
+    }
     if (previous) this._retire(previous);
   }
 

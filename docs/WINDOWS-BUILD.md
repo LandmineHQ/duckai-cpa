@@ -129,6 +129,10 @@ dist/windows-x64/duckai-cpa.exe     # ~148–150 MB，单文件
 程序运行期间请勿关闭控制台窗口；`Ctrl+C` 或直接关窗口即停止。默认数据目录是 exe 同目录的
 `data/`，exe 移动位置后请把 `data/` 一起带走，或通过 `DUCKAI_CPA_DATA_DIR` 指定固定目录。
 
+> exe 是**控制台程序**：双击后会出现控制台窗口并常驻（服务运行期间窗口不会自动关闭），
+> 首次启动的 adminToken / API Key 都打印在这个窗口里。用脚本/自动化启动时若不需要窗口，
+> 可重定向 stdout/stderr；需要前台演示时直接双击 exe，或 `cmd /c start "" duckai-cpa.exe`。
+
 ## 6. 环境变量
 
 | 变量 | 默认值 | 说明 |
@@ -162,6 +166,20 @@ $env:DUCKAI_CPA_PORT = "8788"
 
   因此 exe 分发时**不需要**携带 `web/`、`config/`；但 `data/` 必须是外部真实可写目录。
   如果以后新增「运行时必须从磁盘读取的资源」，需要在 `scripts/build-exe.mjs` 的 `--asset` 列表中补上。
+
+### 7.1 代理在 Bun / exe 下的行为（重要）
+
+- **HTTP / HTTPS 代理**：Bun 运行时（含本 exe）下，undici 的 `ProxyAgent` 连接行为异常
+  （CONNECT/TLS 不一致，实测 `ECONNRESET` / timeout，代理实际不可用）。`windows` 分支已在
+  `src/duck/proxy.js` 做运行时切换：Bun 下改用 **Bun 原生 `fetch(url, { proxy })`**，
+  Node 源码模式仍使用 undici（既有行为与测试不变）。
+- **实测（编译 exe + 本机 `127.0.0.1:10808` HTTP 代理）**：
+  `POST /admin/api/proxy/test` → `ok=true`、HTTP 200、`exitIp=70.39.202.155`；
+  `/healthz` 的 `upstream.ok=true`、`challengeOk=true`；
+  `/v1/chat/completions`（非流式与流式）真实上游返回 200。
+- **SOCKS4 / SOCKS5** 在 Bun/exe 下仍走 undici + `node:net/tls`，**未验证可靠性**；
+  如遇连接异常请改用 HTTP/HTTPS 代理（exe 启动时会在日志/管理台提示）。
+- `noProxy` 规则（精确/后缀/通配）在两条路径上都生效；代理配置保存后立即生效、无需重启。
 
 ## 8. 已知限制
 

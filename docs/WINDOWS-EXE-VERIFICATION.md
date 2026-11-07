@@ -103,6 +103,9 @@ node scripts/verify-exe.mjs --exe dist/windows-x64/duckai-cpa.exe --timeout 3000
 
 ## 7. 已知限制与排障
 
+- **代理**：本脚本不测试出站代理（离线断言优先）。exe 内 HTTP/HTTPS 代理行为（Bun 原生
+  `fetch(url,{proxy})` 路径）另见 `docs/ACCEPTANCE.md` §2.56.7；需要本机代理
+  `127.0.0.1:10808` 才能复现 `POST /admin/api/proxy/test` 的通过结果。
 - **离线**：不访问真实 duck.ai；聊天/生图的上游链路由 Node 单测与 mock smoke 覆盖，
   exe 内真实上游验收需要可访问 duck.ai 的网络（本沙箱为 `451 ERR_COUNTRY_NOT_SUPPORTED`，BLOCKED）。
 - **node 模式**（`--node`）用于脚本自测；在受限沙箱里它比 exe 模式慢，偶发长时间不退出。
