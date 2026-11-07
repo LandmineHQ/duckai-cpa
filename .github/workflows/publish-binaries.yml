@@ -203,6 +203,13 @@ jobs:
           release_exists=0
           if gh api "repos/${GH_REPO}/releases/tags/${VERSION}" >/dev/null 2>&1; then
             release_exists=1
+          else
+            # release-by-tag 对某些 draft 可能返回 404；再从 releases 列表里按 tag_name 找（含 draft）
+            existing_ids=$(gh api "repos/${GH_REPO}/releases?per_page=100" --paginate \
+              --jq ".[] | select(.tag_name == \"${VERSION}\") | .id" 2>/dev/null || true)
+            if [[ -n "$existing_ids" ]]; then
+              release_exists=1
+            fi
           fi
 
           if [[ "$release_exists" == "1" ]]; then
@@ -235,7 +242,8 @@ jobs:
           fi
 
           gh api "repos/${GH_REPO}/releases/tags/${VERSION}" \
-            --jq '{url: .html_url, tag: .tag_name, draft: .draft, prerelease: .prerelease, assets: [.assets[].name]}'
+            --jq '{url: .html_url, tag: .tag_name, draft: .draft, prerelease: .prerelease, assets: [.assets[].name]}' \
+            || echo "::warning::could not read final release state (release was created/updated above)"
 
       - name: Summary
         shell: bash

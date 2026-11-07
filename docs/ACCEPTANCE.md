@@ -1188,3 +1188,47 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 
 > 如果重跑后仍失败：请把 `Run set -euxo pipefail` 步骤中**最后一个命令及其 stderr**
 > （通常以 `gh: ...` 或 `HTTP 4xx` 开头）发出来，可直接定位是权限、tag 冲突还是 assets 问题。
+
+## 2.63 修复 Release 步骤 `Unknown JSON field: "isLatest"`
+
+> 用户日志：draft release 已成功创建（`Release 0.1.0-beta.3 created (draft=true)`），
+> 随后步骤报 `Unknown JSON field: "isLatest"` 并 exit 1。
+
+### 2.63.1 根因
+
+失败来自发布步骤最后的状态输出：
+
+```bash
+gh release view "$VERSION" --json url,tagName,isLatest,isPrerelease,isDraft,assets ...
+```
+
+`gh release view --json` 可用字段里**没有 `isLatest`**（报错列出的可用字段：
+`isDraft/isPrerelease/name/publishedAt/tagName/...`）。所以 **release 本身已创建成功**，
+只是最后的展示命令失败。
+
+### 2.63.2 修复
+
+- 最新 `main` 已改用 `gh api repos/<repo>/releases/tags/<tag> --jq`（不依赖 `gh release view` 的字段集），
+  不再使用 `isLatest`；
+- 最终状态输出改为**非致命**：读取失败只打印 `::warning::`，不让“展示失败”影响发布结果；
+- release 存在性检测增加 fallback：`releases/tags/<tag>` 对某些 draft 可能 404，
+  再从 `releases?per_page=100` 列表按 `tag_name` 查找（含 draft）；
+- 已有 draft（如本次的 `0.1.0-beta.3`）重跑 workflow 时会走“已存在”分支：
+  `upload --clobber` 覆盖资产 + `gh release edit --notes-file` 刷新下载表格。
+
+### 2.63.3 处理本次已创建的 draft
+
+1. 把仓库更新到包含本提交的 `main`（`e5e9e58` 起已修复 `isLatest`，本提交再加固）；
+2. 重跑 `publish-binaries`（同 version `0.1.0-beta.3` 即可）——会更新 draft 的资产与表格；
+3. 在 GitHub 上打开该 draft 检查后点 **Publish release**：
+   - draft 的 URL 显示 `untagged-...` 属正常，发布时会创建 `0.1.0-beta.3` tag；
+   - 发布后 Release 描述里表格的
+     `https://github.com/<repo>/releases/download/0.1.0-beta.3/<asset>` 链接才可下载。
+
+### 2.63.4 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| workflow YAML（Bun.YAML.parse） | **OK** |
+| `gh release view --json` 字段检查 | 已移除不存在的 `isLatest`；改用 `gh api` 原始 JSON + jq |
+| GitHub Actions 实跑 | **BLOCKED**：本环境无法触发；需在更新后的仓库重跑验证 |
