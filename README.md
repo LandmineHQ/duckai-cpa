@@ -75,7 +75,7 @@ It ships with a complete self-hosted control plane: identity pool management, su
 Model IDs are resolved dynamically; aliases (e.g. `gpt-6`, `duck`) are accepted. Paid models require a subscription-bound identity.
 
 | Duck.ai Model | Model IDs / Aliases | Provider | Tier |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **GPT-6 Luna** | `gpt-6-luna`, `gpt-6`, `luna`, `default` | OpenAI | Free |
 | **GPT-5.4 mini** | `gpt-5.4-mini`, `gpt-4o-mini` | OpenAI | Free |
 | **Claude Haiku 4.5** | `claude-haiku-4-5`, `claude-haiku-4.5`, `claude` | Anthropic | Free |
@@ -297,7 +297,7 @@ curl -N http://127.0.0.1:8787/v1/chat/completions \
 ### Desktop clients (Chatbox / Cherry Studio / NextChat / Open WebUI / Cursor)
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | Provider | OpenAI |
 | Base URL | `http://127.0.0.1:8787/v1` |
 | API Key | your gateway key (`/admin → API Key`) |
@@ -364,7 +364,7 @@ The gateway never exposes full tokens through the API (only masked metadata) and
 Configuration lives in `data/config.json` and can be edited from the admin console; environment variables override the basics:
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `DUCKAI_CPA_HOST` | `127.0.0.1` | Bind host (`0.0.0.0` in Docker) |
 | `DUCKAI_CPA_PORT` | `8787` | HTTP port |
 | `DUCKAI_CPA_ADMIN_TOKEN` | generated | Admin console/API token |
@@ -374,7 +374,7 @@ Configuration lives in `data/config.json` and can be edited from the admin conso
 Frequently used settings:
 
 | Path | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `duck.defaultModel` | `gpt-6-luna` | Default model |
 | `duck.allowPaidModels` | `false` | Allow paid models |
 | `duck.timeoutMs` | `120000` | Upstream timeout |
@@ -394,7 +394,7 @@ Frequently used settings:
 ## 📚 API Surface
 
 | Method | Path | Description |
-|---|---|---|
+| --- | --- | --- |
 | `GET` | `/v1/models` | Model catalog with context limits and capabilities |
 | `POST` | `/v1/chat/completions` | Chat completions (stream / tools / images / reasoning) |
 | `POST` | `/v1/responses` | OpenAI Responses API (stream + non-stream) |
@@ -458,7 +458,7 @@ data/              runtime data + SQLite (gitignored; contains secrets)
 ## 📄 Documentation Index
 
 | Document | Content |
-|---|---|
+| --- | --- |
 | [`docs/API.md`](docs/API.md) | OpenAI-compatible API behavior |
 | [`docs/ADMIN_API_V2.md`](docs/ADMIN_API_V2.md) | Admin API contracts |
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) / [`docs/PROTOCOL-ERRORS.md`](docs/PROTOCOL-ERRORS.md) | Duck.ai protocol and error mapping |
@@ -471,6 +471,10 @@ data/              runtime data + SQLite (gitignored; contains secrets)
 ## ⚠️ Disclaimer
 
 This project is an independent reverse-engineered interoperability layer for **educational, research and personal self-hosting purposes**. It is **not affiliated with, endorsed by, or associated with DuckDuckGo**. Respect Duck.ai's terms of service and local laws; do not use it to abuse upstream services. Upstream APIs and anti-bot mechanisms may change at any time.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/chart?repos=landminehq/duckai-cpa&type=timeline&legend=bottom-right)](https://www.star-history.com/?repos=landminehq%2Fduckai-cpa&type=timeline&releases=&legend=bottom-right)
 
 ## 📝 License
 
