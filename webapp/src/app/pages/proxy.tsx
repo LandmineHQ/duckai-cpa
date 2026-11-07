@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -18,9 +19,11 @@ import {
 import { toast } from 'sonner';
 import { apiGet, apiPost, apiPut, ApiError } from '@/app/lib/api';
 import { formatDateTime, formatDuration } from '@/app/lib/format';
+import { maskIp } from '@/app/lib/mask-ip.mjs';
 import type { ProxyConfig, ProxyResponse, ProxyTestResult, ProxyUpdateResponse } from '@/app/lib/types';
 import { PageHeader } from '@/app/components/page-header';
 import { ErrorBanner } from '@/app/components/error-banner';
+import { MaskedIp } from '@/app/components/masked-ip';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -236,7 +239,7 @@ export function ProxyPage() {
       setTestResult(result);
       if (result.ok) {
         toast.success(
-          `代理连通：${formatDuration(result.latencyMs)}${result.exitIp ? ` · 出口 IP ${result.exitIp}` : ''}`
+          `代理连通：${formatDuration(result.latencyMs)}${result.exitIp ? ` · 出口 IP ${maskIp(result.exitIp)}（点击状态卡可显示真实 IP）` : ''}`
         );
       } else {
         toast.error(`代理测试失败：${result.error || result.code || '未知错误'}`, { duration: 6000 });
@@ -325,7 +328,7 @@ export function ProxyPage() {
                   />
                   <StatusRow label="延迟" value={formatDuration(status?.lastTestLatencyMs)} />
                   <StatusRow label="HTTP 状态" value={status?.lastTestStatus ? String(status.lastTestStatus) : '—'} />
-                  <StatusRow label="出口 IP" value={status?.exitIp || '—'} mono />
+                  <StatusRow label="出口 IP" value={<MaskedIp value={status?.exitIp} className="font-mono" />} />
                   <StatusRow
                     label="状态更新时间"
                     value={status?.updatedAt ? formatDateTime(status.updatedAt) : '—'}
@@ -545,11 +548,15 @@ export function ProxyPage() {
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     测试通过 · {MODE_LABELS[testResult.mode] ?? testResult.mode}
                   </div>
-                  <div>
-                    延迟 {formatDuration(testResult.latencyMs)}
-                    {testResult.status ? ` · HTTP ${testResult.status}` : ''}
-                    {testResult.exitIp ? ` · 出口 IP ${testResult.exitIp}` : ''}
-                    {testResult.ipError ? ` · IP 查询失败：${testResult.ipError}` : ''}
+                  <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                    <span>延迟 {formatDuration(testResult.latencyMs)}</span>
+                    {testResult.status ? <span>· HTTP {testResult.status}</span> : null}
+                    {testResult.exitIp ? (
+                      <span className="inline-flex items-center gap-1">
+                        · 出口 IP <MaskedIp value={testResult.exitIp} className="font-mono" />
+                      </span>
+                    ) : null}
+                    {testResult.ipError ? <span>· IP 查询失败：{testResult.ipError}</span> : null}
                   </div>
                   {testResult.target ? <div className="font-mono text-[10.5px] opacity-80">target: {testResult.target}</div> : null}
                 </div>
@@ -578,7 +585,7 @@ function StatusRow({
   tone = 'muted'
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   mono?: boolean;
   tone?: 'muted' | 'success' | 'danger';
 }) {
@@ -586,7 +593,10 @@ function StatusRow({
   return (
     <div className="min-w-0 rounded-lg border bg-muted/20 px-2.5 py-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className={`mt-0.5 truncate text-xs ${mono ? 'font-mono' : ''} ${toneClass}`} title={value}>
+      <div
+        className={`mt-0.5 truncate text-xs ${mono ? 'font-mono' : ''} ${toneClass}`}
+        title={typeof value === 'string' ? value : undefined}
+      >
         {value}
       </div>
     </div>

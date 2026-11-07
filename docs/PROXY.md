@@ -1,4 +1,4 @@
-# DuckAI CPA v2.3：代理（Proxy）能力契约
+﻿# DuckAI CPA v2.3：代理（Proxy）能力契约
 
 > 需求：新增「代理」标签页，支持 HTTP(S) 与 SOCKS4/SOCKS5 代理，全部上游/外部请求可走代理；
 > 本机代理 `127.0.0.1:10808` 同时支持 HTTP CONNECT 与 SOCKS5，用于联调。
@@ -95,14 +95,14 @@ body 可选覆盖：`{ type?, host?, port?, username?, password?, noProxy?, test
 
 侧边栏新增 **代理**（Icon: Network / Globe），放在「身份」之后：
 
-1. **状态卡**：当前模式（直连 / HTTP / HTTPS / SOCKS4 / SOCKS5）、最近测试时间/延迟/HTTP 状态/出口 IP、最近错误（红色）。
+1. **状态卡**：当前模式（直连 / HTTP / HTTPS / SOCKS4 / SOCKS5）、最近测试时间/延迟/HTTP 状态/出口 IP、最近错误（红色）。出口 IP **默认脱敏**（如 `70.***.***.***`），点击眼睛按钮才显示真实值，避免截图泄露。
 2. **配置卡**：
    - 启用开关（关闭时其余字段禁用但可编辑）；
    - 类型下拉（HTTP / HTTPS / SOCKS5 / SOCKS4）；
    - 主机 + 端口（并排）；用户名/密码（可选，password 输入 + 显示切换，占位提示「留空表示不修改已保存密码」）；
    - 不走代理（noProxy）文本框：逗号/换行分隔；
    - 高级：测试地址（默认 duck.ai status）、出口 IP 检查地址（默认 ipify）；
-   - 按钮：**保存并应用**（PUT）、**测试连接**（POST test，显示延迟/状态码/出口 IP/错误）；
+   - 按钮：**保存并应用**（PUT）、**测试连接**（POST test，显示延迟/状态码/脱敏出口 IP/错误；点击眼睛显示真实值）；
    - 快捷按钮：**填入本机代理**（127.0.0.1:10808 + HTTP）。
 3. 提示文案：代理用于让网关访问外部网络（含 `duckduckgo.com`，Sync/订阅相关）；仅影响服务端出站，不影响浏览器。
 4. 身份页「Sync & Backup」的 blocked 提示改为「当前环境无法访问 duckduckgo.com；可在『代理』页启用代理后重试」，并提供跳转链接。

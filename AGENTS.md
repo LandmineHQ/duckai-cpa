@@ -279,6 +279,7 @@ data/                运行时数据（不入库；含敏感文件）
   名称用 `SelectItemText` 包裹，触发器自己渲染单行文本。
 - **组件导入**：Vite 构建不做类型检查，`<Icon />` 未 import 会在运行期崩溃（白屏/空 root），
   改完必须刷新页面或跑 jsdom 用例确认无 console 错误。
+- **IP 脱敏**：管理台展示代理出口 IP 等敏感地址统一用 `MaskedIp`（默认 `70.***.***.***`，点击眼睛显示真实值）；新增 IP 展示不要直接渲染明文，避免截图泄露。
 - **hash 路由**：`#/identity`=`默认身份`，`#/identities`=`身份池`，`#/subscriptions`=订阅；
   新增页面要改 `webapp/src/app/lib/hash-route.ts` + `App.tsx` + `components/sidebar.tsx`。
 - **bundle 缓存**：改前端后 `npm run build:web`，确认 `web/index.html` 引用的 hash 与

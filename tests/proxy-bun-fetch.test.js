@@ -1,4 +1,4 @@
-/**
+﻿/**
  * windows 平台分支：Bun 运行时（含编译 exe）的 HTTP 代理改用原生 fetch `proxy` 选项。
  *
  * 背景：Bun 下 undici `ProxyAgent` 连接行为异常（ECONNRESET/timeout，编译 exe 内代理
@@ -36,7 +36,7 @@ function createFetchRecorder() {
     const url = String(input);
     calls.push({ url, init });
     if (url.includes('ipify')) {
-      return new Response(JSON.stringify({ ip: '70.39.202.155' }), {
+      return new Response(JSON.stringify({ ip: '203.0.113.10' }), {
         status: 200,
         headers: { 'content-type': 'application/json' }
       });
@@ -123,7 +123,7 @@ test('Bun 模式：test() 通过原生 proxy 探测 target 与 exit IP', async (
     assert.equal(result.ok, true);
     assert.equal(result.mode, 'http');
     assert.equal(result.status, 200);
-    assert.equal(result.exitIp, '70.39.202.155');
+    assert.equal(result.exitIp, '203.0.113.10');
     assert.equal(recorder.calls.length, 2, '应分别请求 testUrl 与 ipCheckUrl');
     for (const call of recorder.calls) {
       assert.equal(call.init.proxy, 'http://127.0.0.1:10808');

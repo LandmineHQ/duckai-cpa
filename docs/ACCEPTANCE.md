@@ -862,7 +862,7 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 - **根因**：Bun 运行时（含 `bun build --compile` exe）与 undici `ProxyAgent` 不兼容——
   CONNECT/TLS 行为不一致，表现为 `ECONNRESET` / `TimeoutError`（`undici.fetch(...,{dispatcher})`）；
   Node 24 无此问题。Bun 原生 `fetch(url,{proxy})` 实测正常：经同一代理访问
-  `https://duck.ai/duckchat/v1/status` → 200、`https://api.ipify.org` → 200（exitIp `70.39.202.155`）。
+  `https://duck.ai/duckchat/v1/status` → 200、`https://api.ipify.org` → 200（exitIp `70.***.***.***`（脱敏展示））。
 - **修复**（`src/duck/proxy.js`）：运行时检测 Bun（`globalThis.Bun.version`）；HTTP/HTTPS 代理在 Bun 下
   改用原生 fetch 的 `proxy` 选项（`fetch()` 与 `test()` 两条路径都切换），Node 源码模式保持 undici。
   Bun 下 http(s) 不再创建 `ProxyAgent`（`getDispatcher()` 返回 undefined），`active` 状态由原生 proxy 路径维持；
@@ -871,10 +871,10 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
   noProxy/禁用直连、test() target + exit IP、显式 host/port 覆盖）；`proxy-manager` / `proxy-api` 25/25 全绿；
   全量 `npm test` **527 / 527 PASS**。
 - **编译 exe 实测**（Bun 1.4.4、`127.0.0.1:10808` HTTP 代理）：
-  - `POST /admin/api/proxy/test` → `{"ok":true,"status":200,"latencyMs":483,"exitIp":"70.39.202.155"}`；
+  - `POST /admin/api/proxy/test` → `{"ok":true,"status":200,"latencyMs":483,"exitIp":"70.***.***.***"（脱敏展示）}`；
   - `/healthz` → `upstream.ok=true`、`upstreamStatus:"0"`、`challengeOk=true`；
   - 真实 `/v1/chat/completions`：非流式 200（"proxy-ok"）、流式 200（SSE chunks 正常）；
-  - 管理后台「代理」页测试连接通过（HTTP 200 / 延迟 696ms / 出口 IP `70.39.202.155`），
+  - 管理后台「代理」页测试连接通过（HTTP 200 / 延迟 696ms / 出口 IP `70.***.***.***`（脱敏展示）），
     截图 `docs/assets/windows-exe-proxy-fixed.png`；概览页「上游正常」截图更新
     `docs/assets/windows-exe-admin-overview.png`；
   - `page-check` 对修复后 exe **22/22 PASS**；`verify-exe` **8/8 PASS**；`npm test` **527/527 PASS**。
@@ -1232,3 +1232,45 @@ gh release view "$VERSION" --json url,tagName,isLatest,isPrerelease,isDraft,asse
 | workflow YAML（Bun.YAML.parse） | **OK** |
 | `gh release view --json` 字段检查 | 已移除不存在的 `isLatest`；改用 `gh api` 原始 JSON + jq |
 | GitHub Actions 实跑 | **BLOCKED**：本环境无法触发；需在更新后的仓库重跑验证 |
+
+## 2.64 代理出口 IP 脱敏（默认隐藏，点击后显示真实值）
+
+> 用户反馈：`docs/assets/windows-exe-proxy-fixed.png` 截图暴露了真实出口 IP。
+> 要求为 IP 增加脱敏功能，点击后才显示真实 IP。
+
+### 2.64.1 前端实现
+
+- 新增 `webapp/src/app/lib/mask-ip.mjs`：
+  - IPv4 → `70.***.***.***`（只保留第一段）；
+  - IPv6 → 只保留前两组，其余 `***`；压缩形式（如 `::1`）整体 `***`；
+  - 空值 → `—`；非 IP 文本 → `***`（避免错误信息里带出的地址泄露）。
+- 新增 `webapp/src/app/components/masked-ip.tsx`：默认显示脱敏值，右侧眼睛按钮
+  `aria-label="显示真实 IP"` / `"隐藏真实 IP"`，点击切换显示真实值；状态不持久化，刷新后回到脱敏。
+- 管理后台「代理」页所有出口 IP 展示统一走该组件：
+  - 状态卡「出口 IP」；
+  - 「测试连接」结果行；
+  - 测试成功的 toast 文案（改为脱敏值 + 提示可到状态卡点击查看）。
+- `StatusRow` 的 `value` 类型扩展为 `ReactNode`（兼容组件），标题 tooltip 仅对纯文本生效。
+
+### 2.64.2 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| `tests/mask-ip.test.js`（新增 4 用例：IPv4/IPv6/空值/非 IP/不泄露后两段） | **PASS** |
+| `npm run build:web` + `node scripts/build-check.mjs` | **构建成功 / 16 / 16 PASS** |
+| 浏览器实机（Windows 二进制，chrome-devtools） | 默认显示 `70.***.***.***`；点击眼睛 → 显示真实 `70.39...`；再点 → 恢复脱敏 |
+| 截图替换 | `docs/assets/windows-exe-proxy-fixed.png` 已替换为脱敏版本（无真实 IP）；`docs/screenshots/` 同步 |
+| 文档 IP 清理 | `docs/ACCEPTANCE.md` 中 3 处真实出口 IP 已替换为 `70.***.***.***`；`docs/PROXY.md` 补充脱敏说明 |
+| 全量 `npm test` | 见下方（新增 4 个用例） |
+
+### 2.64.3 安全提示（git 历史）
+
+- **当前 HEAD 已不含真实 IP 的截图/文本**；但该截图在旧提交（`ca83464`/`a74850a` 一带）的历史 blob 中仍存在。
+  如果仓库是公开的，建议清理历史并轮换代理出口：
+  ```bash
+  # 示例：从历史中彻底移除该截图（需要 git-filter-repo）
+  git filter-repo --path docs/assets/windows-exe-proxy-fixed.png --invert-paths
+  # 然后重新添加已脱敏的截图并 force push
+  ```
+  仅替换当前文件不会清除历史 blob；若担心被检索，可同时更换代理节点/轮换出口 IP。
+- 以后新增展示 IP/密钥的 UI，默认应使用 `MaskedIp`（或类似脱敏组件），不要直接渲染明文。
