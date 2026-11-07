@@ -12,7 +12,7 @@
 
 *Use GPT-6, Claude, Mistral and open-source models from Duck.ai through one standard OpenAI interface — with streaming SSE, web search citations, image generation, multi-account routing and a self-hosted dashboard.*
 
-**Repository:** <https://github.com/LandmineHQ/duckai-cpa> · **Actions:** <https://github.com/LandmineHQ/duckai-cpa/actions>
+**Repository:** <https://github.com/LandmineHQ/duckai-cpa> · **Docs:** <https://landminehq.github.io/duckai-cpa/> · **Actions:** <https://github.com/LandmineHQ/duckai-cpa/actions>
 
 ![DuckAI CPA admin overview](docs/assets/admin-overview.jpg)
 

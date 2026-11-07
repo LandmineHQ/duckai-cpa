@@ -21,6 +21,9 @@
     "build:darwin-arm64": "node scripts/build-exe.mjs --target=bun-darwin-arm64",
     "dev:web": "vite --config webapp/vite.config.ts --configLoader native",
     "preview:web": "vite preview --config webapp/vite.config.ts --configLoader native",
+    "docs:dev": "npm --prefix docs-site run dev",
+    "docs:build": "npm --prefix docs-site run build",
+    "docs:preview": "npm --prefix docs-site run preview",
     "smoke": "node scripts/smoke.js",
     "test": "node --test --test-isolation=none --test-concurrency=1 \"tests/*.test.js\"",
     "test:watch": "node --test --watch --test-isolation=none --test-concurrency=1 \"tests/*.test.js\""
