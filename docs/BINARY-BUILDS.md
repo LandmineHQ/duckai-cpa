@@ -1,8 +1,8 @@
-# 多平台单文件二进制构建（Windows / Linux / macOS）
+﻿# 多平台单文件二进制构建（Windows / Linux / macOS）
 
 > 最后更新：2026-11-06（`platform-binaries` 分支，基于 `windows` 分支）
-> 相关文件：`scripts/build-exe.mjs`、`package.json`（`build:bin`）、`Dockerfile.binary`、
-> `.github/workflows/build-binaries.yml`、`.github/workflows/build-docker-binary.yml`。
+> 相关文件：`scripts/build-exe.mjs`、`package.json`（`build:bin`）、`Dockerfile`、
+> `.github/workflows/build-binaries.yml`、`.github/workflows/build-docker-image.yml`。
 
 ## 1. 分支目的
 
@@ -117,7 +117,7 @@ node scripts/build-exe.mjs --skip-web-build --target=bun-linux-x64
 | darwin-x64 | `macos-13` | `bun-darwin-x64` | `verify-exe.mjs` |
 | darwin-arm64 | `macos-14` | `bun-darwin-arm64` | `verify-exe.mjs` |
 
-`.github/workflows/build-docker-binary.yml`（仅 `workflow_dispatch`）构建 `Dockerfile.binary`、
+`.github/workflows/build-docker-image.yml`（仅 `workflow_dispatch`）构建 `Dockerfile`、
 启动容器做 HTTP 冒烟（`/healthz`、`/admin/`、`/admin/api/overview`、`/v1/models`）并输出镜像大小。
 
 ## 4. 产物位置
@@ -158,17 +158,17 @@ macOS 122.8–131.6 MB；gzip 压缩后约 52–56 MB。
 
 ### 5.2 极简 Docker 镜像（推荐用于服务器）
 
-`platform-binaries` 分支新增 **`Dockerfile.binary`**：多阶段构建，运行层只有 Alpine + 单文件
+`platform-binaries` 分支新增 **`Dockerfile`**：多阶段构建，运行层只有 Alpine + 单文件
 musl 二进制（无 Node.js、无 node_modules）：
 
 ```bash
-docker build -f Dockerfile.binary -t duckai-cpa:binary .
+docker build -f Dockerfile -t duckai-cpa:binary .
 docker run -d --name duckai-cpa -p 8787:8787 \
   -v duckai-cpa-binary-data:/data \
   -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
   duckai-cpa:binary
 # 或
-docker compose -f docker-compose.binary.yml up -d --build
+docker compose -f docker-compose.yml up -d --build
 ```
 
 | 项目 | 说明 |
@@ -283,7 +283,7 @@ node scripts/verify-exe.mjs --exe dist/linux-x64/duckai-cpa   # 本平台 HTTP �
 ```
 
 产物无法在本机运行时（musl/arm64/macOS 交叉编译），用 CI 或目标机器验证；
-Docker 镜像用 `build-docker-binary.yml` / `docker-compose.binary.yml` 验证。
+Docker 镜像用 `build-docker-image.yml` / `docker-compose.yml` 验证。
 
 ## 10. 验证清单（构建后自检）
 
@@ -302,8 +302,9 @@ Docker 镜像用 `build-docker-binary.yml` / `docker-compose.binary.yml` 验证�
 | `package.json` | `build:bin` + 各平台快捷脚本 |
 | `src/platform.js` | 编译态资源根 / 默认数据目录判定（Windows `~BUN`、POSIX `$bunfs`） |
 | `src/platform/sqlite-bun.js` | Bun 无 `node:sqlite` 时的 `bun:sqlite` 兼容层 |
-| `Dockerfile.binary` / `docker-compose.binary.yml` | Alpine + musl 二进制的极简镜像 |
+| `Dockerfile` / `docker-compose.yml` | Alpine + musl 二进制的极简镜像 |
 | `.github/workflows/build-binaries.yml` | 多平台二进制 CI（原生 runner + 冒烟 + artifact） |
-| `.github/workflows/build-docker-binary.yml` | 极简镜像 CI（构建 + 容器 HTTP 冒烟 + 体积） |
+| `.github/workflows/build-docker-image.yml` | 极简镜像 CI（构建 + 容器 HTTP 冒烟 + 体积） |
+| `.github/workflows/publish-docker-image.yml` | 手动发布极简镜像到 GHCR（唯一镜像发布入口，替代旧 Node 镜像流水线） |
 | `docs/BINARY-VERIFICATION.md` | 二进制端到端验证脚本与记录 |
 | `docs/ACCEPTANCE.md` | 验收记录（§2.56/§2.57） |

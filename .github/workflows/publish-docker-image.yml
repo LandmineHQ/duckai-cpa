@@ -1,21 +1,16 @@
-name: Publish Docker image (GHCR)
+name: publish-docker-image
 
-# Manual only: publish an existing build artifact to GHCR.
-# This is the only workflow that publishes a Docker image.
-# The GitHub Release workflow is separate: publish-github-release.yml.
+# 手动发布「极简镜像」（Dockerfile：Alpine + musl 二进制）到 GHCR。
+# 旧版 Node 镜像 / release 包流水线已下线，本 workflow 是唯一的镜像发布入口。
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Image version/tag (required; e.g. v0.1.0 or beta.0.0.1)"
-        required: true
-        type: string
-      run_id:
-        description: "Successful build workflow run id (artifact duckai-cpa-release)"
+        description: "镜像 tag（如 v0.1.0；同时写入 APP_VERSION）"
         required: true
         type: string
       also_latest:
-        description: "Also push the :latest tag after the versioned image"
+        description: "同时推送 :latest"
         required: false
         default: false
         type: boolean
@@ -23,20 +18,77 @@ on:
 permissions:
   contents: read
   packages: write
-  actions: read
 
 concurrency:
-  group: publish-docker-image-${{ inputs.version }}
+  group: publish-docker-image-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  ghcr:
-    permissions:
-      contents: read
-      packages: write
-      actions: read
-    uses: ./.github/workflows/reusable-docker-image.yml
-    with:
-      version: ${{ inputs.version }}
-      also_latest: ${{ inputs.also_latest }}
-      run_id: ${{ inputs.run_id }}
+  publish:
+    name: Build + push minimal image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Validate version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::invalid version '$VERSION' (Docker tag rules: letters/digits/._-), e.g. v0.1.0"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/landminehq/duckai-cpa
+          tags: |
+            type=raw,value=${{ inputs.version }}
+            type=raw,value=latest,enable=${{ inputs.also_latest }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ inputs.version }}
+            INSTALL_CJK_FONTS=false
+
+      - name: Summary
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "### Minimal image published"
+            echo ""
+            echo "- version: \`$VERSION\`"
+            echo "- tags:"
+            echo '```'
+            echo "$TAGS"
+            echo '```'
+            echo "- base: \`alpine:3.20\` + musl single-file binary (no Node.js/node_modules)"
+            echo "- pull: \`docker pull ghcr.io/landminehq/duckai-cpa:$VERSION\`"
+          } >> "$GITHUB_STEP_SUMMARY"

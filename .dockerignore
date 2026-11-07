@@ -1,4 +1,4 @@
-# Docker 构建上下文忽略清单
+﻿# Docker 构建上下文忽略清单
 # 镜像只需要：package*.json、src/、web/（预构建产物）、config/config.example.json
 
 # ---------- 运行时数据与密钥（必须排除，避免把 token/日志打进镜像） ----------
@@ -30,5 +30,3 @@ solvetest/
 
 # 注意：不要忽略 web/、config/、src/、package*.json，它们是镜像运行所必需的。
 
-# CI release archive (Dockerfile.release uses the extracted release/ directory)
-duckai-cpa-release.tar.gz

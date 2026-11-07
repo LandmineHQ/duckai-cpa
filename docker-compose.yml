@@ -1,19 +1,13 @@
 # ---------------------------------------------------------------------------
-# DuckAI CPA — docker compose 部署
+# DuckAI CPA — 推荐部署方式：极简镜像（Alpine + musl 单文件二进制）
 #
-#   # 0) 先在本机构建控制台（镜像只复制预构建产物 web/）
-#   npm install && npm run build:web
-#   # 1) 启动
 #   docker compose up -d --build
-#   docker compose logs -f duckai-cpa     # 首次启动会打印一次 adminToken 与默认 API Key
-#   浏览器打开 http://127.0.0.1:8787/admin
+#   docker compose logs -f duckai-cpa   # 首次启动打印 adminToken 与默认 API Key
+#   # 浏览器打开 http://127.0.0.1:8787/admin/
 #
-# 数据卷说明：
-#   - 默认使用 named volume duckai-cpa-data 挂载到 /app/data，首次创建时自动继承
-#     镜像内 node:node 属主，避免 Linux 宿主机 bind mount 的 EACCES 问题。
-#   - 卷内保留 config.json / keys.json / logs.json / stats.json / identity*.json /
-#     testsessions.json / pairing.json 等运行数据。
-#   - 如需改用宿主机 ./data，请自行确保目录对 UID 1000 可写（chown -R 1000:1000）。
+# 镜像由多阶段 Dockerfile 构建：Node 构建 web + 交叉编译 musl 二进制，
+# 运行层只有 alpine + ca-certificates + libstdc++ + 二进制（无 Node.js / node_modules）。
+# 需要中文 PDF 渲染时：INSTALL_CJK_FONTS=true docker compose build
 # ---------------------------------------------------------------------------
 
 services:
@@ -23,7 +17,8 @@ services:
       dockerfile: Dockerfile
       args:
         APP_VERSION: ${DUCKAI_CPA_VERSION:-0.1.0}
-    image: duckai-cpa:${DUCKAI_CPA_VERSION:-0.1.0}
+        INSTALL_CJK_FONTS: ${INSTALL_CJK_FONTS:-false}
+    image: duckai-cpa:${DUCKAI_CPA_VERSION:-latest}
     container_name: duckai-cpa
     restart: unless-stopped
 
@@ -34,40 +29,29 @@ services:
       # 容器内必须监听 0.0.0.0
       DUCKAI_CPA_HOST: "0.0.0.0"
       DUCKAI_CPA_PORT: "8787"
-      DUCKAI_CPA_DATA_DIR: "/app/data"
-      # 管理后台 token：强烈建议替换为强随机串（不要提交真实值到仓库）
-      # 留空/删除本行则使用 data/config.json 中首次启动自动生成的值
-      DUCKAI_CPA_ADMIN_TOKEN: "change-me-to-a-strong-random-admin-token"
-      NODE_ENV: "production"
+      DUCKAI_CPA_DATA_DIR: "/data"
+      # 强烈建议替换为强随机串；留空则使用 data/config.json 首次生成的 token
+      DUCKAI_CPA_ADMIN_TOKEN: "${DUCKAI_CPA_ADMIN_TOKEN:-}"
 
     volumes:
-      - duckai-cpa-data:/app/data
+      - duckai-cpa-data:/data
 
-    # 优雅停止：给进行中的 SSE 流与原子写留时间
-    stop_grace_period: 15s
-
+    # 镜像本体已有 HEALTHCHECK；compose 这里保持一致，便于 docker compose ps 显示健康
     healthcheck:
-      # /healthz 公开且即使上游异常也返回 200（body.upstream.ok=false），
-      # 这里只判断网关进程可响应，避免上游波动导致容器反复重启；
-      # start_period 与 Dockerfile 的 HEALTHCHECK 保持一致（60s，容忍启动时挑战预热）。
       test:
         - CMD
-        - node
-        - -e
-        - "const p=process.env.DUCKAI_CPA_PORT||'8787';fetch('http://127.0.0.1:'+p+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - "http://127.0.0.1:8787/healthz"
       interval: 30s
       timeout: 5s
       start_period: 60s
       retries: 3
 
-    security_opt:
-      - no-new-privileges:true
-
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    # 给进行中的 SSE 流与原子写留时间
+    stop_grace_period: 15s
 
 volumes:
   duckai-cpa-data:

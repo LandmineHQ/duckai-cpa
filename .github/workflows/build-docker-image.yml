@@ -1,6 +1,6 @@
-name: build-docker-binary
+﻿name: build-docker-image
 
-# 手动构建「极简二进制镜像」（Dockerfile.binary：Alpine + musl 单文件二进制），
+# 手动构建「极简镜像」（Dockerfile：Alpine + musl 单文件二进制），
 # 启动容器做真实 HTTP 冒烟并输出镜像大小；不推送 registry（需要发布时另行扩展）。
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-image:
-    name: Build + smoke Dockerfile.binary
+    name: Build + smoke minimal image
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -20,7 +20,7 @@ jobs:
 
       - name: Build minimal image
         run: |
-          docker build -f Dockerfile.binary -t duckai-cpa:binary-ci .
+          docker build -f Dockerfile -t duckai-cpa:binary-ci .
 
       - name: Show image size
         run: |
@@ -56,3 +56,5 @@ jobs:
           curl -fsS -H "Authorization: Bearer $KEY" http://127.0.0.1:8787/v1/models | grep -q '"data"'
 
           echo "container smoke PASS"
+
+

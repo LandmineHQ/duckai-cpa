@@ -1,12 +1,14 @@
 # ---------------------------------------------------------------------------
-# DuckAI CPA — run the prebuilt GHCR image with Compose.
+# DuckAI CPA — 预构建极简镜像（GHCR）
 #
-#   DUCKAI_CPA_VERSION=latest docker compose -f docker-compose.ghcr.yml up -d
+#   docker compose -f docker-compose.ghcr.yml up -d
+#   # 或手动：
+#   docker pull ghcr.io/landminehq/duckai-cpa:latest
+#   docker run -d --name duckai-cpa -p 8787:8787 \
+#     -v duckai-cpa-data:/data ghcr.io/landminehq/duckai-cpa:latest
 #
-# Pin a published version explicitly; the value is also used as the image tag.
-# Uses a named volume so Docker initializes /app/data with the image's
-# node:node ownership; no host-side chown is required.
-# Set a strong admin token before exposing this service beyond localhost.
+# 镜像由 .github/workflows/publish-docker-image.yml 手动发布（Dockerfile 极简镜像）。
+# 旧版 Node 镜像与 release 包流水线已下线；本 compose 仅使用新的二进制镜像。
 # ---------------------------------------------------------------------------
 
 services:
@@ -21,35 +23,27 @@ services:
     environment:
       DUCKAI_CPA_HOST: "0.0.0.0"
       DUCKAI_CPA_PORT: "8787"
-      DUCKAI_CPA_DATA_DIR: "/app/data"
-      DUCKAI_CPA_ADMIN_TOKEN: "${DUCKAI_CPA_ADMIN_TOKEN:-change-me-to-a-strong-random-admin-token}"
-      DUCKAI_CPA_VERSION: "${DUCKAI_CPA_VERSION:-latest}"
-      NODE_ENV: "production"
+      DUCKAI_CPA_DATA_DIR: "/data"
+      # 强烈建议替换为强随机串；留空则沿用卷内 data/config.json 的 token
+      DUCKAI_CPA_ADMIN_TOKEN: "${DUCKAI_CPA_ADMIN_TOKEN:-}"
 
     volumes:
-      - duckai-cpa-data:/app/data
-
-    stop_grace_period: 15s
+      - duckai-cpa-data:/data
 
     healthcheck:
       test:
         - CMD
-        - node
-        - -e
-        - "const p=process.env.DUCKAI_CPA_PORT||'8787';fetch('http://127.0.0.1:'+p+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - "http://127.0.0.1:8787/healthz"
       interval: 30s
       timeout: 5s
       start_period: 60s
       retries: 3
 
-    security_opt:
-      - no-new-privileges:true
-
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    stop_grace_period: 15s
 
 volumes:
   duckai-cpa-data:

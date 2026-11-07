@@ -896,9 +896,9 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 | `scripts/build-exe.mjs`（node_modules 补丁） | 新增：`css-tree/lib/data.js`（mdn-data 静态 JSON import）、`jsdom computed-style.js`（内联 default-stylesheet.css）、`jsdom XMLHttpRequest-impl.js`（同步 XHR worker 懒解析）。根因：Bun `--compile` 会把 CJS `__dirname`/`require.resolve` **固化为构建机绝对路径**，二进制换机器/换平台即 ENOENT |
 | `src/openai/context-pdf.js` | CJK 字体候选新增 Alpine 路径 `/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc` |
 | `package.json` | 新增 `build:bin` + `build:linux-x64(-musl)` / `build:linux-arm64` / `build:darwin-x64/-arm64` |
-| `Dockerfile.binary` / `docker-compose.binary.yml`（新增） | 多阶段：Node 24 构建 web + 用官方 Bun 镜像交叉编译 musl 二进制 → Alpine 3.20 运行层（ca-certificates + libstdc++ + 二进制，无 Node/npm/node_modules） |
+| `Dockerfile` / `docker-compose.yml`（新增） | 多阶段：Node 24 构建 web + 用官方 Bun 镜像交叉编译 musl 二进制 → Alpine 3.20 运行层（ca-certificates + libstdc++ + 二进制，无 Node/npm/node_modules） |
 | `.github/workflows/build-binaries.yml`（新增） | 仅 workflow_dispatch：windows-latest / ubuntu-latest / macos-13 / macos-14 matrix，原生构建 + `verify-exe` 冒烟 + artifact |
-| `.github/workflows/build-docker-binary.yml`（新增） | 仅 workflow_dispatch：构建 `Dockerfile.binary`、启动容器做 HTTP 冒烟、输镜像体积 |
+| `.github/workflows/build-docker-image.yml`（新增） | 仅 workflow_dispatch：构建 `Dockerfile`、启动容器做 HTTP 冒烟、输镜像体积 |
 | `.github/workflows/build-windows-exe.yml` | 删除（由 `build-binaries.yml` 取代） |
 | `.dockerignore` | 允许 `webapp/`、`scripts/` 进入构建上下文（二进制镜像在容器内构建），排除 `dist/` |
 | `docs/BINARY-BUILDS.md` / `docs/BINARY-VERIFICATION.md` | 由 Windows 专用文档扩展为多平台（含极简镜像、Bun `__dirname` 坑、排障） |
@@ -927,7 +927,7 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 | --- | --- | --- |
 | Windows x64 | `node scripts/verify-exe.mjs --exe dist/windows-x64/duckai-cpa.exe` | **PASS 8/8**（healthz/admin/assets/overview/models/SQLite/重启持久化） |
 | Linux x64 glibc | WSL Ubuntu 24.04 实机 bash 冒烟（dist/linux-x64） | **PASS 13/13** |
-| Linux x64 musl | Alpine 3.20 minirootfs + ca-certificates + libstdc++ chroot（与 Dockerfile.binary 运行层一致，dist/linux-x64-musl） | **PASS 10/10** |
+| Linux x64 musl | Alpine 3.20 minirootfs + ca-certificates + libstdc++ chroot（与 Dockerfile 运行层一致，dist/linux-x64-musl） | **PASS 10/10** |
 | macOS x64/arm64、Linux arm64 | 仅本机构建 + 格式校验 | **BLOCKED**（本机无 macOS/arm64；由 `build-binaries.yml` 原生 runner 覆盖，CI 未在本机实际运行） |
 
 - 全量 `npm test`：**527 / 527 PASS**（Node 24；含 jsdom/css-tree 补丁后的 web/jsdom 用例）。
@@ -937,7 +937,7 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 
 ### 2.57.4 极简 Docker 镜像分析（回答「能否用最精简镜像+二进制」）
 
-- **可以，已提供 `Dockerfile.binary`**：构建阶段生成 `bun-linux-x64-musl` 二进制；运行阶段
+- **可以，已提供 `Dockerfile`**：构建阶段生成 `bun-linux-x64-musl` 二进制；运行阶段
   `alpine:3.20` + `ca-certificates` + `libstdc++` + 单文件二进制，**没有 Node.js / npm / node_modules**。
 - **尺寸下限由 Bun 运行时决定**：musl 二进制 136.1 MB（gzip -9 后 51.6 MB）；
   Alpine 运行层（含证书/libstdc++，不含 CJK 字体）约 15.8 MB 未压缩。
@@ -945,8 +945,8 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
   Node 运行时与依赖树，但不可能做到几 MB。
 - 可选：`--build-arg INSTALL_CJK_FONTS=true` 安装 `font-wqy-zenhei`（+16 MB），供上下文 PDF 中文渲染；
   默认关闭以保持最小（`src/openai/context-pdf.js` 已加入 Alpine 字体路径）。
-- **BLOCKED**：本机无 Docker，`Dockerfile.binary` 未实际 `docker build/run`；已用 Alpine chroot
-  等价验证运行层，并提供 `build-docker-binary.yml` 手动 CI（构建 + 容器 HTTP 冒烟 + 体积输出），
+- **BLOCKED**：本机无 Docker，`Dockerfile` 未实际 `docker build/run`；已用 Alpine chroot
+  等价验证运行层，并提供 `build-docker-image.yml` 手动 CI（构建 + 容器 HTTP 冒烟 + 体积输出），
   但该 CI 未在本机 GitHub 上实际运行。
 
 ### 2.57.5 已知限制
@@ -956,3 +956,50 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 - 交叉编译产物无法在构建机运行；Bun 会下载目标运行时（本机可能在仓库根生成 `.bun-cache/`，已忽略，可删）。
 - SOCKS 代理在 Bun 下仍未验证（HTTP/HTTPS 代理已修复并验证，见 §2.56.7）。
 - Docker 镜像未做多架构 manifest / 镜像签名；arm64 镜像可基于 `bun-linux-arm64-musl` 自行构建。
+
+## 2.58 部署选项收敛：A=Docker 极简镜像 / B=直接运行二进制（旧镜像与 C 下线）
+
+> 2026-11-06，`platform-binaries` 分支。用户要求：A 用 Docker + Compose 跑极简镜像；B 直接运行二进制；
+> 不再保留 C；此前的 Node 镜像/发布包不再构建。
+
+### 2.58.1 调整后的推荐方式
+
+| 选项 | 内容 |
+| --- | --- |
+| **A（推荐）** | `Dockerfile`（多阶段，Alpine + musl 二进制）+ `docker-compose.yml`；`docker compose up -d --build`。可选 GHCR 预构建：`docker-compose.ghcr.yml`（同一极简镜像的发布产物） |
+| **B** | 单文件二进制（Windows/Linux/macOS，glibc/musl，x64/arm64）；构建见 §2.57，直接运行 |
+| ~~C~~ | 已删除（不再提供编译发布包/其它入口） |
+
+### 2.58.2 删除/替换的文件与流水线
+
+- 删除：旧的 Node 版 `Dockerfile`（同名的新极简 Dockerfile 已替换）、`Dockerfile.release`、旧 `docker-compose.yml`（Node 镜像）、
+  旧 `docker-compose.ghcr.yml` 内容；`duckai-cpa-release.tar.gz` 发布链。
+- 删除 workflows：`build.yml`（Node release artifact）、`publish-github-release.yml`、
+  `reusable-github-release.yml`、旧 `publish-docker-image.yml`、`reusable-docker-image.yml`。
+- 新增/替换：
+  - `Dockerfile` = 极简镜像（Node 构建阶段 + Alpine 运行阶段）；
+  - `docker-compose.yml` = 本地构建并运行极简镜像（`/data` 卷、UID 10001、healthcheck）；
+  - `docker-compose.ghcr.yml` = 预构建极简镜像（GHCR）；
+  - `.github/workflows/build-docker-image.yml` = 手动构建 + 容器 HTTP 冒烟 + 体积输出；
+  - `.github/workflows/publish-docker-image.yml` = 手动发布极简镜像到 GHCR（唯一镜像发布入口）；
+  - `.github/workflows/build-binaries.yml` = 多平台二进制构建（Windows/Linux/macOS 原生 runner）。
+- 旧的 Node 镜像**不再生成**；已推送到 GHCR 的历史镜像/版本需要用户在 registry 手动删除
+  （本工作区无法访问用户的 GHCR 设置）。发布新的极简镜像时用相同 tag（含 `:latest`）即可替换旧 tag 指向。
+
+### 2.58.3 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| 全量单测 `npm test` | **527 / 527 PASS**（本次仅部署/文档调整，无 src 改动） |
+| `node scripts/build-check.mjs` | **16 / 16 PASS** |
+| workflow / compose YAML 语法 | 用 `Bun.YAML.parse` 解析全部 `.github/workflows/*.yml`、`docker-compose*.yml` 通过（见执行记录） |
+| 极简镜像运行层 | 已在 §2.57.3 用 Alpine 3.20 chroot（ca-certificates + libstdc++ + musl 二进制）验证 **10/10 PASS** |
+| `docker compose up -d --build` | **BLOCKED**：本机未安装 Docker，无法在本机实际构建/启动容器；`.github/workflows/build-docker-image.yml` 与 `publish-docker-image.yml` 可在有 Docker 的环境执行 |
+
+### 2.58.4 已知注意事项
+
+- GHCR 发布镜像平台为 `linux/amd64`；arm64 用户可用 `bun-linux-arm64-musl` 自行构建镜像或扩展 workflow。
+- 极简镜像未安装 CJK 字体；需要上下文 PDF 中文时
+  `INSTALL_CJK_FONTS=true docker compose build && docker compose up -d`（+16 MB）。
+- 旧 Node 部署文档/命令已从 README 删除；`npm start` 仍可用于本地源码开发/测试（不属于对外部署选项）。
+- 预构建镜像需要先手动运行 `publish-docker-image`，否则 `docker-compose.ghcr.yml` 的 `latest` 可能仍指向旧镜像。

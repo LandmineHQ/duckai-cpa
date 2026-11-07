@@ -1,4 +1,4 @@
-# 单文件二进制端到端验证（scripts/verify-exe.mjs）
+﻿# 单文件二进制端到端验证（scripts/verify-exe.mjs）
 
 > 最后更新：2026-11-06（`platform-binaries` 分支）
 > 相关文件：`scripts/verify-exe.mjs`、`scripts/build-exe.mjs`、`docs/BINARY-BUILDS.md`。
@@ -115,7 +115,7 @@ node scripts/verify-exe.mjs --exe dist/windows-x64/duckai-cpa.exe --timeout 3000
 ### Linux x64（musl，Alpine 3.20 chroot 实机）
 
 `dist/linux-x64-musl/duckai-cpa`（136,132,008 字节）在 Alpine 3.20 minirootfs + 
-`ca-certificates`/`libstdc++`（与 `Dockerfile.binary` 运行层一致）chroot 中冒烟：
+`ca-certificates`/`libstdc++`（与 `Dockerfile` 运行层一致）chroot 中冒烟：
 **PASS 10 / FAIL 0**（含 admin/静态资源/overview/`/v1/models`/SQLite/重启持久化）。
 
 ### macOS / arm64

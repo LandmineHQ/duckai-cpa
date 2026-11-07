@@ -1,4 +1,4 @@
-# AGENTS.md — duckai-cpa 项目指南（给未来的 agent / 协作者）
+﻿# AGENTS.md — duckai-cpa 项目指南（给未来的 agent / 协作者）
 
 > 本文件是 **项目级** 指令。优先级：用户即时指令 > 本文件 > 全局 `~/.dsh/AGENTS.md`。
 > 最后更新：2026-11-06（v2.63）。改代码前先读本文件相应章节。
@@ -22,7 +22,7 @@ npm test                  # ★ 全量测试；只有它算数（见下方“测
 node scripts/build-check.mjs
 node scripts/build-exe.mjs     # windows/platform-binaries 分支：bun 编译单文件二进制（默认当前平台，--target 可选 Windows/Linux/macOS/musl；需 Bun >= 1.4.4）
 node scripts/verify-exe.mjs    # windows/platform-binaries 分支：对二进制做端到端 HTTP 断言（离线，原生平台）
-docker build -f Dockerfile.binary -t duckai-cpa:binary .   # 极简 Alpine + musl 二进制镜像
+docker compose up -d --build                        # 推荐：极简 Alpine + musl 二进制镜像（Docker + Compose）
 node scripts/page-check.mjs --admin-token <ADMIN> --api-key <KEY>   # 对真实网关
 node scripts/smoke.js --mock --search
 node scripts/live-check.mjs            # 真实上游（消耗匿名额度，先确认）
@@ -396,13 +396,13 @@ data/                运行时数据（不入库；含敏感文件）
   bun-darwin-x64 / bun-darwin-arm64`）。脚本自动幂等打 node_modules 补丁（css-tree 三处 + jsdom
   默认样式表内联 + jsdom 同步 XHR worker 懒解析——Bun 会内联 CJS `__dirname` 为构建机路径），
   产物 `dist/<target>/duckai-cpa[.exe]`，并写 `RUN-README.txt`。Bun `--trim` 实测体积收益可忽略（约 0.5 KB）。
-- **极简镜像**：`Dockerfile.binary` / `docker-compose.binary.yml`：Alpine 3.20 + ca-certificates + libstdc++
+- **极简镜像**：`Dockerfile` / `docker-compose.yml`：Alpine 3.20 + ca-certificates + libstdc++
   + musl 二进制，无 Node.js/node_modules；未压缩约 150 MB、压缩后约 56 MB；中文 PDF 需
   `--build-arg INSTALL_CJK_FONTS=true`（+16MB）。
 - **验证**：`node scripts/verify-exe.mjs --exe dist/<target>/duckai-cpa`（离线 HTTP 断言 + 重启持久化，
   Windows/Linux/macOS 原生 runner 可用；musl/arm64/macOS 交叉产物需对应平台或 CI）；
   `docs/ACCEPTANCE.md` §2.56/§2.57；文档 `docs/BINARY-BUILDS.md`、`docs/BINARY-VERIFICATION.md`；
-  CI `build-binaries` / `build-docker-binary` 仅手动触发。
+  CI `build-binaries` / `build-docker-image` / `publish-docker-image` 仅手动触发；旧 Node 镜像与 release 包流水线已删除。
 - **未支持**：Windows 图标、代码签名、macOS 公证、arm64 macOS CI 本地验证（BLOCKED，靠 CI）、
   Linux 交叉编译在构建机上的运行验证。Bun 的 fastify 适配器在二进制中可用
   （stderr 有一条 Fastify `disableRequestLogging` 弃用警告，不影响功能）。
