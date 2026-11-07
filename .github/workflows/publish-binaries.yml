@@ -1,7 +1,10 @@
 name: publish-binaries
 
 # 手动构建并发布「多平台单文件二进制」到 GitHub Release。
-# 非 prerelease 发布会自动成为 /releases/latest（README Option B 的下载入口）。
+# 在对应架构的 GitHub-hosted runner 上原生构建：
+#   windows-latest / ubuntu-latest / ubuntu-24.04-arm / macos-15-intel / macos-15。
+# 注意：macos-13 / macos-14 已从 GitHub Actions 下线（macOS 14 于 2026-11-02 退役），
+# 不要使用，否则会出现 "configuration 'macos-14-arm64-us-default' is not supported" 之类的错误。
 on:
   workflow_dispatch:
     inputs:
@@ -48,22 +51,22 @@ jobs:
             dir: linux-x64-musl
             asset: duckai-cpa-linux-x64-musl.tar.gz
           - name: linux-arm64
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             target: bun-linux-arm64
             dir: linux-arm64
             asset: duckai-cpa-linux-arm64.tar.gz
           - name: linux-arm64-musl
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             target: bun-linux-arm64-musl
             dir: linux-arm64-musl
             asset: duckai-cpa-linux-arm64-musl.tar.gz
           - name: darwin-x64
-            os: ubuntu-latest
+            os: macos-15-intel
             target: bun-darwin-x64
             dir: darwin-x64
             asset: duckai-cpa-darwin-x64.tar.gz
           - name: darwin-arm64
-            os: ubuntu-latest
+            os: macos-15
             target: bun-darwin-arm64
             dir: darwin-arm64
             asset: duckai-cpa-darwin-arm64.tar.gz

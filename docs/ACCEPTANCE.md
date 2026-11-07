@@ -1053,36 +1053,57 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 - `publish-binaries` 产出的资产名固定（不包含版本号），同一 release 内唯一；不同 release 之间可复用同名资产。
 - 推送镜像/发布 release 均需仓库权限；本工作区未执行任何 push/发布操作。
 
-## 2.60 修复 CI：移除 macOS runner 依赖（`configuration 'macos-14-arm64-us-default' is not supported`）
+## 2.60 修复 CI：使用正确的 GitHub-hosted runner 标签（macOS 14 已退役）
 
-> 用户反馈触发二进制工作流时报 `The configuration 'macos-14-arm64-us-default' is not supported`。
-> 该字符串不是本仓库 workflow 生成的（仓库里只有 `runs-on: macos-13` / `macos-14`，
-> 且本地 grep 显示没有 `macos-14-arm64-us-default`），推断是 CI 侧把 macOS runner label
-> 解析成了某个自定义/受限 runner configuration，或在 macOS runner/自定义 runner 配置不可用的环境中运行。
+> 用户反馈触发二进制 workflow 时报
+> `The configuration 'macos-14-arm64-us-default' is not supported`。
+> 根因：GitHub Actions 的 **macOS 14 镜像已于 2026-11-02 退役**（macOS 13 更早已不可用）；
+> workflow 里的 `runs-on: macos-13` / `macos-14` 已不是有效标签。GitHub 后端把 `macos-14`
+> 解析到已退役的 arm64 配置 `macos-14-arm64-us-default`，于是报 “configuration ... is not supported”。
+> 依据：<https://github.com/actions/runner-images> README（2026-11-06 抓取）的 Available Images 表。
 
-### 2.60.1 调整（消除对 macOS runner 的依赖）
+### 2.60.1 正确标签（2026-11-06）
+
+| 平台 | 正确 runner 标签 |
+| --- | --- |
+| Windows x64 | `windows-latest` / `windows-2025` / `windows-2022` |
+| Linux x64 | `ubuntu-latest` / `ubuntu-24.04` |
+| Linux arm64 | `ubuntu-24.04-arm` / `ubuntu-22.04-arm` |
+| macOS 15 arm64 | `macos-15`（或 `macos-15-xlarge`） |
+| macOS 15 x64 | `macos-15-intel`（或 `macos-15-large`） |
+| macOS 26 arm64 | `macos-latest` / `macos-26` |
+| macOS 26 x64 | `macos-26-intel` / `macos-latest-large` / `macos-26-large` |
+
+> `macos-13`、`macos-14` 已退役，不要再使用。
+
+### 2.60.2 调整（恢复各平台原生构建，不交叉编译）
 
 - `.github/workflows/build-binaries.yml`：
-  - 仅使用标准 GitHub-hosted runner：`windows-latest`（Windows x64）与 `ubuntu-latest`（其余全部目标）；
-  - `bun-darwin-x64`、`bun-darwin-arm64` 改为在 `ubuntu-latest` 上**交叉编译**（Bun 下载 darwin 运行时）；
-  - 补齐 `linux-arm64` / `linux-arm64-musl` 目标（此前 build-binaries 缺少，仅 publish-binaries 有）；
-  - 交叉产物跳过运行时冒烟（无法在 Linux/Windows runner 运行），但构建脚本仍校验 PE/ELF/Mach-O 文件头；
-  - 原有 `file` 命令格式检查改为 Node 读取 magic 字节（Git Bash 环境不一定有 `file`）。
-- `.github/workflows/publish-binaries.yml`：`darwin-x64` / `darwin-arm64` 的 `runs-on` 同样改为
-  `ubuntu-latest`（打包 tar.gz 与其它 Unix 目标一致）；Windows 仍用 `windows-latest`。
-- 文档 `docs/BINARY-BUILDS.md` §3.3 / §11 更新矩阵与说明，并记录该报错的规避方式。
+  - `windows-x64` → `windows-latest`；
+  - `linux-x64`、`linux-x64-musl` → `ubuntu-latest`；
+  - `linux-arm64`、`linux-arm64-musl` → `ubuntu-24.04-arm`；
+  - `darwin-x64` → `macos-15-intel`；`darwin-arm64` → `macos-15`；
+  - 原生可运行目标（windows/linux-x64/linux-arm64/darwin-x64/darwin-arm64）恢复 `verify-exe.mjs` HTTP 冒烟；
+    musl 目标仍跳过冒烟（glibc runner 不能跑 musl），但构建脚本校验 PE/ELF/Mach-O 文件头；
+  - 原本的 `file` 格式检查改为 Node 读取 magic 字节（Git Bash 环境不一定有 `file`）。
+- `.github/workflows/publish-binaries.yml`：matrix 使用同一组正确标签（`ubuntu-24.04-arm` /
+  `macos-15-intel` / `macos-15`），打包/发布逻辑不变。
+- 文档 `docs/BINARY-BUILDS.md` §3.3 更新 runner 矩阵与标签说明。
 
-### 2.60.2 验证
+### 2.60.3 验证
 
 | 检查 | 结果 |
 | --- | --- |
 | 两个 workflow YAML 语法（Bun.YAML.parse） | **OK** |
-| 交叉编译可行性 | 已在本机（Windows）用同一构建脚本交叉编译全部 darwin/arm64/musl 目标通过（§2.57.2）；Ubuntu 上同理（Bun 下载目标运行时） |
-| macOS/arm64 运行时验证 | **BLOCKED**：无 macOS/arm64 机器；需在真机手工 `verify-exe.mjs`，或改用你们 CI 支持的原生 runner label |
+| runner 标签有效性 | 已按 actions/runner-images README 核对（macOS 14 退役公告；macOS 15/26、ubuntu-24.04-arm 均有效） |
+| 多平台二进制本机构建 | 全部 7 个目标已在本机交叉验证通过（§2.57.2）；原生 runner 上仅需编译本平台 |
 | GitHub Actions 实跑 | **BLOCKED**：本环境无法触发/观察仓库的 GitHub Actions |
+| macOS/arm64 运行时冒烟 | 本次改为由 CI 原生 runner 执行（未在本地运行，BLOCKED） |
 
-### 2.60.3 说明
+### 2.60.4 注意事项
 
-- 若你们 CI 的 macOS runner 实际可用（有受支持的 configuration），可以保留/恢复 `runs-on: macos-14` 的原生构建；
-  当前实现优先保证“在只有 windows/ubuntu runner 的环境也能出全平台产物”。
-- macOS 产物为未签名 Mach-O；CI 交叉构建出的文件与原生构建产物一致（仅运行时冒烟需真机）。
+- 如果仓库所在组织对 macOS arm64 标准 runner 有访问限制（私有仓库可能只提供 Intel），
+  可把 `darwin-arm64` 改用 `macos-15-xlarge`（larger runner，需相应套餐）或保留交叉编译回退；
+  当前默认按公开 runner 的标签配置。
+- `macos-latest` 会随 GitHub 迁移到最新 macOS（当前指向 arm64）；需要可复现时固定 `macos-15`。
+- 日志里若仍出现 `macos-14-arm64-us-default`，说明 workflow 文件还未更新到本提交或使用了缓存定义。

@@ -1,10 +1,12 @@
 name: build-binaries
 
 # 手动构建多平台单文件二进制（Bun `bun build --compile`）。
-# - 只在 Linux/Windows GitHub-hosted runner 上构建（不依赖 macOS runner/自定义 runner 配置）；
-#   macOS 目标（darwin-x64/arm64）与 arm64 目标在 ubuntu-latest 上交叉编译；
-# - 能原生运行的平台用 scripts/verify-exe.mjs 做 HTTP 冒烟，交叉产物只做格式/大小检查；
-# - musl / arm64 / macOS 二进制不能在该 runner 上运行，运行验证见 Docker/目标平台。
+# 全部目标在对应架构的 GitHub-hosted runner 上原生构建（不做跨 OS/跨架构编译）：
+#   windows-latest (x64) / ubuntu-latest (x64) / ubuntu-24.04-arm (arm64) /
+#   macos-15-intel (x64) / macos-15 (arm64)。
+# 注意：macOS 14 镜像已于 2026-11-02 从 GitHub Actions 下线，macos-13 更早已不可用；
+# 用 macos-14/macos-13 会报类似 "configuration 'macos-14-arm64-us-default' is not supported"。
+# musl 变体与 glibc 同架构（仅 libc target 不同），在对应架构 runner 上构建；不能在 glibc 上运行，故跳过冒烟。
 on:
   workflow_dispatch:
 
@@ -42,29 +44,26 @@ jobs:
             binary: dist/linux-x64-musl/duckai-cpa
             skip_runtime_smoke: true
           - name: linux-arm64
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             target: bun-linux-arm64
             artifact: duckai-cpa-linux-arm64
             binary: dist/linux-arm64/duckai-cpa
-            skip_runtime_smoke: true
           - name: linux-arm64-musl
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             target: bun-linux-arm64-musl
             artifact: duckai-cpa-linux-arm64-musl
             binary: dist/linux-arm64-musl/duckai-cpa
             skip_runtime_smoke: true
           - name: darwin-x64
-            os: ubuntu-latest
+            os: macos-15-intel
             target: bun-darwin-x64
             artifact: duckai-cpa-darwin-x64
             binary: dist/darwin-x64/duckai-cpa
-            skip_runtime_smoke: true
           - name: darwin-arm64
-            os: ubuntu-latest
+            os: macos-15
             target: bun-darwin-arm64
             artifact: duckai-cpa-darwin-arm64
             binary: dist/darwin-arm64/duckai-cpa
-            skip_runtime_smoke: true
 
     steps:
       - name: Checkout

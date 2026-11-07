@@ -107,23 +107,27 @@ node scripts/build-exe.mjs --skip-web-build --target=bun-linux-x64
 
 ### 3.3 CI 手动构建
 
-`.github/workflows/build-binaries.yml`（仅 `workflow_dispatch`）用 matrix 构建并冒烟。
-**不依赖 macOS runner 或任何自定义 runner 配置**：macOS/arm64 目标在 `ubuntu-latest` 上交叉编译
-（GitHub-hosted 只使用标准 `windows-latest` / `ubuntu-latest`）：
+`.github/workflows/build-binaries.yml`（仅 `workflow_dispatch`）用 matrix 在对应架构的
+**GitHub-hosted runner 上原生构建**（不做跨 OS/架构编译）：
 
 | job | runner | target | 本机冒烟 |
 | --- | --- | --- | --- |
 | windows-x64 | `windows-latest` | `bun-windows-x64` | `verify-exe.mjs` |
 | linux-x64 | `ubuntu-latest` | `bun-linux-x64` | `verify-exe.mjs` |
 | linux-x64-musl | `ubuntu-latest` | `bun-linux-x64-musl` | 跳过（glibc runner 不能跑 musl） |
-| linux-arm64 | `ubuntu-latest` | `bun-linux-arm64` | 跳过（交叉编译） |
-| linux-arm64-musl | `ubuntu-latest` | `bun-linux-arm64-musl` | 跳过（交叉编译） |
-| darwin-x64 | `ubuntu-latest` | `bun-darwin-x64` | 跳过（交叉编译） |
-| darwin-arm64 | `ubuntu-latest` | `bun-darwin-arm64` | 跳过（交叉编译） |
+| linux-arm64 | `ubuntu-24.04-arm` | `bun-linux-arm64` | `verify-exe.mjs` |
+| linux-arm64-musl | `ubuntu-24.04-arm` | `bun-linux-arm64-musl` | 跳过（glibc runner 不能跑 musl） |
+| darwin-x64 | `macos-15-intel` | `bun-darwin-x64` | `verify-exe.mjs` |
+| darwin-arm64 | `macos-15` | `bun-darwin-arm64` | `verify-exe.mjs` |
 
-> 如果 CI 报 `The configuration 'macos-14-arm64-us-default' is not supported`
-> （macOS runner/自定义 runner 配置不可用），本流程不会触发它：macOS 产物在 Ubuntu 上交叉编译，
-> 只需在真正的 macOS 上手工运行 `verify-exe.mjs` 做运行时验证。
+> **Runner label 注意**：macOS 14 镜像已于 **2026-11-02** 从 GitHub Actions 退役（macOS 13 更早已不可用）。
+> 继续使用 `macos-13`/`macos-14` 会触发类似
+> `The configuration 'macos-14-arm64-us-default' is not supported` 的错误。
+> 正确标签（以 actions/runner-images README 为准）：
+> macOS 15 arm64=`macos-15`、x64=`macos-15-intel`；
+> macOS 26 arm64=`macos-latest`/`macos-26`、x64=`macos-26-intel`/`macos-latest-large`；
+> Linux arm64=`ubuntu-24.04-arm`。
+> 希望跟随最新 macOS 镜像时可把 `macos-15` 换成 `macos-latest`。
 
 `.github/workflows/build-docker-image.yml`（仅 `workflow_dispatch`）构建 `Dockerfile`、
 启动容器做 HTTP 冒烟（`/healthz`、`/admin/`、`/admin/api/overview`、`/v1/models`）并输出镜像大小。
