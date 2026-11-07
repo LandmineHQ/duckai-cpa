@@ -400,7 +400,7 @@ data/                运行时数据（不入库；含敏感文件）
   + musl 二进制，无 Node.js/node_modules；未压缩约 150 MB、压缩后约 56 MB；中文 PDF 需
   `--build-arg INSTALL_CJK_FONTS=true`（+16MB）。
 - **验证**：`node scripts/verify-exe.mjs --exe dist/<target>/duckai-cpa`（离线 HTTP 断言 + 重启持久化，
-  Windows/Linux/macOS 原生 runner 可用；musl/arm64/macOS 交叉产物需对应平台或 CI）；
+  verify-exe 需在原生平台运行；CI 不再使用 macOS runner（darwin/arm64 在 ubuntu-latest 交叉编译，macOS 需在真机手工冒烟））；
   `docs/ACCEPTANCE.md` §2.56/§2.57；文档 `docs/BINARY-BUILDS.md`、`docs/BINARY-VERIFICATION.md`；
   CI `build-binaries` / `publish-binaries` / `build-docker-image` / `publish-docker-image` 仅手动触发；旧 Node 镜像与 release 包流水线已删除。README Quick Start 面向「运行预构建产物」：A = GHCR 镜像 + compose/docker run，B = 最新 GitHub Release 下载二进制。
 - **未支持**：Windows 图标、代码签名、macOS 公证、arm64 macOS CI 本地验证（BLOCKED，靠 CI）、

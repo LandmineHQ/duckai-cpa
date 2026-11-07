@@ -58,12 +58,12 @@ jobs:
             dir: linux-arm64-musl
             asset: duckai-cpa-linux-arm64-musl.tar.gz
           - name: darwin-x64
-            os: macos-13
+            os: ubuntu-latest
             target: bun-darwin-x64
             dir: darwin-x64
             asset: duckai-cpa-darwin-x64.tar.gz
           - name: darwin-arm64
-            os: macos-14
+            os: ubuntu-latest
             target: bun-darwin-arm64
             dir: darwin-arm64
             asset: duckai-cpa-darwin-arm64.tar.gz

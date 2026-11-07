@@ -1052,3 +1052,37 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
   需先发布新的极简镜像（`also_latest: true`）。
 - `publish-binaries` 产出的资产名固定（不包含版本号），同一 release 内唯一；不同 release 之间可复用同名资产。
 - 推送镜像/发布 release 均需仓库权限；本工作区未执行任何 push/发布操作。
+
+## 2.60 修复 CI：移除 macOS runner 依赖（`configuration 'macos-14-arm64-us-default' is not supported`）
+
+> 用户反馈触发二进制工作流时报 `The configuration 'macos-14-arm64-us-default' is not supported`。
+> 该字符串不是本仓库 workflow 生成的（仓库里只有 `runs-on: macos-13` / `macos-14`，
+> 且本地 grep 显示没有 `macos-14-arm64-us-default`），推断是 CI 侧把 macOS runner label
+> 解析成了某个自定义/受限 runner configuration，或在 macOS runner/自定义 runner 配置不可用的环境中运行。
+
+### 2.60.1 调整（消除对 macOS runner 的依赖）
+
+- `.github/workflows/build-binaries.yml`：
+  - 仅使用标准 GitHub-hosted runner：`windows-latest`（Windows x64）与 `ubuntu-latest`（其余全部目标）；
+  - `bun-darwin-x64`、`bun-darwin-arm64` 改为在 `ubuntu-latest` 上**交叉编译**（Bun 下载 darwin 运行时）；
+  - 补齐 `linux-arm64` / `linux-arm64-musl` 目标（此前 build-binaries 缺少，仅 publish-binaries 有）；
+  - 交叉产物跳过运行时冒烟（无法在 Linux/Windows runner 运行），但构建脚本仍校验 PE/ELF/Mach-O 文件头；
+  - 原有 `file` 命令格式检查改为 Node 读取 magic 字节（Git Bash 环境不一定有 `file`）。
+- `.github/workflows/publish-binaries.yml`：`darwin-x64` / `darwin-arm64` 的 `runs-on` 同样改为
+  `ubuntu-latest`（打包 tar.gz 与其它 Unix 目标一致）；Windows 仍用 `windows-latest`。
+- 文档 `docs/BINARY-BUILDS.md` §3.3 / §11 更新矩阵与说明，并记录该报错的规避方式。
+
+### 2.60.2 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| 两个 workflow YAML 语法（Bun.YAML.parse） | **OK** |
+| 交叉编译可行性 | 已在本机（Windows）用同一构建脚本交叉编译全部 darwin/arm64/musl 目标通过（§2.57.2）；Ubuntu 上同理（Bun 下载目标运行时） |
+| macOS/arm64 运行时验证 | **BLOCKED**：无 macOS/arm64 机器；需在真机手工 `verify-exe.mjs`，或改用你们 CI 支持的原生 runner label |
+| GitHub Actions 实跑 | **BLOCKED**：本环境无法触发/观察仓库的 GitHub Actions |
+
+### 2.60.3 说明
+
+- 若你们 CI 的 macOS runner 实际可用（有受支持的 configuration），可以保留/恢复 `runs-on: macos-14` 的原生构建；
+  当前实现优先保证“在只有 windows/ubuntu runner 的环境也能出全平台产物”。
+- macOS 产物为未签名 Mach-O；CI 交叉构建出的文件与原生构建产物一致（仅运行时冒烟需真机）。

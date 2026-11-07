@@ -107,15 +107,23 @@ node scripts/build-exe.mjs --skip-web-build --target=bun-linux-x64
 
 ### 3.3 CI 手动构建
 
-`.github/workflows/build-binaries.yml`（仅 `workflow_dispatch`）用 matrix 在原生 runner 上构建并冒烟：
+`.github/workflows/build-binaries.yml`（仅 `workflow_dispatch`）用 matrix 构建并冒烟。
+**不依赖 macOS runner 或任何自定义 runner 配置**：macOS/arm64 目标在 `ubuntu-latest` 上交叉编译
+（GitHub-hosted 只使用标准 `windows-latest` / `ubuntu-latest`）：
 
 | job | runner | target | 本机冒烟 |
 | --- | --- | --- | --- |
 | windows-x64 | `windows-latest` | `bun-windows-x64` | `verify-exe.mjs` |
 | linux-x64 | `ubuntu-latest` | `bun-linux-x64` | `verify-exe.mjs` |
-| linux-x64-musl | `ubuntu-latest` | `bun-linux-x64-musl` | 只校验 ELF（glibc runner 不能跑 musl） |
-| darwin-x64 | `macos-13` | `bun-darwin-x64` | `verify-exe.mjs` |
-| darwin-arm64 | `macos-14` | `bun-darwin-arm64` | `verify-exe.mjs` |
+| linux-x64-musl | `ubuntu-latest` | `bun-linux-x64-musl` | 跳过（glibc runner 不能跑 musl） |
+| linux-arm64 | `ubuntu-latest` | `bun-linux-arm64` | 跳过（交叉编译） |
+| linux-arm64-musl | `ubuntu-latest` | `bun-linux-arm64-musl` | 跳过（交叉编译） |
+| darwin-x64 | `ubuntu-latest` | `bun-darwin-x64` | 跳过（交叉编译） |
+| darwin-arm64 | `ubuntu-latest` | `bun-darwin-arm64` | 跳过（交叉编译） |
+
+> 如果 CI 报 `The configuration 'macos-14-arm64-us-default' is not supported`
+> （macOS runner/自定义 runner 配置不可用），本流程不会触发它：macOS 产物在 Ubuntu 上交叉编译，
+> 只需在真正的 macOS 上手工运行 `verify-exe.mjs` 做运行时验证。
 
 `.github/workflows/build-docker-image.yml`（仅 `workflow_dispatch`）构建 `Dockerfile`、
 启动容器做 HTTP 冒烟（`/healthz`、`/admin/`、`/admin/api/overview`、`/v1/models`）并输出镜像大小。
@@ -322,7 +330,7 @@ Docker 镜像用 `build-docker-image.yml` / `docker-compose.yml` 验证。
 | `src/platform.js` | 编译态资源根 / 默认数据目录判定（Windows `~BUN`、POSIX `$bunfs`） |
 | `src/platform/sqlite-bun.js` | Bun 无 `node:sqlite` 时的 `bun:sqlite` 兼容层 |
 | `Dockerfile` / `docker-compose.yml` | Alpine + musl 二进制的极简镜像（本地构建）；`docker-compose.ghcr.yml` 用 GHCR 预构建镜像 |
-| `.github/workflows/build-binaries.yml` | 多平台二进制 CI（原生 runner + 冒烟 + artifact） |
+| `.github/workflows/build-binaries.yml` | 多平台二进制 CI（Windows/Linux runner + macOS/arm64 交叉编译 + 冒烟/artifact） |
 | `.github/workflows/publish-binaries.yml` | 手动构建并发布二进制到 GitHub Release（`/releases/latest` 下载入口） |
 | `.github/workflows/build-docker-image.yml` | 极简镜像 CI（构建 + 容器 HTTP 冒烟 + 体积） |
 | `.github/workflows/publish-docker-image.yml` | 手动发布极简镜像到 GHCR（唯一镜像发布入口，替代旧 Node 镜像流水线） |

@@ -1,8 +1,10 @@
 name: build-binaries
 
 # 手动构建多平台单文件二进制（Bun `bun build --compile`）。
-# - 原生 runner 构建对应平台目标，并用 scripts/verify-exe.mjs 做本机 HTTP 冒烟；
-# - linux-x64-musl 在 glibc runner 上不能直接运行，仅校验文件格式（运行验证见 build-docker-binary）。
+# - 只在 Linux/Windows GitHub-hosted runner 上构建（不依赖 macOS runner/自定义 runner 配置）；
+#   macOS 目标（darwin-x64/arm64）与 arm64 目标在 ubuntu-latest 上交叉编译；
+# - 能原生运行的平台用 scripts/verify-exe.mjs 做 HTTP 冒烟，交叉产物只做格式/大小检查；
+# - musl / arm64 / macOS 二进制不能在该 runner 上运行，运行验证见 Docker/目标平台。
 on:
   workflow_dispatch:
 
@@ -39,16 +41,30 @@ jobs:
             artifact: duckai-cpa-linux-x64-musl
             binary: dist/linux-x64-musl/duckai-cpa
             skip_runtime_smoke: true
+          - name: linux-arm64
+            os: ubuntu-latest
+            target: bun-linux-arm64
+            artifact: duckai-cpa-linux-arm64
+            binary: dist/linux-arm64/duckai-cpa
+            skip_runtime_smoke: true
+          - name: linux-arm64-musl
+            os: ubuntu-latest
+            target: bun-linux-arm64-musl
+            artifact: duckai-cpa-linux-arm64-musl
+            binary: dist/linux-arm64-musl/duckai-cpa
+            skip_runtime_smoke: true
           - name: darwin-x64
-            os: macos-13
+            os: ubuntu-latest
             target: bun-darwin-x64
             artifact: duckai-cpa-darwin-x64
             binary: dist/darwin-x64/duckai-cpa
+            skip_runtime_smoke: true
           - name: darwin-arm64
-            os: macos-14
+            os: ubuntu-latest
             target: bun-darwin-arm64
             artifact: duckai-cpa-darwin-arm64
             binary: dist/darwin-arm64/duckai-cpa
+            skip_runtime_smoke: true
 
     steps:
       - name: Checkout
@@ -81,13 +97,12 @@ jobs:
       - name: Compile binary (${{ matrix.target }})
         run: node scripts/build-exe.mjs --skip-web-build --target=${{ matrix.target }}
 
-      - name: Check binary format
+      - name: Check binary (size + magic)
         shell: bash
         run: |
-          file "${{ matrix.binary }}"
-          test -f "${{ matrix.binary }}"
+          node -e "const fs=require('node:fs');const f=process.argv[1];const b=fs.readFileSync(f);console.log(f, b.length + ' bytes', 'magic=' + b.subarray(0,4).toString('hex'));" "${{ matrix.binary }}"
 
-      - name: Smoke test binary (HTTP, native platform)
+      - name: Smoke test binary (HTTP, native platform only)
         if: ${{ !matrix.skip_runtime_smoke }}
         shell: bash
         run: node scripts/verify-exe.mjs --exe "${{ matrix.binary }}" --timeout 90000
@@ -116,5 +131,5 @@ jobs:
             echo "- artifact: \`$ARTIFACT\`"
             echo "- binary: \`$BINARY\`"
             echo "- size: $(du -h "$BINARY" | cut -f1)"
-            echo "- runtime smoke: $([ "${{ matrix.skip_runtime_smoke }}" = "true" ] && echo "skipped (cross arch/glibc runner)" || echo "verify-exe.mjs")"
+            echo "- runtime smoke: $([ "${{ matrix.skip_runtime_smoke }}" = "true" ] && echo "skipped (cross-compiled; verify on target platform)" || echo "verify-exe.mjs")"
           } >> "$GITHUB_STEP_SUMMARY"
