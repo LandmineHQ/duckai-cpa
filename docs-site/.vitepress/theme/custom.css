@@ -43,8 +43,14 @@
 
   --vp-code-color: #c2410c;
   --vp-code-bg: #fdf0e6;
-  --vp-code-block-bg: #1f1814;
-  --vp-code-line-highlight-color: rgba(249, 115, 22, 0.12);
+  --vp-code-block-bg: #fbf4ec;
+  --vp-code-block-color: #3b2a20;
+  --vp-code-line-number-color: #a08d7f;
+  --vp-code-line-highlight-color: rgba(249, 115, 22, 0.1);
+  --vp-code-block-divider-color: #eadbd0;
+  --vp-code-copy-code-bg: #f3e4d7;
+  --vp-code-copy-code-hover-bg: #ead6c5;
+  --vp-code-copy-code-active-text: #c2410c;
   --vp-custom-block-tip-border: var(--vp-c-brand-1);
   --vp-custom-block-tip-bg: var(--vp-c-brand-softer);
 
@@ -76,6 +82,12 @@
 
   --vp-code-bg: #2a201a;
   --vp-code-block-bg: #17120f;
+  --vp-code-block-color: #f6eee7;
+  --vp-code-line-number-color: #948477;
+  --vp-code-line-highlight-color: rgba(249, 115, 22, 0.16);
+  --vp-code-block-divider-color: #33271f;
+  --vp-code-copy-code-bg: #2a201a;
+  --vp-code-copy-code-hover-bg: #35281f;
   --vp-home-hero-image-background-image: radial-gradient(circle at 30% 30%, rgba(249, 115, 22, 0.2), transparent 62%);
 }
 

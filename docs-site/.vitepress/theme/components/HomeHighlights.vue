@@ -201,9 +201,10 @@ volumes:
   margin: 0;
   padding: 16px;
   overflow: auto;
+  border: 1px solid var(--vp-c-divider);
   border-radius: 14px;
-  background: #1c1713;
-  color: #f8e9dc;
+  background: var(--vp-code-block-bg);
+  color: var(--vp-code-block-color);
   font-size: 0.82rem;
 }
 
