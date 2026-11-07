@@ -21,9 +21,11 @@ const CJK_FONT_CANDIDATES = [
   process.env.DUCKAI_PDF_FONT,
   'C:/Windows/Fonts/simhei.ttf',
   'C:/Windows/Fonts/msyh.ttc',
-  '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+  // Alpine：apk add font-wqy-zenhei（Dockerfile.binary 的 INSTALL_CJK_FONTS=true 会安装）
+  '/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc',
   '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+  '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
   '/System/Library/Fonts/PingFang.ttc'
 ].filter(Boolean);
 

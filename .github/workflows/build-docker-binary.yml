@@ -1,0 +1,58 @@
+name: build-docker-binary
+
+# 手动构建「极简二进制镜像」（Dockerfile.binary：Alpine + musl 单文件二进制），
+# 启动容器做真实 HTTP 冒烟并输出镜像大小；不推送 registry（需要发布时另行扩展）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-image:
+    name: Build + smoke Dockerfile.binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build minimal image
+        run: |
+          docker build -f Dockerfile.binary -t duckai-cpa:binary-ci .
+
+      - name: Show image size
+        run: |
+          SIZE=$(docker image inspect duckai-cpa:binary-ci -f '{{.Size}}')
+          echo "image size: $((SIZE/1024/1024)) MiB uncompressed"
+          {
+            echo "### duckai-cpa:binary-ci"
+            echo ""
+            echo "- uncompressed image size: $((SIZE/1024/1024)) MiB"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run container + HTTP smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name duckai-cpa-binary-ci -p 8787:8787 duckai-cpa:binary-ci
+          cleanup() { docker logs duckai-cpa-binary-ci || true; docker rm -f duckai-cpa-binary-ci || true; }
+          trap cleanup EXIT
+
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS -m 3 http://127.0.0.1:8787/healthz >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          test "$ok" = 1
+
+          curl -fsS http://127.0.0.1:8787/healthz | grep -q '"ok":true'
+          curl -fsS http://127.0.0.1:8787/admin/ | grep -q '/admin/assets/'
+
+          TOKEN=$(docker exec duckai-cpa-binary-ci cat /data/config.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["auth"]["adminToken"])')
+          KEY=$(docker exec duckai-cpa-binary-ci cat /data/config.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["auth"]["apiKeys"][0])')
+          curl -fsS "http://127.0.0.1:8787/admin/api/overview?token=$TOKEN" | grep -q '"service"'
+          curl -fsS -H "Authorization: Bearer $KEY" http://127.0.0.1:8787/v1/models | grep -q '"data"'
+
+          echo "container smoke PASS"

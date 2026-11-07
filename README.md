@@ -95,7 +95,7 @@ Model IDs are resolved dynamically; aliases (e.g. `gpt-6`, `duck`) are accepted.
 
 - **Option A (prebuilt image):** Docker + Docker Compose only
 - **Option B (compiled package):** Node.js 24+ only — no npm install, no source build
-- **Option C (Windows exe):** nothing on the target machine — the build itself needs Windows x64 + Node.js 24+ + Bun 1.4.4+ (see below)
+- **Option C (single-file binaries / minimal image):** nothing on the target machine — builds need Node.js 24+ + Bun 1.4.4+ (Windows / Linux / macOS; see below)
 
 Publishing is a manual `release` workflow (see [Publishing a version](#publishing-a-version)). `build` only produces an artifact on every push.
 
@@ -203,40 +203,72 @@ If the GitHub Release is still a **draft**, open the release page and publish it
 
 The archive is built from the same commit/artifact as the Docker image; it is not the latest working tree. `data/` is created next to the extracted `release/` directory by default; set `DUCKAI_CPA_DATA_DIR` to override it.
 
-### Option C — Windows single-file executable (`windows` branch)
+### Option C — Single-file binaries (Windows / Linux / macOS) and minimal image
 
-The **`windows`** branch packages the whole gateway — backend, prebuilt admin console and default config — into a **single `duckai-cpa.exe`** using Bun's `bun build --compile`. The target machine needs no Node.js, no npm and no extra files.
+The **`platform-binaries`** branch (built on top of `windows`) packages the whole gateway — backend,
+prebuilt admin console and default config — into a **single native executable** using Bun's
+`bun build --compile`. Target machines need no Node.js, no npm and no extra files.
 
-![Windows exe admin console](docs/assets/windows-exe-admin-overview.png)
+![Single-file binary admin console](docs/assets/windows-exe-admin-overview.png)
 
-Build requirements: Windows 10/11 x64, Node.js 24+ (to build the admin console) and **Bun >= 1.4.4**.
+| Target | Build command | Output |
+| --- | --- | --- |
+| Windows x64 | `node scripts/build-exe.mjs` | `dist/windows-x64/duckai-cpa.exe` |
+| Linux x64 (glibc) | `--target=bun-linux-x64` | `dist/linux-x64/duckai-cpa` |
+| Linux arm64 (glibc) | `--target=bun-linux-arm64` | `dist/linux-arm64/duckai-cpa` |
+| Linux x64 (musl / Alpine) | `--target=bun-linux-x64-musl` | `dist/linux-x64-musl/duckai-cpa` |
+| Linux arm64 (musl) | `--target=bun-linux-arm64-musl` | `dist/linux-arm64-musl/duckai-cpa` |
+| macOS Intel | `--target=bun-darwin-x64` | `dist/darwin-x64/duckai-cpa` |
+| macOS Apple Silicon | `--target=bun-darwin-arm64` | `dist/darwin-arm64/duckai-cpa` |
 
-```powershell
-git checkout windows
+Build requirements: Node.js 24+ (to build the admin console) and **Bun >= 1.4.4**. Builds are native
+by default; cross-platform builds download the target Bun runtime and cannot run on the build machine.
+
+```bash
 npm ci
 npm run build:web
-npm run build:exe        # or: node scripts/build-exe.mjs
+node scripts/build-exe.mjs --target=bun-linux-x64-musl   # example: Alpine binary
 ```
 
-The build embeds `web/`, `config/config.example.json` and `package.json` into the executable (Bun `--asset`); runtime data lives next to the exe (portable layout):
+The build embeds `web/`, `config/config.example.json` and `package.json` into the executable (Bun `--asset`);
+runtime data lives next to the binary (portable layout, `data/` auto-created):
 
 ```text
-dist/windows-x64/
-├─ duckai-cpa.exe
+dist/<target>/
+├─ duckai-cpa[.exe]
+├─ RUN-README.txt
 └─ data/                 # created on first start: config.json, duckai.db, identity.json ...
 ```
 
-Double-click `duckai-cpa.exe` or start it from a terminal (a console window is kept on purpose). On first start it creates `data/config.json` and prints the **admin token** and a default **API key** once:
+Run it directly (Windows: double-click; Linux/macOS: `chmod +x duckai-cpa && ./duckai-cpa`). On first start
+it creates `data/config.json` and prints the **admin token** and a default **API key** once:
 
 - Admin console: <http://127.0.0.1:8787/admin/>
 - Health check: `http://127.0.0.1:8787/healthz`
 - OpenAI-compatible base URL: `http://127.0.0.1:8787/v1`
 
-Environment overrides: `DUCKAI_CPA_DATA_DIR` (default `<exeDir>/data`), `DUCKAI_CPA_CONFIG_PATH`, `DUCKAI_CPA_HOST`, `DUCKAI_CPA_PORT`, `DUCKAI_CPA_ADMIN_TOKEN`.
+Environment overrides: `DUCKAI_CPA_DATA_DIR` (default `<binaryDir>/data`), `DUCKAI_CPA_CONFIG_PATH`,
+`DUCKAI_CPA_HOST`, `DUCKAI_CPA_PORT`, `DUCKAI_CPA_ADMIN_TOKEN`.
 
-Details and troubleshooting: [docs/WINDOWS-BUILD.md](docs/WINDOWS-BUILD.md). Rebuild/verify commands: `node scripts/build-exe.mjs`, `node scripts/verify-exe.mjs`.
+#### Minimal Docker image from the binary
 
-> The executable is unsigned, so Windows SmartScreen may warn on the first launch (**More info → Run anyway**). Put it in a writable folder — `Program Files` is read-only for a non-elevated process; set `DUCKAI_CPA_DATA_DIR` in that case.
+`Dockerfile.binary` builds the musl binary in a build stage and ships it on plain `alpine:3.20`
+(no Node.js, no node_modules; only `ca-certificates` + `libstdc++`):
+
+```bash
+docker build -f Dockerfile.binary -t duckai-cpa:binary .
+docker run -d --name duckai-cpa -p 8787:8787 -v duckai-cpa-binary-data:/data duckai-cpa:binary
+# or: docker compose -f docker-compose.binary.yml up -d --build
+```
+
+Image size: ≈150 MB uncompressed / ≈56 MB compressed (the Bun runtime dominates; Node.js and
+node_modules are gone). Add `--build-arg INSTALL_CJK_FONTS=true` if you need CJK rendering in context PDFs.
+
+Details and troubleshooting: [docs/BINARY-BUILDS.md](docs/BINARY-BUILDS.md).
+Verification harness: `node scripts/verify-exe.mjs --exe dist/<target>/duckai-cpa`.
+
+> Binaries are unsigned (Windows SmartScreen / macOS Gatekeeper may warn). Put them in a writable folder —
+> `Program Files` is read-only for a non-elevated process; set `DUCKAI_CPA_DATA_DIR` in that case.
 
 ### First start
 

@@ -1,4 +1,4 @@
-# 验收实测记录（v2 / v2.1 / v2.2 / v2.3 / v2.4 · Lead 独立执行）
+﻿# 验收实测记录（v2 / v2.1 / v2.2 / v2.3 / v2.4 · Lead 独立执行）
 
 > 版本：v2（React + shadcn 控制台；BREAKING：强制 API Key / RPS 队列 / 日志拆分 / 付费模型 / 会话式连接测试 / 严格中断）
 > v2.1：会话「重新生成/重试」+ 推理（reasoning）展示与 `reasoningEncrypted` 标记。
@@ -799,7 +799,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | `.github/workflows/build-windows-exe.yml`（新增） | 手动 `workflow_dispatch`：windows-latest 构建并上传 artifact |
 | `tests/platform-paths.test.js`（新增） | 编译态/源码态路径解析单测 |
 | `scripts/verify-exe.mjs`（新增） | exe 端到端离线验证（HTTP 断言 + 重启持久化） |
-| `docs/WINDOWS-BUILD.md` / `docs/WINDOWS-EXE-VERIFICATION.md`（新增） | 构建与验证文档 |
+| `docs/BINARY-BUILDS.md` / `docs/BINARY-VERIFICATION.md`（新增） | 构建与验证文档 |
 | `README.md` / `AGENTS.md` | 新增 Option C / windows 分支说明 |
 
 ### 2.56.2 构建结果（已验证）
@@ -880,4 +880,79 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
   - `page-check` 对修复后 exe **22/22 PASS**；`verify-exe` **8/8 PASS**；`npm test` **527/527 PASS**。
 - **控制台**：exe 为控制台程序，双击后控制台窗口常驻前台（服务运行期间窗口保持，首次启动的
   adminToken/API Key 打印在该窗口）；本次演示实例也已在可见控制台窗口运行（pid 15464）。
-  文档 `docs/WINDOWS-BUILD.md` §5 / §7.1 已补充。
+  文档 `docs/BINARY-BUILDS.md` §5 / §7.1 已补充。
+
+## 2.57 多平台二进制 + 极简 Docker 镜像（platform-binaries 分支）
+
+> 分支：`platform-binaries`（基于 `windows` 分支，2026-11-06）。目标：把「Windows 单文件 exe」扩展为
+> **Windows / Linux（glibc/musl、x64/arm64）/ macOS（x64/arm64）单文件二进制**，并验证
+> **Alpine + musl 二进制的极简镜像**（无 Node.js / node_modules）方案。
+
+### 2.57.1 改动清单
+
+| 文件 | 说明 |
+| --- | --- |
+| `scripts/build-exe.mjs` | 多目标构建：`--target=bun-windows-x64 / bun-linux-x64 / bun-linux-arm64 / bun-linux-x64-musl / bun-linux-arm64-musl / bun-darwin-x64 / bun-darwin-arm64`；默认=构建机；产物校验文件头（PE/ELF/Mach-O）；自动生成 `RUN-README.txt`；跨平台构建警告 |
+| `scripts/build-exe.mjs`（node_modules 补丁） | 新增：`css-tree/lib/data.js`（mdn-data 静态 JSON import）、`jsdom computed-style.js`（内联 default-stylesheet.css）、`jsdom XMLHttpRequest-impl.js`（同步 XHR worker 懒解析）。根因：Bun `--compile` 会把 CJS `__dirname`/`require.resolve` **固化为构建机绝对路径**，二进制换机器/换平台即 ENOENT |
+| `src/openai/context-pdf.js` | CJK 字体候选新增 Alpine 路径 `/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc` |
+| `package.json` | 新增 `build:bin` + `build:linux-x64(-musl)` / `build:linux-arm64` / `build:darwin-x64/-arm64` |
+| `Dockerfile.binary` / `docker-compose.binary.yml`（新增） | 多阶段：Node 24 构建 web + 用官方 Bun 镜像交叉编译 musl 二进制 → Alpine 3.20 运行层（ca-certificates + libstdc++ + 二进制，无 Node/npm/node_modules） |
+| `.github/workflows/build-binaries.yml`（新增） | 仅 workflow_dispatch：windows-latest / ubuntu-latest / macos-13 / macos-14 matrix，原生构建 + `verify-exe` 冒烟 + artifact |
+| `.github/workflows/build-docker-binary.yml`（新增） | 仅 workflow_dispatch：构建 `Dockerfile.binary`、启动容器做 HTTP 冒烟、输镜像体积 |
+| `.github/workflows/build-windows-exe.yml` | 删除（由 `build-binaries.yml` 取代） |
+| `.dockerignore` | 允许 `webapp/`、`scripts/` 进入构建上下文（二进制镜像在容器内构建），排除 `dist/` |
+| `docs/BINARY-BUILDS.md` / `docs/BINARY-VERIFICATION.md` | 由 Windows 专用文档扩展为多平台（含极简镜像、Bun `__dirname` 坑、排障） |
+| `README.md` / `AGENTS.md` | Option C 改为多平台二进制 + 极简镜像；AGENTS §9.3 更新 |
+
+### 2.57.2 构建结果（已在本机全部构建，格式已校验）
+
+| target | 产物大小 | `file` 识别 |
+| --- | --- | --- |
+| `bun-windows-x64` | 148,691,968 字节 | PE32+ console x86-64 |
+| `bun-linux-x64` | 142,543,024 字节 | ELF x86-64 / glibc |
+| `bun-linux-arm64` | 142,593,016 字节 | ELF ARM aarch64 / glibc |
+| `bun-linux-x64-musl` | 136,132,008 字节 | ELF x86-64 / musl |
+| `bun-linux-arm64-musl` | 135,011,432 字节 | ELF ARM aarch64 / musl |
+| `bun-darwin-x64` | 131,575,264 字节 | Mach-O 64-bit x86_64 |
+| `bun-darwin-arm64` | 122,827,874 字节 | Mach-O 64-bit arm64 |
+
+全部 `node scripts/build-exe.mjs --target=…` exit 0；每个目录都生成 `RUN-README.txt`。
+**Bun `__dirname` 坑的验证**：临时把 `node_modules/jsdom/.../default-stylesheet.css` 与
+`xhr-sync-worker.js` 移走后，Windows 二进制仍能启动并提供 `/healthz`、`/admin/`、`overview`、`/v1/models`
+（证明已不依赖构建机路径；此前版本在别的机器会启动失败）。
+
+### 2.57.3 运行验证矩阵
+
+| 平台 | 方式 | 结果 |
+| --- | --- | --- |
+| Windows x64 | `node scripts/verify-exe.mjs --exe dist/windows-x64/duckai-cpa.exe` | **PASS 8/8**（healthz/admin/assets/overview/models/SQLite/重启持久化） |
+| Linux x64 glibc | WSL Ubuntu 24.04 实机 bash 冒烟（dist/linux-x64） | **PASS 13/13** |
+| Linux x64 musl | Alpine 3.20 minirootfs + ca-certificates + libstdc++ chroot（与 Dockerfile.binary 运行层一致，dist/linux-x64-musl） | **PASS 10/10** |
+| macOS x64/arm64、Linux arm64 | 仅本机构建 + 格式校验 | **BLOCKED**（本机无 macOS/arm64；由 `build-binaries.yml` 原生 runner 覆盖，CI 未在本机实际运行） |
+
+- 全量 `npm test`：**527 / 527 PASS**（Node 24；含 jsdom/css-tree 补丁后的 web/jsdom 用例）。
+- `node scripts/build-check.mjs`：**16 / 16 PASS**。
+- 极简镜像的「运行层」用 Alpine chroot 等价验证（ca-certificates + libstdc++ + musl 二进制），
+  未用 Docker 实跑（本机未安装 Docker）。
+
+### 2.57.4 极简 Docker 镜像分析（回答「能否用最精简镜像+二进制」）
+
+- **可以，已提供 `Dockerfile.binary`**：构建阶段生成 `bun-linux-x64-musl` 二进制；运行阶段
+  `alpine:3.20` + `ca-certificates` + `libstdc++` + 单文件二进制，**没有 Node.js / npm / node_modules**。
+- **尺寸下限由 Bun 运行时决定**：musl 二进制 136.1 MB（gzip -9 后 51.6 MB）；
+  Alpine 运行层（含证书/libstdc++，不含 CJK 字体）约 15.8 MB 未压缩。
+  估算镜像 **未压缩 ≈ 152 MB、压缩后 ≈ 56–58 MB**（Docker layer 压缩）；比 Node 镜像少掉
+  Node 运行时与依赖树，但不可能做到几 MB。
+- 可选：`--build-arg INSTALL_CJK_FONTS=true` 安装 `font-wqy-zenhei`（+16 MB），供上下文 PDF 中文渲染；
+  默认关闭以保持最小（`src/openai/context-pdf.js` 已加入 Alpine 字体路径）。
+- **BLOCKED**：本机无 Docker，`Dockerfile.binary` 未实际 `docker build/run`；已用 Alpine chroot
+  等价验证运行层，并提供 `build-docker-binary.yml` 手动 CI（构建 + 容器 HTTP 冒烟 + 体积输出），
+  但该 CI 未在本机 GitHub 上实际运行。
+
+### 2.57.5 已知限制
+
+- macOS 产物未签名/未公证：首次运行可能被 Gatekeeper 拦截（右键打开或 `xattr -d com.apple.quarantine`）。
+- Windows 产物未签名：SmartScreen 可能提示。
+- 交叉编译产物无法在构建机运行；Bun 会下载目标运行时（本机可能在仓库根生成 `.bun-cache/`，已忽略，可删）。
+- SOCKS 代理在 Bun 下仍未验证（HTTP/HTTPS 代理已修复并验证，见 §2.56.7）。
+- Docker 镜像未做多架构 manifest / 镜像签名；arm64 镜像可基于 `bun-linux-arm64-musl` 自行构建。

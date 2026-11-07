@@ -13,20 +13,17 @@ node_modules/
 .pnpm-store/
 *.tsbuildinfo
 
-# ---------- 前端源码与构建工具链（镜像只复制已构建的 web/） ----------
-webapp/
-vite.config.*
-postcss.config.*
-tailwind.config.*
+# ---------- 构建产物 / 源码分发（二进制镜像在容器内自行构建） ----------
+dist/
+data/tmp*/
+coverage/
 
 # ---------- 开发 / 测试 / 侦察产物（不进入镜像） ----------
 tests/
-scripts/
 docs/
 recon-tmp/
 recon/
 solvetest/
-coverage/
 .DS_Store
 .git/
 .gitignore

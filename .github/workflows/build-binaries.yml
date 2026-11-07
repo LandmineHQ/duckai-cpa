@@ -1,0 +1,120 @@
+name: build-binaries
+
+# 手动构建多平台单文件二进制（Bun `bun build --compile`）。
+# - 原生 runner 构建对应平台目标，并用 scripts/verify-exe.mjs 做本机 HTTP 冒烟；
+# - linux-x64-musl 在 glibc runner 上不能直接运行，仅校验文件格式（运行验证见 build-docker-binary）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-binaries-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build-${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            target: bun-windows-x64
+            artifact: duckai-cpa-windows-x64
+            binary: dist/windows-x64/duckai-cpa.exe
+          - name: linux-x64
+            os: ubuntu-latest
+            target: bun-linux-x64
+            artifact: duckai-cpa-linux-x64
+            binary: dist/linux-x64/duckai-cpa
+          - name: linux-x64-musl
+            os: ubuntu-latest
+            target: bun-linux-x64-musl
+            artifact: duckai-cpa-linux-x64-musl
+            binary: dist/linux-x64-musl/duckai-cpa
+            skip_runtime_smoke: true
+          - name: darwin-x64
+            os: macos-13
+            target: bun-darwin-x64
+            artifact: duckai-cpa-darwin-x64
+            binary: dist/darwin-x64/duckai-cpa
+          - name: darwin-arm64
+            os: macos-14
+            target: bun-darwin-arm64
+            artifact: duckai-cpa-darwin-arm64
+            binary: dist/darwin-arm64/duckai-cpa
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Show toolchain versions
+        shell: bash
+        run: |
+          node --version
+          npm --version
+          bun --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build admin console
+        run: npm run build:web
+
+      - name: Compile binary (${{ matrix.target }})
+        run: node scripts/build-exe.mjs --skip-web-build --target=${{ matrix.target }}
+
+      - name: Check binary format
+        shell: bash
+        run: |
+          file "${{ matrix.binary }}"
+          test -f "${{ matrix.binary }}"
+
+      - name: Smoke test binary (HTTP, native platform)
+        if: ${{ !matrix.skip_runtime_smoke }}
+        shell: bash
+        run: node scripts/verify-exe.mjs --exe "${{ matrix.binary }}" --timeout 90000
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.binary }}
+            dist/${{ matrix.name }}/RUN-README.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build summary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ARTIFACT: ${{ matrix.artifact }}
+          BINARY: ${{ matrix.binary }}
+        run: |
+          {
+            echo "### Binary: $TARGET"
+            echo ""
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- artifact: \`$ARTIFACT\`"
+            echo "- binary: \`$BINARY\`"
+            echo "- size: $(du -h "$BINARY" | cut -f1)"
+            echo "- runtime smoke: $([ "${{ matrix.skip_runtime_smoke }}" = "true" ] && echo "skipped (cross arch/glibc runner)" || echo "verify-exe.mjs")"
+          } >> "$GITHUB_STEP_SUMMARY"

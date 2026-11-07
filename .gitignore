@@ -1,4 +1,4 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 .pnpm-store/
 .npm-cache/
@@ -36,3 +36,5 @@ Thumbs.db
 # IDE
 .idea/
 .vscode/
+.bun-cache/
+
