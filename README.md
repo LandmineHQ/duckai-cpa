@@ -246,6 +246,8 @@ draft: false           # true = create as draft (review before publishing)
   (`https://github.com/<repo>/releases/download/<tag>/<asset>`) for every platform;
 - non-prerelease, published releases appear at `/releases/latest` used by the download link above;
 - a `draft: true` release is not visible in `/releases/latest` until you publish it on GitHub;
+- `draft` applies to newly created releases; an existing release is updated in place (assets replaced +
+  download table refreshed) and cannot be converted back to a draft;
 - binaries are unsigned; checksums are not published separately (GitHub shows asset digests).
 
 ## 🛠️ Client Integrations

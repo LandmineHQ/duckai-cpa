@@ -191,31 +191,51 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
           DRAFT: ${{ inputs.draft }}
         run: |
-          set -euo pipefail
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release upload "$VERSION" assets/* --clobber
-            gh release edit "$VERSION" --notes-file release-body.md
+          # -x：把每条命令打印到日志，便于定位发布失败的具体命令
+          set -euxo pipefail
+          trap 'echo "::error::release publish failed"; gh api "repos/${GH_REPO}/releases/tags/${VERSION}" --jq "{url:.html_url,draft:.draft,assets:[.assets[].name]}" 2>/dev/null || true' ERR
+
+          release_exists=0
+          if gh api "repos/${GH_REPO}/releases/tags/${VERSION}" >/dev/null 2>&1; then
+            release_exists=1
+          fi
+
+          if [[ "$release_exists" == "1" ]]; then
+            gh release upload "$VERSION" assets/* --clobber --repo "$GH_REPO"
+            gh release edit "$VERSION" --notes-file release-body.md --repo "$GH_REPO"
             if [[ "$DRAFT" == "true" ]]; then
-              gh release edit "$VERSION" --draft
+              echo "::warning::release $VERSION already exists; --draft 仅对新建 release 生效，已发布 release 不能回退为 draft"
             fi
             echo "Release $VERSION already exists; assets and download table updated."
           else
-            args=(--target "$GITHUB_SHA" --title "$VERSION" --notes-file release-body.md)
+            args=(--repo "$GH_REPO" --title "$VERSION" --notes-file release-body.md)
+            # tag 已存在时用 --verify-tag（不要在已有 tag 上再指定 target）；否则用当前提交创建 tag
+            if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+              args+=(--verify-tag)
+            else
+              args+=(--target "$GITHUB_SHA")
+            fi
             if [[ "$PRERELEASE" == "true" ]]; then
               args+=(--prerelease)
             fi
             if [[ "$DRAFT" == "true" ]]; then
               args+=(--draft)
             fi
-            gh release create "$VERSION" "${args[@]}" assets/*
+            if ! gh release create "$VERSION" "${args[@]}" assets/*; then
+              echo "::warning::gh release create failed; retrying as existing release upload"
+              gh release upload "$VERSION" assets/* --clobber --repo "$GH_REPO"
+              gh release edit "$VERSION" --notes-file release-body.md --repo "$GH_REPO"
+            fi
             echo "Release $VERSION created (draft=${DRAFT})."
           fi
-          gh release view "$VERSION" --json url,tagName,isLatest,isPrerelease,isDraft,assets \
-            --jq '{url, tagName, isLatest, isPrerelease, isDraft, assets: [.assets[].name]}'
+
+          gh api "repos/${GH_REPO}/releases/tags/${VERSION}" \
+            --jq '{url: .html_url, tag: .tag_name, draft: .draft, prerelease: .prerelease, assets: [.assets[].name]}'
 
       - name: Summary
         shell: bash

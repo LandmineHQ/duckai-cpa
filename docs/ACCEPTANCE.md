@@ -1143,3 +1143,48 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 - draft release 的资产在发布前不可下载（GitHub 行为），因此 `draft: true` 时 `/releases/latest` 也不会包含它；
 - 表格中的链接使用 release tag（`version` 输入），与资产名固定组合；重新发布同 tag 时链接保持不变；
 - 如果想保留 GitHub 自动生成的 release notes，可在页面「Edit」里把自动 notes 追加到表格之后。
+
+## 2.62 修复 Release 发布失败（gh release 流程加固 + 错误定位）
+
+> 用户反馈：编译全部通过，但 `publish-binaries` 的发布步骤报错（日志只看到 `Run set -euo pipefail` 开头）。
+> 由于缺少后续错误行，本次先加固所有常见失败点，并让失败日志可直接定位。
+
+### 2.62.1 发布步骤加固
+
+`.github/workflows/publish-binaries.yml` 的 `Create or update release`：
+
+- **改用 GitHub API 判断 release 是否存在**（`GET /releases/tags/<tag>`），可识别 draft；
+  原实现用 `gh release view`，在某些情况下找不到 draft，随后 `gh release create` 会报
+  “release already exists”。
+- **tag 已存在**时使用 `gh release create --verify-tag`（不再传 `--target`）；tag 不存在时才用
+  `--target "$GITHUB_SHA"`，避免 “tag already exists / target” 类错误。
+- **创建失败自动回退**：`gh release create` 失败时打印 warning，并按“已存在 release”方式
+  `gh release upload --clobber` + `gh release edit --notes-file`（覆盖资产 + 更新下载表格）。
+- 已存在的 release 不再尝试 `--draft` 回退（GitHub 不允许把已发布 release 改回 draft），只打印 warning。
+- 新 release 仍按输入 `draft`/`prerelease` 创建。
+- 最终展示改用 `gh api .../releases/tags/<tag>`（同时显示 draft/prerelease/assets）。
+- **开启 `set -eux`**：日志会逐条打印执行的 gh/git 命令，失败时一眼能看出是哪一步；
+  并加 `ERR` trap，失败时自动打印 release 当前状态。
+- 所有 gh 命令显式 `--repo "${{ github.repository }}"`（不依赖本地 remote 推断）。
+
+### 2.62.2 常见失败原因
+
+1. **release/tag 已存在**（例如之前跑过一次 draft，或手工建过 `v0.1.0`）：已由 API 检测 + fallback 处理；
+   若想重新开始，可在 GitHub 上删除对应 release/tag 后重跑。
+2. **GITHUB_TOKEN 权限不足**（403 `Resource not accessible by integration`）：
+   仓库 `Settings → Actions → General → Workflow permissions` 需要 **Read and write**；
+   若组织策略限制，改用具有 `contents: write` 的 PAT secret（调整 workflow `GH_TOKEN`）。
+3. **tag 名非法/重复**：`version` 必须符合 Docker/Git tag 规则；同一 tag 只能对应一个 release。
+4. **draft 不能回退**：已发布的 release 设置 `draft: true` 不会生效（会打印 warning），
+   要草稿请用新的 version 或先删除旧 release。
+
+### 2.62.3 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| workflow YAML（Bun.YAML.parse） | **OK** |
+| 发布逻辑静态检查 | API 检测/--verify-tag/fallback/`set -eux` 均符合 gh CLI 用法 |
+| GitHub Actions 实跑 | **BLOCKED**：本环境无法触发仓库 CI；需在 GitHub 重跑一次并根据日志确认 |
+
+> 如果重跑后仍失败：请把 `Run set -euxo pipefail` 步骤中**最后一个命令及其 stderr**
+> （通常以 `gh: ...` 或 `HTTP 4xx` 开头）发出来，可直接定位是权限、tag 冲突还是 assets 问题。
