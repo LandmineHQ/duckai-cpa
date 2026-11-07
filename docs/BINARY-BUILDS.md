@@ -1,4 +1,4 @@
-﻿# 多平台单文件二进制构建（Windows / Linux / macOS）
+# 多平台单文件二进制构建（Windows / Linux / macOS）
 
 > 最后更新：2026-11-06（`platform-binaries` 分支，基于 `windows` 分支）
 > 相关文件：`scripts/build-exe.mjs`、`package.json`（`build:bin`）、`Dockerfile`、
@@ -120,6 +120,14 @@ node scripts/build-exe.mjs --skip-web-build --target=bun-linux-x64
 `.github/workflows/build-docker-image.yml`（仅 `workflow_dispatch`）构建 `Dockerfile`、
 启动容器做 HTTP 冒烟（`/healthz`、`/admin/`、`/admin/api/overview`、`/v1/models`）并输出镜像大小。
 
+发布（均仅手动触发）：
+
+- `.github/workflows/publish-binaries.yml`：原生矩阵构建全部平台 → 打包为
+  `duckai-cpa-<platform>.zip|tar.gz` → 创建/更新 GitHub Release（非 prerelease 即成为
+  `/releases/latest`，README Option B 的下载入口）。
+- `.github/workflows/publish-docker-image.yml`：构建 `Dockerfile` 并推送极简镜像到 GHCR
+  （`:version`，可选 `:latest`；README Option A 的镜像来源）。
+
 ## 4. 产物位置
 
 ```
@@ -141,6 +149,10 @@ macOS 122.8–131.6 MB；gzip 压缩后约 52–56 MB。
 
 ### 5.1 直接运行二进制
 
+**下载（推荐）**：到 [GitHub Releases 最新页](https://github.com/LandmineHQ/duckai-cpa/releases/latest)
+下载对应平台压缩包（`duckai-cpa-<platform>.zip|tar.gz`），无需构建。发布由
+`.github/workflows/publish-binaries.yml` 手动完成（见 §3.3）。
+
 1. 把二进制放到一个**可写目录**（不要放 `C:\Program Files`、只读挂载点）；
 2. 运行：
    - Windows：双击 `duckai-cpa.exe`（控制台窗口常驻前台，首次启动打印 adminToken/API Key）；
@@ -158,17 +170,24 @@ macOS 122.8–131.6 MB；gzip 压缩后约 52–56 MB。
 
 ### 5.2 极简 Docker 镜像（推荐用于服务器）
 
-`platform-binaries` 分支新增 **`Dockerfile`**：多阶段构建，运行层只有 Alpine + 单文件
-musl 二进制（无 Node.js、无 node_modules）：
+**推荐直接使用 GHCR 预构建镜像**（无需克隆源码/构建；发布见 §3.3 的 `publish-docker-image`）：
+
+```bash
+docker run -d --name duckai-cpa -p 8787:8787 \
+  -v duckai-cpa-data:/data \
+  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
+  ghcr.io/landminehq/duckai-cpa:latest
+# 或仓库内 compose（同一镜像）
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+镜像实现：`Dockerfile` 多阶段构建，运行层只有 Alpine + 单文件 musl 二进制（无 Node.js、无 node_modules）。
+开发者本地构建：
 
 ```bash
 docker build -f Dockerfile -t duckai-cpa:binary .
-docker run -d --name duckai-cpa -p 8787:8787 \
-  -v duckai-cpa-binary-data:/data \
-  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
-  duckai-cpa:binary
 # 或
-docker compose -f docker-compose.yml up -d --build
+docker compose up -d --build
 ```
 
 | 项目 | 说明 |
@@ -302,8 +321,9 @@ Docker 镜像用 `build-docker-image.yml` / `docker-compose.yml` 验证。
 | `package.json` | `build:bin` + 各平台快捷脚本 |
 | `src/platform.js` | 编译态资源根 / 默认数据目录判定（Windows `~BUN`、POSIX `$bunfs`） |
 | `src/platform/sqlite-bun.js` | Bun 无 `node:sqlite` 时的 `bun:sqlite` 兼容层 |
-| `Dockerfile` / `docker-compose.yml` | Alpine + musl 二进制的极简镜像 |
+| `Dockerfile` / `docker-compose.yml` | Alpine + musl 二进制的极简镜像（本地构建）；`docker-compose.ghcr.yml` 用 GHCR 预构建镜像 |
 | `.github/workflows/build-binaries.yml` | 多平台二进制 CI（原生 runner + 冒烟 + artifact） |
+| `.github/workflows/publish-binaries.yml` | 手动构建并发布二进制到 GitHub Release（`/releases/latest` 下载入口） |
 | `.github/workflows/build-docker-image.yml` | 极简镜像 CI（构建 + 容器 HTTP 冒烟 + 体积） |
 | `.github/workflows/publish-docker-image.yml` | 手动发布极简镜像到 GHCR（唯一镜像发布入口，替代旧 Node 镜像流水线） |
 | `docs/BINARY-VERIFICATION.md` | 二进制端到端验证脚本与记录 |

@@ -93,97 +93,110 @@ Model IDs are resolved dynamically; aliases (e.g. `gpt-6`, `duck`) are accepted.
 
 ### Requirements
 
-- **Option A (recommended): Docker + Docker Compose only** — the image is built from source with the
-  multi-stage `Dockerfile`: build stage compiles the **musl single-file binary**, runtime is plain
-  `alpine:3.20` + `ca-certificates` + `libstdc++` + the binary (no Node.js, no npm, no node_modules).
-- **Option B: nothing on the target machine** — build/collect one single-file binary for your OS/arch
-  and run it directly.
+- **Option A (recommended): Docker + Docker Compose only.** Use the prebuilt minimal image from GHCR —
+  no source build, no Node.js, no node_modules.
+- **Option B: nothing on the target machine.** Download a prebuilt single-file binary for your OS/arch
+  from the latest GitHub Release.
 
-> The old Node.js service image, the compiled release archive (`duckai-cpa-release.tar.gz`) and their
-> publishing pipelines have been **removed**. There is no separate “Option C”.
+> There is no “Option C”. Building from source is a developer task; see
+> [docs/BINARY-BUILDS.md](docs/BINARY-BUILDS.md).
 
-### Option A — Minimal image with Docker Compose (recommended)
+### Option A — GHCR image with Docker Compose (recommended)
+
+Image: `ghcr.io/landminehq/duckai-cpa:latest` (minimal Alpine + musl binary, `linux/amd64`).
+Save this as `compose.yml` and run `docker compose up -d`:
+
+```yaml
+services:
+  duckai-cpa:
+    image: ghcr.io/landminehq/duckai-cpa:latest
+    container_name: duckai-cpa
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      DUCKAI_CPA_HOST: "0.0.0.0"
+      DUCKAI_CPA_PORT: "8787"
+      DUCKAI_CPA_DATA_DIR: "/data"
+      # Recommended: set a strong token, otherwise the first start generates one
+      # DUCKAI_CPA_ADMIN_TOKEN: "replace-with-a-strong-random-token"
+    volumes:
+      - duckai-cpa-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8787/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+volumes:
+  duckai-cpa-data:
+```
 
 ```bash
-git clone https://github.com/LandmineHQ/duckai-cpa.git
-cd duckai-cpa
-docker compose up -d --build
+docker compose up -d
 docker compose logs -f duckai-cpa     # first start prints adminToken and a default API key
 ```
 
-- Admin console: <http://127.0.0.1:8787/admin/>
-- Data volume: `duckai-cpa-data` mounted at `/data`
-- Env overrides: `DUCKAI_CPA_HOST` / `PORT` / `DATA_DIR` / `ADMIN_TOKEN` (see `docker-compose.yml`)
-- CJK rendering in context PDFs: `INSTALL_CJK_FONTS=true docker compose build && docker compose up -d`
-  (installs `font-wqy-zenhei`, +16 MB image size; off by default)
-- Image size: ≈150 MB uncompressed / ≈56 MB compressed (the Bun runtime dominates; the Node
-  runtime and node_modules are gone). Building requires network access (Docker Hub + Bun runtime download).
-
-#### Option A2 — Prebuilt minimal image from GHCR (optional)
-
-Images are published manually from `Actions → publish-docker-image` (this is the only image pipeline;
-it publishes the minimal image):
+Or run it inline without a compose file:
 
 ```bash
-docker compose -f docker-compose.ghcr.yml up -d
-# or
-docker pull ghcr.io/landminehq/duckai-cpa:latest
 docker run -d --name duckai-cpa -p 8787:8787 \
   -v duckai-cpa-data:/data \
-  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-token \
+  -e DUCKAI_CPA_ADMIN_TOKEN=replace-with-a-strong-random-token \
   ghcr.io/landminehq/duckai-cpa:latest
+docker logs -f duckai-cpa
 ```
 
-`docker-compose.ghcr.yml` uses the same `/data` volume and env vars as Option A.
+- Admin console: <http://127.0.0.1:8787/admin/> — the image is tiny (≈56 MB compressed) because it
+  ships a single musl binary instead of Node.js + node_modules.
+- Data: named volume `duckai-cpa-data` mounted at `/data` (contains `config.json`, `duckai.db`, identity/keys —
+  keep private). Container runs as UID 10001.
+- Tags: `:latest` and version tags such as `:v0.1.0` (published manually, see [Publishing](#publishing)).
+- CJK rendering in context PDFs is **not** included by default in the image; if you need it, build locally
+  with `INSTALL_CJK_FONTS=true docker compose build` (requires the source repo) — see
+  [docs/BINARY-BUILDS.md](docs/BINARY-BUILDS.md).
+- The repo also ships `docker-compose.ghcr.yml` with the same settings if you cloned the source.
 
-### Option B — Run a single-file binary directly
+> If `ghcr.io/landminehq/duckai-cpa:latest` is missing or still points to an old Node image, run the
+> manual `Actions → publish-docker-image` workflow first (see [Publishing](#publishing)).
 
-Build the binary for your platform (Windows / Linux / macOS, x64/arm64, glibc/musl) with Bun
-`>= 1.4.4`; the binary embeds `web/`, `config/` and `package.json`, so the target machine needs
-nothing else.
+### Option B — Download a prebuilt single-file binary (latest release)
 
-| Target | Build command | Output |
-| --- | --- | --- |
-| Windows x64 | `node scripts/build-exe.mjs` | `dist/windows-x64/duckai-cpa.exe` |
-| Linux x64 (glibc) | `--target=bun-linux-x64` | `dist/linux-x64/duckai-cpa` |
-| Linux arm64 (glibc) | `--target=bun-linux-arm64` | `dist/linux-arm64/duckai-cpa` |
-| Linux x64 (musl / Alpine) | `--target=bun-linux-x64-musl` | `dist/linux-x64-musl/duckai-cpa` |
-| Linux arm64 (musl) | `--target=bun-linux-arm64-musl` | `dist/linux-arm64-musl/duckai-cpa` |
-| macOS Intel | `--target=bun-darwin-x64` | `dist/darwin-x64/duckai-cpa` |
-| macOS Apple Silicon | `--target=bun-darwin-arm64` | `dist/darwin-arm64/duckai-cpa` |
+Go to the **[latest GitHub Release](https://github.com/LandmineHQ/duckai-cpa/releases/latest)** and
+download the asset for your platform — no Node.js, no Bun, no dependencies:
+
+| Platform | Release asset |
+| --- | --- |
+| Windows x64 | `duckai-cpa-windows-x64.zip` |
+| Linux x64 (glibc: Debian/Ubuntu) | `duckai-cpa-linux-x64.tar.gz` |
+| Linux x64 (musl: Alpine) | `duckai-cpa-linux-x64-musl.tar.gz` |
+| Linux arm64 (glibc) | `duckai-cpa-linux-arm64.tar.gz` |
+| Linux arm64 (musl) | `duckai-cpa-linux-arm64-musl.tar.gz` |
+| macOS Intel | `duckai-cpa-darwin-x64.tar.gz` |
+| macOS Apple Silicon | `duckai-cpa-darwin-arm64.tar.gz` |
 
 ```bash
-npm ci
-npm run build:web
-node scripts/build-exe.mjs --target=bun-linux-x64      # example
-chmod +x dist/linux-x64/duckai-cpa
-./dist/linux-x64/duckai-cpa
+# Linux / macOS example
+tar -xzf duckai-cpa-linux-x64.tar.gz
+cd duckai-cpa-linux-x64            # or extract anywhere
+chmod +x duckai-cpa
+./duckai-cpa
 ```
 
-![Single-file binary admin console](docs/assets/windows-exe-admin-overview.png)
+Windows: unzip and double-click `duckai-cpa.exe` (a console window stays open while the server runs).
 
-Run it directly (Windows: double-click; Linux/macOS: `chmod +x duckai-cpa && ./duckai-cpa`).
-On first start it creates `data/config.json` and prints the **admin token** and a default **API key** once:
-
-- Admin console: <http://127.0.0.1:8787/admin/>
-- Health check: `http://127.0.0.1:8787/healthz`
-- OpenAI-compatible base URL: `http://127.0.0.1:8787/v1`
-
-Environment overrides: `DUCKAI_CPA_DATA_DIR` (default `<binaryDir>/data`), `DUCKAI_CPA_CONFIG_PATH`,
-`DUCKAI_CPA_HOST`, `DUCKAI_CPA_PORT`, `DUCKAI_CPA_ADMIN_TOKEN`.
-
-Build requirements: Node.js 24+ (admin console) and **Bun >= 1.4.4**. Builds are native by default;
-cross-platform builds download the target Bun runtime and cannot run on the build machine.
-
-Details and troubleshooting: [docs/BINARY-BUILDS.md](docs/BINARY-BUILDS.md).
-Verification harness: `node scripts/verify-exe.mjs --exe dist/<target>/duckai-cpa`.
-
-> Binaries are unsigned (Windows SmartScreen / macOS Gatekeeper may warn). Put them in a writable folder —
-> `Program Files` is read-only for a non-elevated process; set `DUCKAI_CPA_DATA_DIR` in that case.
+- Data directory: next to the binary (`data/`), or set `DUCKAI_CPA_DATA_DIR`.
+- Env overrides: `DUCKAI_CPA_DATA_DIR`, `DUCKAI_CPA_CONFIG_PATH`, `DUCKAI_CPA_HOST`,
+  `DUCKAI_CPA_PORT`, `DUCKAI_CPA_ADMIN_TOKEN`.
+- Unsigned binaries: Windows SmartScreen / macOS Gatekeeper may warn (Windows “More info → Run anyway”;
+  macOS right-click open or `xattr -d com.apple.quarantine ./duckai-cpa`).
+- Prefer Docker? Use Option A above; the same binary is what the image runs.
 
 ### First start
 
-First start creates `data/config.json` and prints an **admin token** and a default **API key** once:
+First start creates `data/config.json` (or `/data/config.json` in Docker) and prints an **admin token**
+and a default **API key** once:
 
 - Admin console: <http://127.0.0.1:8787/admin>
 - Health check: `GET /healthz`
@@ -204,20 +217,11 @@ sudo chown -R 10001:10001 data
 docker compose up -d
 ```
 
-Or keep using the named volume (recommended):
+### Publishing
 
-```yaml
-volumes:
-  - duckai-cpa-data:/data
+Both artifacts are published manually from GitHub Actions; nothing is built/pushed automatically.
 
-volumes:
-  duckai-cpa-data:
-```
-
-### Publishing the minimal image
-
-Only one image pipeline exists: **`Actions → publish-docker-image`** (manual). It builds `Dockerfile`
-and pushes the **minimal Alpine + musl-binary image** to GHCR:
+**Container image** — `Actions → publish-docker-image` (builds `Dockerfile`, pushes the minimal image):
 
 ```text
 version: v0.1.0        # required, Docker tag rules (letters/digits/._-)
@@ -225,10 +229,21 @@ also_latest: false     # also push :latest
 ```
 
 - always pushes `ghcr.io/landminehq/duckai-cpa:<version>`;
-- `also_latest: true` additionally pushes `:latest`;
-- `APP_VERSION` is passed into the image and shown in the admin console;
+- `also_latest: true` additionally pushes `:latest` (used by the Quick Start above);
 - image platform: `linux/amd64` (arm64 users can build locally with `bun-linux-arm64-musl`);
-- the removed Node image / release archive workflows are no longer generated.
+- old Node.js images/release archives are no longer generated.
+
+**Binaries** — `Actions → publish-binaries` (builds every platform natively and attaches the archives to a
+GitHub Release):
+
+```text
+version: v0.1.0        # required; release tag and asset version
+prerelease: false      # true = pre-release (excluded from /releases/latest)
+```
+
+- publishes a GitHub Release with the assets listed in Option B;
+- non-prerelease releases appear at `/releases/latest` used by the download link above;
+- binaries are unsigned; checksums are not published separately (GitHub shows asset digests).
 
 ## 🛠️ Client Integrations
 

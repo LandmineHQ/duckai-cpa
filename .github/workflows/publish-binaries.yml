@@ -1,0 +1,183 @@
+name: publish-binaries
+
+# 手动构建并发布「多平台单文件二进制」到 GitHub Release。
+# 非 prerelease 发布会自动成为 /releases/latest（README Option B 的下载入口）。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag/version（如 v0.1.0）"
+        required: true
+        type: string
+      prerelease:
+        description: "标记为 pre-release（不会进入 /releases/latest）"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-binaries-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build-${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            target: bun-windows-x64
+            dir: windows-x64
+            asset: duckai-cpa-windows-x64.zip
+          - name: linux-x64
+            os: ubuntu-latest
+            target: bun-linux-x64
+            dir: linux-x64
+            asset: duckai-cpa-linux-x64.tar.gz
+          - name: linux-x64-musl
+            os: ubuntu-latest
+            target: bun-linux-x64-musl
+            dir: linux-x64-musl
+            asset: duckai-cpa-linux-x64-musl.tar.gz
+          - name: linux-arm64
+            os: ubuntu-latest
+            target: bun-linux-arm64
+            dir: linux-arm64
+            asset: duckai-cpa-linux-arm64.tar.gz
+          - name: linux-arm64-musl
+            os: ubuntu-latest
+            target: bun-linux-arm64-musl
+            dir: linux-arm64-musl
+            asset: duckai-cpa-linux-arm64-musl.tar.gz
+          - name: darwin-x64
+            os: macos-13
+            target: bun-darwin-x64
+            dir: darwin-x64
+            asset: duckai-cpa-darwin-x64.tar.gz
+          - name: darwin-arm64
+            os: macos-14
+            target: bun-darwin-arm64
+            dir: darwin-arm64
+            asset: duckai-cpa-darwin-arm64.tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build admin console
+        run: npm run build:web
+
+      - name: Compile binary (${{ matrix.target }})
+        run: node scripts/build-exe.mjs --skip-web-build --target=${{ matrix.target }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/${{ matrix.dir }}/duckai-cpa.exe", "dist/${{ matrix.dir }}/RUN-README.txt" `
+            -DestinationPath "${{ matrix.asset }}"
+          Get-Item "${{ matrix.asset }}" | Select-Object Name, Length
+
+      - name: Package (Linux / macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          tar -C "dist/${{ matrix.dir }}" -czf "${{ matrix.asset }}" duckai-cpa RUN-README.txt
+          ls -lh "${{ matrix.asset }}"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.name }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Create / update GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: assets
+
+      - name: Validate inputs
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::invalid version '$VERSION'"
+            exit 1
+          fi
+          test -n "$(ls -A assets)" || { echo "::error::no assets built"; exit 1; }
+          ls -lh assets
+
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" assets/* --clobber
+            echo "Release $VERSION already exists; assets replaced."
+          else
+            args=(--target "$GITHUB_SHA" --title "$VERSION" --generate-notes)
+            if [[ "$PRERELEASE" == "true" ]]; then
+              args+=(--prerelease)
+            fi
+            gh release create "$VERSION" "${args[@]}" assets/*
+            echo "Release $VERSION created."
+          fi
+          gh release view "$VERSION" --json url,tagName,isLatest,isPrerelease,assets \
+            --jq '{url, tagName, isLatest, isPrerelease, assets: [.assets[].name]}'
+
+      - name: Summary
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          {
+            echo "### Binaries published"
+            echo ""
+            echo "- release: \`$VERSION\`"
+            echo "- latest download page: https://github.com/${{ github.repository }}/releases/latest"
+            echo "- assets:"
+            echo '```'
+            ls -1 assets
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

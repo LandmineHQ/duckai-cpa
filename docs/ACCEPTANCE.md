@@ -1003,3 +1003,52 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
   `INSTALL_CJK_FONTS=true docker compose build && docker compose up -d`（+16 MB）。
 - 旧 Node 部署文档/命令已从 README 删除；`npm start` 仍可用于本地源码开发/测试（不属于对外部署选项）。
 - 预构建镜像需要先手动运行 `publish-docker-image`，否则 `docker-compose.ghcr.yml` 的 `latest` 可能仍指向旧镜像。
+
+## 2.59 Quick Start 改为「运行预构建产物」+ 二进制 Release 流水线（2026-11-06）
+
+> 用户要求：README Quick Start 不写构建步骤，而是直接运行编译好的结果；A = 直接用 GHCR 镜像
+> （推荐 compose，并补充 `docker run` 内联命令）；B = 跳到 latest release 页面自行下载二进制；
+> 不再有 C。
+
+### 2.59.1 README Quick Start 调整
+
+- **Requirements**：A = Docker + Docker Compose（GHCR 预构建极简镜像，无需源码构建）；
+  B = 目标机无需任何运行时，去 latest release 下载二进制。
+- **Option A（推荐）**：`ghcr.io/landminehq/duckai-cpa:latest` + 内联 compose YAML
+  （`docker compose up -d`），并补充等价的 `docker run` 内联命令；说明 `/data` 卷、UID 10001、
+  `:latest`/`:version` tag、镜像大小、GHCR 未发布时的提示；CJK PDF 需本地构建（开发者）。
+- **Option B**：直接链接 <https://github.com/LandmineHQ/duckai-cpa/releases/latest>，给出 7 个平台
+  资产名（`duckai-cpa-windows-x64.zip`、`duckai-cpa-linux-x64.tar.gz`、
+  `duckai-cpa-linux-x64-musl.tar.gz`、`duckai-cpa-linux-arm64{,-musl}.tar.gz`、
+  `duckai-cpa-darwin-x64/arm64.tar.gz`）与解压/运行说明；不再写构建命令。
+- 构建命令移到开发者文档 `docs/BINARY-BUILDS.md`；README 的 Publishing 小节拆成
+  「Container image（publish-docker-image）」与「Binaries（publish-binaries）」两部分。
+
+### 2.59.2 新增二进制发布流水线
+
+`.github/workflows/publish-binaries.yml`（仅 `workflow_dispatch`）：
+
+- matrix 原生构建：windows-x64、linux-x64、linux-x64-musl、linux-arm64、linux-arm64-musl、
+  darwin-x64（macos-13）、darwin-arm64（macos-14）；
+- 打包：Windows → `Compress-Archive` 生成 `.zip`；Linux/macOS → `tar -czf` 生成 `.tar.gz`
+  （均包含二进制 + `RUN-README.txt`）；
+- release job：下载所有 artifact，`gh release create`（不存在时）或 `gh release upload --clobber`
+  （已存在时），版本号校验、可选 `prerelease`；非 prerelease 发布即成为 `/releases/latest`；
+- 权限：`contents: write`；与旧的 GitHub Release 流水线不同，此流水线只发布**二进制资产**，不发布 Node 包。
+
+### 2.59.3 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| `Bun.YAML.parse` 解析全部 workflows（含新增 publish-binaries） | **OK** |
+| `node scripts/build-check.mjs` | **16 / 16 PASS** |
+| `npm test` | 本轮仅 README/workflows/文档变更，未改 src；沿用上一轮 **527 / 527 PASS** |
+| 实际发布 GHCR 镜像 / GitHub Release | **BLOCKED**：本机无 Docker、无 GHCR 凭据、未在 GitHub Actions 实跑；workflow 需在 GitHub 手动触发 |
+| Release 资产是否已存在 | **待确认**：历史 release（如 0.1.0-beta.*）在本轮之前没有二进制资产；需先运行 `publish-binaries` 生成，README Option B 的 latest 下载才会有内容 |
+
+### 2.59.4 注意事项
+
+- README Option A 依赖 GHCR 的 `:latest`；在运行 `publish-docker-image` 之前，该 tag 可能仍指向旧 Node 镜像，
+  需先发布新的极简镜像（`also_latest: true`）。
+- `publish-binaries` 产出的资产名固定（不包含版本号），同一 release 内唯一；不同 release 之间可复用同名资产。
+- 推送镜像/发布 release 均需仓库权限；本工作区未执行任何 push/发布操作。

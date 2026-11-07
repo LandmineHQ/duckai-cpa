@@ -402,7 +402,7 @@ data/                运行时数据（不入库；含敏感文件）
 - **验证**：`node scripts/verify-exe.mjs --exe dist/<target>/duckai-cpa`（离线 HTTP 断言 + 重启持久化，
   Windows/Linux/macOS 原生 runner 可用；musl/arm64/macOS 交叉产物需对应平台或 CI）；
   `docs/ACCEPTANCE.md` §2.56/§2.57；文档 `docs/BINARY-BUILDS.md`、`docs/BINARY-VERIFICATION.md`；
-  CI `build-binaries` / `build-docker-image` / `publish-docker-image` 仅手动触发；旧 Node 镜像与 release 包流水线已删除。
+  CI `build-binaries` / `publish-binaries` / `build-docker-image` / `publish-docker-image` 仅手动触发；旧 Node 镜像与 release 包流水线已删除。README Quick Start 面向「运行预构建产物」：A = GHCR 镜像 + compose/docker run，B = 最新 GitHub Release 下载二进制。
 - **未支持**：Windows 图标、代码签名、macOS 公证、arm64 macOS CI 本地验证（BLOCKED，靠 CI）、
   Linux 交叉编译在构建机上的运行验证。Bun 的 fastify 适配器在二进制中可用
   （stderr 有一条 Fastify `disableRequestLogging` 弃用警告，不影响功能）。
