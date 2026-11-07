@@ -1107,3 +1107,39 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
   当前默认按公开 runner 的标签配置。
 - `macos-latest` 会随 GitHub 迁移到最新 macOS（当前指向 arm64）；需要可复现时固定 `macos-15`。
 - 日志里若仍出现 `macos-14-arm64-us-default`，说明 workflow 文件还未更新到本提交或使用了缓存定义。
+
+## 2.61 Release 页面自动生成「各系统下载表格」（含 draft 支持）
+
+> 用户要求：GitHub Release（draft）页面里放一个表格，填写各系统对应文件的下载链接。
+
+### 2.61.1 实现
+
+`.github/workflows/publish-binaries.yml` 的 release job 现在会先根据 `version` 生成
+`release-body.md`，再以 `--notes-file` 写入 Release 描述，内容包括：
+
+- **Downloads 表格**：7 个平台 → 对应资产的直接下载链接
+  `https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>`：
+  Windows x64、Linux x64 glibc/musl、Linux arm64 glibc/musl、macOS Intel / Apple Silicon；
+- Quick start（解压/运行/数据目录/管理台地址/未签名提示）；
+- Docker 指引与 `docs/BINARY-BUILDS.md` 链接。
+
+新增 workflow 输入 **`draft`**（默认 false）：
+
+- `draft: true` → `gh release create --draft`，release 为草稿，人工检查描述/资产后再在 GitHub 上 Publish；
+- 已存在 release → 先 `upload --clobber` 覆盖资产，再用 `gh release edit --notes-file` 更新下载表格；
+  `draft: true` 时同时执行 `gh release edit --draft`；
+- 非 draft、非 prerelease 的 release 才会进入 `/releases/latest`。
+
+### 2.61.2 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| workflow YAML 语法（Bun.YAML.parse） | **OK** |
+| Release body 表格链接格式 | 按 GitHub Release 资产直链规则生成（`/releases/download/<tag>/<asset>`） |
+| GitHub Actions 实跑 / draft 页面渲染 | **BLOCKED**：本环境无法触发 GitHub Actions，需在仓库里手动跑一次 `publish-binaries` 验证页面效果 |
+
+### 2.61.3 备注
+
+- draft release 的资产在发布前不可下载（GitHub 行为），因此 `draft: true` 时 `/releases/latest` 也不会包含它；
+- 表格中的链接使用 release tag（`version` 输入），与资产名固定组合；重新发布同 tag 时链接保持不变；
+- 如果想保留 GitHub 自动生成的 release notes，可在页面「Edit」里把自动 notes 追加到表格之后。

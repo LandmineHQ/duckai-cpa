@@ -1,4 +1,4 @@
-# 多平台单文件二进制构建（Windows / Linux / macOS）
+﻿# 多平台单文件二进制构建（Windows / Linux / macOS）
 
 > 最后更新：2026-11-06（`platform-binaries` 分支，基于 `windows` 分支）
 > 相关文件：`scripts/build-exe.mjs`、`package.json`（`build:bin`）、`Dockerfile`、
@@ -135,8 +135,8 @@ node scripts/build-exe.mjs --skip-web-build --target=bun-linux-x64
 发布（均仅手动触发）：
 
 - `.github/workflows/publish-binaries.yml`：原生矩阵构建全部平台 → 打包为
-  `duckai-cpa-<platform>.zip|tar.gz` → 创建/更新 GitHub Release（非 prerelease 即成为
-  `/releases/latest`，README Option B 的下载入口）。
+  `duckai-cpa-<platform>.zip|tar.gz` → 创建/更新 GitHub Release（Release 描述自动写入
+  「各系统下载表格」；支持 `draft` 草稿；非 prerelease 且非 draft 才成为 `/releases/latest`，即 README Option B 的下载入口）。
 - `.github/workflows/publish-docker-image.yml`：构建 `Dockerfile` 并推送极简镜像到 GHCR
   （`:version`，可选 `:latest`；README Option A 的镜像来源）。
 

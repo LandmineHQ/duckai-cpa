@@ -239,10 +239,13 @@ GitHub Release):
 ```text
 version: v0.1.0        # required; release tag and asset version
 prerelease: false      # true = pre-release (excluded from /releases/latest)
+draft: false           # true = create as draft (review before publishing)
 ```
 
-- publishes a GitHub Release with the assets listed in Option B;
-- non-prerelease releases appear at `/releases/latest` used by the download link above;
+- publishes a GitHub Release whose description contains a **download table** with direct links
+  (`https://github.com/<repo>/releases/download/<tag>/<asset>`) for every platform;
+- non-prerelease, published releases appear at `/releases/latest` used by the download link above;
+- a `draft: true` release is not visible in `/releases/latest` until you publish it on GitHub;
 - binaries are unsigned; checksums are not published separately (GitHub shows asset digests).
 
 ## 🛠️ Client Integrations

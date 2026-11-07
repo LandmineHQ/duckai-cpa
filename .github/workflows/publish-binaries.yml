@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      draft:
+        description: "创建为 draft（发布前可人工检查；draft 不进入 /releases/latest）"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -147,37 +152,83 @@ jobs:
           test -n "$(ls -A assets)" || { echo "::error::no assets built"; exit 1; }
           ls -lh assets
 
+      - name: Generate release body (download table)
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}"
+          cat > release-body.md <<EOF
+          ## Downloads
+
+          Choose the archive for your platform. Each archive contains \`duckai-cpa\` / \`duckai-cpa.exe\` and \`RUN-README.txt\`.
+
+          | Platform | Download |
+          | --- | --- |
+          | Windows x64 | [duckai-cpa-windows-x64.zip](${BASE}/duckai-cpa-windows-x64.zip) |
+          | Linux x64 (glibc: Debian/Ubuntu) | [duckai-cpa-linux-x64.tar.gz](${BASE}/duckai-cpa-linux-x64.tar.gz) |
+          | Linux x64 (musl: Alpine) | [duckai-cpa-linux-x64-musl.tar.gz](${BASE}/duckai-cpa-linux-x64-musl.tar.gz) |
+          | Linux arm64 (glibc) | [duckai-cpa-linux-arm64.tar.gz](${BASE}/duckai-cpa-linux-arm64.tar.gz) |
+          | Linux arm64 (musl: Alpine) | [duckai-cpa-linux-arm64-musl.tar.gz](${BASE}/duckai-cpa-linux-arm64-musl.tar.gz) |
+          | macOS Intel | [duckai-cpa-darwin-x64.tar.gz](${BASE}/duckai-cpa-darwin-x64.tar.gz) |
+          | macOS Apple Silicon | [duckai-cpa-darwin-arm64.tar.gz](${BASE}/duckai-cpa-darwin-arm64.tar.gz) |
+
+          ## Quick start
+
+          - **Windows**: unzip and double-click \`duckai-cpa.exe\` (console window stays open).
+          - **Linux / macOS**: \`tar -xzf <archive>\`, then \`chmod +x duckai-cpa && ./duckai-cpa\`.
+          - First start creates \`data/config.json\` and prints an admin token + default API key once.
+          - Admin console: http://127.0.0.1:8787/admin/ — data directory: next to the binary (\`data/\`).
+          - Binaries are unsigned: Windows SmartScreen / macOS Gatekeeper may warn.
+
+          > Docker is recommended for servers — see the GHCR image in the README.
+          > Details: [docs/BINARY-BUILDS.md](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/BINARY-BUILDS.md)
+          EOF
+          cat release-body.md
+
       - name: Create or update release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
+          DRAFT: ${{ inputs.draft }}
         run: |
           set -euo pipefail
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release upload "$VERSION" assets/* --clobber
-            echo "Release $VERSION already exists; assets replaced."
+            gh release edit "$VERSION" --notes-file release-body.md
+            if [[ "$DRAFT" == "true" ]]; then
+              gh release edit "$VERSION" --draft
+            fi
+            echo "Release $VERSION already exists; assets and download table updated."
           else
-            args=(--target "$GITHUB_SHA" --title "$VERSION" --generate-notes)
+            args=(--target "$GITHUB_SHA" --title "$VERSION" --notes-file release-body.md)
             if [[ "$PRERELEASE" == "true" ]]; then
               args+=(--prerelease)
             fi
+            if [[ "$DRAFT" == "true" ]]; then
+              args+=(--draft)
+            fi
             gh release create "$VERSION" "${args[@]}" assets/*
-            echo "Release $VERSION created."
+            echo "Release $VERSION created (draft=${DRAFT})."
           fi
-          gh release view "$VERSION" --json url,tagName,isLatest,isPrerelease,assets \
-            --jq '{url, tagName, isLatest, isPrerelease, assets: [.assets[].name]}'
+          gh release view "$VERSION" --json url,tagName,isLatest,isPrerelease,isDraft,assets \
+            --jq '{url, tagName, isLatest, isPrerelease, isDraft, assets: [.assets[].name]}'
 
       - name: Summary
         shell: bash
         env:
           VERSION: ${{ inputs.version }}
+          DRAFT: ${{ inputs.draft }}
         run: |
           {
             echo "### Binaries published"
             echo ""
             echo "- release: \`$VERSION\`"
+            echo "- page: https://github.com/${{ github.repository }}/releases/tag/$VERSION"
+            echo "- draft: \`$DRAFT\` (draft 需在 GitHub 上手动 Publish；publish 后才会出现在 /releases/latest)"
             echo "- latest download page: https://github.com/${{ github.repository }}/releases/latest"
             echo "- assets:"
             echo '```'
