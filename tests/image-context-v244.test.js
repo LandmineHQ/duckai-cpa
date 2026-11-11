@@ -7,7 +7,7 @@ import jpeg from 'jpeg-js';
 import { PNG } from 'pngjs';
 
 import { withServer, v1Request } from './helpers/test-server.js';
-import { MockDuckClient } from './helpers/mock-duck.js';
+import { MockDuckClient, PNG_1X1_B64 } from './helpers/mock-duck.js';
 import { toUpstreamPngDataUrl } from '../src/duck/image-convert.js';
 
 function makeJpeg(width, height) {
@@ -81,6 +81,68 @@ test('chat JPEG 图片输入：转发上游前转成 PNG（避免 400）', async
     assert.ok(imagePart.image.startsWith('data:image/png;base64,'));
     const png = decodePng(imagePart.image);
     assert.ok(Math.max(png.width, png.height) <= 512);
+  });
+});
+
+test('chat 顶层 message.images 多图全部转发到上游', async () => {
+  const duck = new MockDuckClient();
+  const second = new PNG({ width: 2, height: 2 });
+  second.data = Buffer.from([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]);
+  const secondB64 = PNG.sync.write(second).toString('base64');
+  duck.enqueueChat({ textDeltas: ['ok'] });
+  await withServer({ duck }, async ({ baseUrl }) => {
+    const res = await v1Request(baseUrl, '/v1/chat/completions', {
+      method: 'POST',
+      body: {
+        model: 'gpt-6-luna',
+        messages: [
+          {
+            role: 'user',
+            content: '比较这两张图',
+            images: [
+              { b64: PNG_1X1_B64, format: 'png' },
+              { b64: secondB64, format: 'png' }
+            ]
+          }
+        ]
+      }
+    });
+    assert.equal(res.status, 200, res.text);
+    const messages = duck.calls.chat[0].params.messages;
+    assert.equal(messages[0].images.length, 2, '顶层 images 不能只保留一张');
+    const { buildUpstreamMessages } = await import('../src/duck/index.js');
+    const upstream = buildUpstreamMessages(messages);
+    const imageParts = upstream.flatMap((message) => (Array.isArray(message.content) ? message.content : [])).filter((part) => part.type === 'image');
+    assert.equal(imageParts.length, 2);
+  });
+});
+
+test('responses 顶层 message.images 多图全部转发到上游', async () => {
+  const duck = new MockDuckClient();
+  const second = new PNG({ width: 2, height: 2 });
+  second.data = Buffer.from([0, 0, 255, 255, 255, 255, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255]);
+  const secondB64 = PNG.sync.write(second).toString('base64');
+  duck.enqueueChat({ textDeltas: ['ok'] });
+  await withServer({ duck }, async ({ baseUrl }) => {
+    const res = await v1Request(baseUrl, '/v1/responses', {
+      method: 'POST',
+      body: {
+        model: 'gpt-6-luna',
+        input: [
+          {
+            role: 'user',
+            content: [{ type: 'input_text', text: '比较这两张图' }],
+            images: [
+              { b64: PNG_1X1_B64, format: 'png' },
+              { b64: secondB64, format: 'png' }
+            ]
+          }
+        ]
+      }
+    });
+    assert.equal(res.status, 200, res.text);
+    const messages = duck.calls.chat[0].params.messages;
+    assert.equal(messages[0].images.length, 2, '顶层 images 不能只保留一张');
   });
 });
 

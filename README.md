@@ -464,6 +464,7 @@ data/              runtime data + SQLite (gitignored; contains secrets)
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) / [`docs/PROTOCOL-ERRORS.md`](docs/PROTOCOL-ERRORS.md) | Duck.ai protocol and error mapping |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | Version-by-version acceptance records |
 | [`docs/CLIENT-TOOLS-RESEARCH.md`](docs/CLIENT-TOOLS-RESEARCH.md) | Duck.ai experimental client-tools research |
+| [`docs/DUCKAI-WEB-SNAPSHOT.md`](docs/DUCKAI-WEB-SNAPSHOT.md) | Pull/compare local duck.ai web-source snapshots (`recon:pull` / `recon:diff`) |
 | [`AGENTS.md`](AGENTS.md) | Project guide for contributors/agents |
 
 ---

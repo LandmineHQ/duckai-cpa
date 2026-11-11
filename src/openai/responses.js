@@ -52,7 +52,7 @@ import {
   resolveConversationSessionKey,
   COMPACTION_MARKER
 } from './conversation-compact.js';
-import { isImagePlaceholderText, mergeStoredImages, replaySessionImages } from './image-context.js';
+import { isImagePlaceholderText, mergeStoredImages, normalizeMessageImages, replaySessionImages } from './image-context.js';
 import {
   clientViewOf,
   diffSession,
@@ -170,7 +170,10 @@ function pushContentItem(item, systemParts, conversation, state = { pendingImage
     const role = typeof item.role === 'string' ? item.role.toLowerCase() : 'user';
     const normalized = normalizeContentParts(item.content);
     const content = normalized.text;
-    const images = normalized.images;
+    const images = normalizeMessageImages([
+      ...normalized.images,
+      ...(Array.isArray(item.images) ? item.images : [])
+    ]);
     if (role === 'system' || role === 'developer') {
       if (content.trim()) systemParts.push(content);
       return 'system';

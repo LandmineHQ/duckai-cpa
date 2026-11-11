@@ -24,6 +24,8 @@
     "docs:dev": "npm --prefix docs-site run dev",
     "docs:build": "npm --prefix docs-site run build",
     "docs:preview": "npm --prefix docs-site run preview",
+    "recon:pull": "node scripts/pull-duck-web.mjs",
+    "recon:diff": "node scripts/compare-duck-web.mjs",
     "smoke": "node scripts/smoke.js",
     "test": "node --test --test-isolation=none --test-concurrency=1 \"tests/*.test.js\"",
     "test:watch": "node --test --watch --test-isolation=none --test-concurrency=1 \"tests/*.test.js\""

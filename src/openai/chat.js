@@ -85,7 +85,7 @@ import {
   resolveConversationSessionKey,
   COMPACTION_MARKER
 } from './conversation-compact.js';
-import { isImagePlaceholderText, mergeStoredImages, replaySessionImages } from './image-context.js';
+import { isImagePlaceholderText, mergeStoredImages, normalizeMessageImages, replaySessionImages } from './image-context.js';
 import {
   clientViewOf,
   diffSession,
@@ -244,7 +244,10 @@ export function normalizeChatMessages(rawMessages, { allowEmptyUser = false } = 
     const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
     const normalized = normalizeContentParts(message.content);
     const content = normalized.text;
-    const images = normalized.images;
+    const images = normalizeMessageImages([
+      ...normalized.images,
+      ...(Array.isArray(message.images) ? message.images : [])
+    ]);
     if (role === 'system' || role === 'developer') {
       if (content.trim()) systemParts.push(content);
       return;

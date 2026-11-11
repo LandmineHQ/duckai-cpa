@@ -28,6 +28,57 @@ export function normalizeStoredImage(image) {
 }
 
 /** 合并图片并去重（最多 8 张）。 */
+/**
+ * v2.64：部分客户端把附件放在 message.images（顶层数组），而不是 content 的
+ * image_url/input_image part。这里统一收集，保留 b64/dataUrl 形状，供上游转换。
+ * 不设置数量上限；去重按 b64/dataUrl。
+ */
+export function normalizeMessageImages(images) {
+  const result = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(images) ? images : []) {
+    if (!raw || typeof raw !== 'object') continue;
+    let image = null;
+    if (typeof raw.b64 === 'string' && raw.b64) {
+      const format = typeof raw.format === 'string' && raw.format ? raw.format.toLowerCase().replace(/^image\//, '') : 'png';
+      image = {
+        b64: raw.b64,
+        format,
+        mimeType: typeof raw.mimeType === 'string' ? raw.mimeType : format === 'jpg' ? 'image/jpeg' : `image/${format}`,
+        ...(typeof raw.model === 'string' && raw.model ? { model: raw.model } : {})
+      };
+    } else if (typeof raw.dataUrl === 'string' && /^data:image\//.test(raw.dataUrl)) {
+      const match = raw.dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/);
+      image = {
+        dataUrl: raw.dataUrl,
+        mimeType: match ? match[1] : 'image/png'
+      };
+    } else if (raw.image_url || raw.image || raw.url) {
+      // OpenAI content part 形状；复用 normalizeImagePart 的规则。
+      const value =
+        typeof raw.image_url === 'string'
+          ? raw.image_url
+          : raw.image_url && typeof raw.image_url.url === 'string'
+            ? raw.image_url.url
+            : typeof raw.image === 'string'
+              ? raw.image
+              : typeof raw.url === 'string'
+                ? raw.url
+                : '';
+      if (/^data:image\//.test(value.trim())) {
+        const match = value.trim().match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/);
+        image = { dataUrl: value.trim(), mimeType: match ? match[1] : 'image/png' };
+      }
+    }
+    if (!image) continue;
+    const key = image.b64 || image.dataUrl;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(image);
+  }
+  return result;
+}
+
 export function mergeStoredImages(...lists) {
   const seen = new Set();
   const result = [];
@@ -86,6 +137,7 @@ export function extractGeneratedImages(images) {
 
 export default {
   isImagePlaceholderText,
+  normalizeMessageImages,
   replaySessionImages,
   mergeStoredImages,
   extractGeneratedImages
