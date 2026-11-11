@@ -109,7 +109,7 @@ duck.ai 没有账号也能「记住你」，**不是靠 cookie**（匿名 `docum
 | `GET /admin/api/sync/recovery-code` | `{ recoveryCode }`（完整值，需 admin token） |
 | `POST /admin/api/sync/recovery-code` | body `{ recoveryCode }` → 解析 v1 恢复码/新格式，导入 mainKey+encryptedPrivateKey；`{ ok, sync }` |
 
-**沙箱限制（必须优雅处理）**：本沙箱网络仅允许 `duck.ai`，`duckduckgo.com` 不可达（已实测 `fetch failed`）。
+**当前环境限制（必须优雅处理）**：本当前环境网络仅允许 `duck.ai`，`duckduckgo.com` 不可达（已实测 `fetch failed`）。
 因此 sync 的**本地能力**（身份初始化、密钥生成、配对码/恢复码编码解析、导出导入、状态展示）必须完整可用；
 真正的跨设备传输在 `transport: "blocked"` 时返回 `503 sync_transport_unavailable`，并在 UI 明确提示原因。
 

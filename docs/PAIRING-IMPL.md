@@ -1,6 +1,6 @@
 # 扫码配对实现说明（v2.5，`src/duck/pairing.js`）
 
-> 契约：`docs/IDENTITY-SYNC.md` §1/§4（Sync & Backup 配对码）与本任务（task-26）描述。
+> 契约：`docs/IDENTITY-SYNC.md` §1/§4（Sync & Backup 配对码）与本次验证（）描述。
 > 背景：用户实测「扫二维码后 DuckDuckGo 客户端提示**绑定失败**」。根因不是二维码编码，而是
 > **只生成了本地 `code2`，没有向 DuckDuckGo Sync 交换服务注册频道、也没有参与 host 握手**——
 > 手机扫码后会去 host 频道发 hello，而那个频道根本不存在，必然失败。
@@ -80,7 +80,7 @@ createPairingHost({
   - `recovery_code_available`（对方有账号）：
     - 同 `user_id` → `completed, endReason="same_account", completedAs="host"`；
     - 否则（本地无账号，或本地账号不同）→ **不回复**，`substate="joiner_awaiting"`，等待对方（leader）发
-      `recovery_code_response`；本地账号不同时 `accountConflict=true`（api-core 决定是否覆盖既有官方码）。
+      `recovery_code_response`；本地账号不同时 `accountConflict=true`（网关后端 决定是否覆盖既有官方码）。
       **修复点**：v2.5 在这里错误回了 `recovery_code_unavailable`，导致真实手机「绑定失败」。
   - `recovery_code_response`（joiner 路径）：解析 `recovery_code` = base64/base64url(JSON
     `{recovery:{user_id,secret}}`)（也容忍裸 JSON 与顶层 `{user_id,secret}`）→ 保存原始码 →
@@ -92,7 +92,7 @@ createPairingHost({
 - 生成/解析官方恢复码：`encodeOfficialRecoveryCode({userId,secret,format:'base64url'|'base64'})`、
   `parseOfficialRecoveryCode(code)`（返回 `{userId,secret,raw}` 或 `null`）。
 - **`onCompleted(payload)` 契约**：`{...status(), completedAs, recoveryCode, recoveryUserId, peerUserId, peerName, peerKind, accountConflict, endReason, state, channelId, peerChannelId}`；
-  `completedAs ∈ {host, joiner}`，joiner 时 `recoveryCode` 为官方恢复码原文（api-core 用于落盘）。
+  `completedAs ∈ {host, joiner}`，joiner 时 `recoveryCode` 为官方恢复码原文（网关后端 用于落盘）。
 - 错误码（`PairingError.code`）：`network`、`read_channel_lost`、`write_channel_lost`、`version_mismatch`、
   `protocol_violation`、`peer_key_changed`、`sequence_gap`、`self_scan`、`timeout`、`unavailable`、`aborted`、`invalid_argument`。
 
@@ -138,7 +138,7 @@ createPairingHost({
 **Flow B（手机无账号 → host 有官方码）**：频道 `a604c51f-…`；scanner `recovery_code_request` → host 回
 `recovery_code_response` → `state=completed, completedAs="host"`；scanner 解密校验恢复码 `user_id` 匹配 ✅。
 
-结论：v2.5 的失败根因（`recovery_code_available` 被回 `unavailable`）已修复；真实 Sync 频道上 joiner 路径可完成并把官方恢复码交给 api-core 落盘。
+结论：v2.5 的失败根因（`recovery_code_available` 被回 `unavailable`）已修复；真实 Sync 频道上 joiner 路径可完成并把官方恢复码交给 网关后端 落盘。
 
 ---
 
@@ -150,17 +150,17 @@ createPairingHost({
    - 手机**有账号** → `recovery_code_available`：v2.5.1 起 host **进入 joiner 等待**，收到 leader 的
      `recovery_code_response` 后解析并保存官方恢复码，`completedAs="joiner"`、`endReason="completed"`；
      网关不执行 DDG 的 `account.joinAccount/exitAccount`（不碰用户账号数据）。
-   - 本地已有**不同**账号时：仍进入 joiner，但 `accountConflict=true`，由 api-core 决定是否覆盖本地官方码。
+   - 本地已有**不同**账号时：仍进入 joiner，但 `accountConflict=true`，由 网关后端 决定是否覆盖本地官方码。
    - 同 `user_id` → `same_account`（completed）。`awaiting_confirmation → confirmed/denied` 已处理。
 2. **duckai-cpa 的本地 `recoveryCode`（v2.2 扩展格式）不是官方 DuckDuckGo 恢复码**；`account.recoveryCode`
    必须是官方码（`base64url(JSON({recovery:{user_id,secret}}))`）或 `account.userId+account.secret`
    （我们现场编码）。**不要**把 `identity.sync.recoveryCode` 直接传给手机。
-3. **pairing 成功后不自动写 `identity.sync`**（mainKey/加密私钥语义与官方账号不同）；官方恢复码由 api-core
+3. **pairing 成功后不自动写 `identity.sync`**（mainKey/加密私钥语义与官方账号不同）；官方恢复码由 网关后端
    写入 `data/pairing.json` 的 `officialRecoveryCode`，供后续 Sync 能力使用。
-4. 官方 App 扫码的 UI 文案、二维码刷新/过期行为未在本沙箱验证（无手机端）；但我们已用同一线协议的
+4. 官方 App 扫码的 UI 文案、二维码刷新/过期行为未在本当前环境验证（无手机端）；但我们已用同一线协议的
    模拟 scanner 完成真实服务端到端（含 hello/available/response/completed）。
 
-### UI 建议（web-dashboard/api-core）
+### UI 建议（管理后台/网关后端）
 
 - **二维码只在 `host.start()` 成功（频道已注册）后展示**；对话框打开期间保持轮询（1s），关闭时调用 `stop()`。
 - 状态文案：`waiting`「等待手机扫码…」；`hello/exchange`「手机已连接，正在配对…」；
@@ -172,7 +172,7 @@ createPairingHost({
   「实验性：已完成频道注册与设备握手；完整 DuckDuckGo 账号同步需提供真实恢复码/后续迭代」。
   未配置真实恢复码时，手机端仍可能提示绑定失败——这是协议限制，不是二维码/网络问题。
 - 会话有效期：无活动 30s、硬超时 5min；建议对话框显示倒计时并在超时后自动隐藏二维码。
-- **Admin API 契约（v2.5 最终版，api-core 实现；webapp 按此对接，避免两版契约）**：
+- **Admin API 契约（v2.5 最终版，网关后端 实现；webapp 按此对接，避免两版契约）**：
   - 进程内单例 `pairingSession = { host: PairingHost | null }`，同一时刻只允许一个 host 会话。
   - `POST /admin/api/sync/pairing`（admin token）
     - 已有活动会话（state ∉ {completed,failed,timeout}）→ `409 {"error":{"code":"pairing_in_progress",...}}`（或先 `stop()` 再重启，二选一并固定）。
@@ -230,7 +230,7 @@ createPairingHost({
 - `sync.js` 的 `buildPairingCode/parsePairingCode` 继续负责 **code2 编解码**；`pairing.js` 在此基础上增加
   **频道注册 + 握手 + 信封**，是「让二维码真正能被连接」的缺失部分。
 - `identity.js` / `identity-pool.js` 的 `pair()` 仍返回语义化错误（`sync_transport_unavailable` 503 /
-  `sync_handshake_unimplemented` 501）；本任务未改动它们。若 api-core 要接「身份页配对」，
+  `sync_handshake_unimplemented` 501）；本次验证未改动它们。若网关后端要接「身份页配对」，
   优先使用 `PairingHost`（host 角色），而不是 v2.2 的 `identityStore.pair()`（它没有 host 轮询）。
 - 依赖：无新增；Node `crypto`（RSA-OAEP/AES-GCM）+ 现有 `undici`/代理层。
 
@@ -238,7 +238,7 @@ createPairingHost({
 
 ## 9. 修复：host 必须在 hello 之后发送首条 exchange 消息（deadlock）
 
-真实手机失败日志（Lead 抓取，`GET /admin/api/sync/pairing`）：
+真实手机失败日志（验收执行者 抓取，`GET /admin/api/sync/pairing`）：
 
 ```
 in:hello → out:hello → in:recovery_code_available → (无任何出站) → timeout/idle
@@ -255,9 +255,9 @@ in:hello → out:hello → in:recovery_code_available → (无任何出站) → 
 - `_handleHello()` 收到 hello 后调用 `_sendExchangeInit()`：无官方码 → `recovery_code_request{name,kind:"3party"}`；有官方码 → `recovery_code_available{...,user_id}`；
 - `_handleRecoveryCodeAvailable()` 在尚无本地账号且未发过首条消息时补发 `recovery_code_request`（兜底）；
 - `account.getRecoveryCode()` 允许 async（PairingStore 异步读取），避免 unhandled rejection；
-- 收到手机 `recovery_code_response` → 解析官方码 → `completed(joiner)` → 官方码落盘（api-core `onCompleted`）。
+- 收到手机 `recovery_code_response` → 解析官方码 → `completed(joiner)` → 官方码落盘（网关后端 `onCompleted`）。
 
-验证（Lead，模拟手机走真实 Sync 服务）：hello → 收 host hello+request → 回 response → `completed/joiner`，官方码 configured=true；全量 `npm test` 250/250。
+验证（验收执行者，模拟手机走真实 Sync 服务）：hello → 收 host hello+request → 回 response → `completed/joiner`，官方码 configured=true；全量 `npm test` 250/250。
 ## 10. v2.7：手机确认流程（confirmed 后必须重新请求）
 
 真实手机在用户点「确认」后的消息序列：

@@ -4,7 +4,7 @@
 
 # Admin API 契约（`/admin/api/*`）
 
-> 管理后台（web-dashboard）与网关（api-core）之间的稳定契约。
+> 管理后台（管理后台）与网关（网关后端）之间的稳定契约。
 > 所有响应 JSON；错误 `{"error":{"message","type"}}`。
 > 鉴权：`Authorization: Bearer <adminToken>`，或 `?token=<adminToken>`（仅 GET 允许 query token）。
 > 默认 `adminToken` 在首次启动时生成并写入 `data/config.json` + 启动日志；`config/config.example.json` 默认值仅作示例。

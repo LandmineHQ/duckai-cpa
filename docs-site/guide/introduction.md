@@ -6,7 +6,7 @@
 
 ## 它解决什么问题
 
-duck.ai 只提供网页聊天界面，没有稳定的服务端 API；普通 OpenAI SDK、Codex、DSH、Chatbox、Cherry Studio、Open WebUI 等客户端无法直接使用。
+duck.ai 只提供网页聊天界面，没有稳定的服务端 API；普通 OpenAI SDK、客户端、Chatbox、Cherry Studio、Open WebUI 等客户端无法直接使用。
 
 DuckAI CPA 在中间维护：
 
@@ -28,13 +28,13 @@ DuckAI CPA 在中间维护：
 | 会话所有权 | authoritative session；客户端只发增量，网关保存 canonical 与精确 upstream 前缀 |
 | 图片上下文 | 生成图片持久化；下一轮作为真实 image part 回放（JPEG → PNG ≤ 512px） |
 | PDF 上下文 | 超 20k 字符时旧对话与工具协议分别渲染为 PDF，绕过文本上限 |
-| 客户端工具桥 | OpenAI tools 自动归一化；文件工具由客户端执行，网关不接 MCP |
+| 客户端工具桥 | OpenAI tools 自动归一化；文件工具由客户端执行，网关不接入外部工具 |
 | 管理控制台 | 概览、连接测试、身份池、订阅、历史、日志、代理、模型配置、API Key |
 
 ## 架构一览
 
 ```text
-OpenAI SDK / Codex / DSH / 桌面客户端
+OpenAI SDK / 客户端 / 桌面客户端
                 │
                 ▼
         ┌─────────────────┐

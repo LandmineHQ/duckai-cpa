@@ -4,7 +4,7 @@
 > API 形状、SOCKS 踩坑点与 **真实联调结果**（本机 `127.0.0.1:10808`，同时支持 HTTP CONNECT 与 SOCKS5，
 > exit IP `203.0.113.10`）。
 >
-> Admin API（`/admin/api/proxy*`）、配置持久化、前端「代理」页由 api-core / web-dashboard 实现；
+> Admin API（`/admin/api/proxy*`）、配置持久化、前端「代理」页由 网关后端 / 管理后台 实现；
 > 协议层只暴露 manager，不直接暴露 HTTP 端点。
 
 ---
@@ -33,7 +33,7 @@ new ProxyManager({ config, logger, fetchImpl })
 
 - `config`：可传**完整 config**（自动读 `config.proxy`），也可直接传 proxy 配置对象。
 - `fetchImpl`：**仅用于直连路径**的可替换 fetch（测试 mock 用）；代理路径固定使用 undici。
-- 依赖：`undici@8.12.3`、`socks@2.8.10`（已由 Lead 安装，未新增依赖）。
+- 依赖：`undici@8.12.3`、`socks@2.8.10`（已由 验收执行者 安装，未新增依赖）。
 
 ### 1.2 方法
 
@@ -140,7 +140,7 @@ direct 时 `getDispatcher()` 返回 `undefined`，`fetch()` 走注入的 `fetchI
 | `recentErrors[].proxyMode` | 记录出错时的出站路径 |
 
 > 订阅 verify 走代理：`verifySubscriptionOnline` 由 identityStore 传入 `fetchImpl`（DuckClient 注入）；
-> 若 api-core 在 DuckClient 初始化前调用 `activateSubscription`，则使用 identityStore 创建时传入的
+> 若网关后端 在 DuckClient 初始化前调用 `activateSubscription`，则使用 identityStore 创建时传入的
 > `sync.fetchImpl`（可在 `createIdentityStore({ sync:{ fetchImpl: proxy.getFetch() } })` 提前注入）。
 
 ---
@@ -155,7 +155,7 @@ direct 时 `getDispatcher()` 返回 `undefined`，`fetch()` 走注入的 `fetchI
 
 | 目标 | 结果 |
 | --- | --- |
-| `https://duckduckgo.com/sync/pairing`（直连） | ❌ `fetch failed`（~10.7s 超时）——沙箱原本不可达 |
+| `https://duckduckgo.com/sync/pairing`（直连） | ❌ `fetch failed`（~10.7s 超时）——当前环境原本不可达 |
 | `https://duck.ai/...`（直连） | ✅ 可达（原有行为） |
 
 ### 4.2 HTTP 代理（`type:"http"`）

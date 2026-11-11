@@ -59,7 +59,7 @@
 | 标记 | 语义 | 网关 |
 | --- | --- | --- |
 | `[FIXED_COST_WINDOW_USAGE:…]` | 固定成本窗口用量（6h/day/week/month） | ✅ 解析为 `quotaWindows` |
-| `[SUMMARY_REFRESH_HINT:{…}]` | 服务端建议摘要刷新（tokens 触发；`baseCoveredPairCount/targetPairCount/thresholdTokens`） | ✅ 解析为 `summaryRefreshHint`；🟡 未自动触发摘要（api-core 决定） |
+| `[SUMMARY_REFRESH_HINT:{…}]` | 服务端建议摘要刷新（tokens 触发；`baseCoveredPairCount/targetPairCount/thresholdTokens`） | ✅ 解析为 `summaryRefreshHint`；🟡 未自动触发摘要（网关后端 决定） |
 | `[SUMMARY_INVALID]` | 摘要失效 | ✅ `summaryInvalid`；🟡 未自动失效处理 |
 | `[LIMIT_CONVERSATION]` / `[LIMIT_ACCOUNT]` / `[LIMIT_ENTITY]` / `[LIMIT_IMAGE_GENERATIONS]` | 额度限制 | ✅ 映射 DuckError（429/403） |
 | `[ADS:<JSON>]` | 广告窗口数据 | ✅ 解析 `adWindow`；🟡 不渲染广告 |
@@ -107,7 +107,7 @@
 | 语音听写（Dictation） | `/duckchat/v1/dictation` 音频上传 | ❌ |
 | 写作块（Writing blocks） | `[Writing block]` UI 组件/channel/subject | ❌（不解析写作块内容） |
 | 分享/分享链接 | 分享聊天、`isSharePreview`、删除 shared links | ❌（网关无分享链接 API） |
-| 侧栏/历史/置顶 | 会话列表、pinned、删除/清空 | 🟡（api-core 有自建 sessions/webapp，无 duck.ai 原生历史同步） |
+| 侧栏/历史/置顶 | 会话列表、pinned、删除/清空 | 🟡（网关后端 有自建 sessions/webapp，无 duck.ai 原生历史同步） |
 | 广告 ADS | DONE `[ADS]` + 广告窗口 | 🟡（解析数据，不展示） |
 | Bonus/奖励/Campaigns/Redeem | `/campaigns`、`/redeem`、bonus 文案/多倍额度 | ❌ |
 | 订阅 Plus/Pro | `Authorization` token、tier/entitlements、付费模型 | 🟡（解析 token/路由付费模型；无购买/OAuth 流程） |
@@ -136,7 +136,7 @@
 
 ## 6. 网关缺口优先级建议
 
-1. **压缩闭环**（task-40）：`activationTargetPairCount` 从 capabilities 读取；`SUMMARY_REFRESH_HINT` 自动触发一次
+1. **压缩闭环**（）：`activationTargetPairCount` 从 capabilities 读取；`SUMMARY_REFRESH_HINT` 自动触发一次
    `/summarize`；`SUMMARY_INVALID` 失效重算；`initialContext` + `slice(2*coveredPairCount)` 发送；Chat Summary 展示/编辑。
 2. **模型目录补全**：白名单中 `claude-haiku-5-5/claude-sonnet-4-6/claude-opus-4-8` 不在网关目录（若用户 tier 可用需补）。
 3. **`/summarize/compact`**：找到调用点/payload 后实现主动 compact。
@@ -151,7 +151,7 @@
 ## 7. 备注
 
 - 本表以 bundle 证据 + 现有网关代码为限；未在 bundle 出现的端点（如某些内部 admin）不臆造。
-- 「网关状态」描述的是**协议层/服务层能力**，不等于 Web UI 是否有入口；webapp 由 web-dashboard 维护。
+- 「网关状态」描述的是**协议层/服务层能力**，不等于 Web UI 是否有入口；webapp 由 管理后台 维护。
 - 与 compaction 相关的细节见 `docs/COMPACTION-RESEARCH.md`；compact API 见 `docs/COMPACT.md`。
 
 ## 自定义 tools 支持评估（v2.39 源码调研）
@@ -182,7 +182,7 @@
 ### 可行的自定义工具方案（网关层）
 
 - **A. 网关侧 function-calling shim（推荐）**：OpenAI `tools` → 注入 system prompt 的 JSON 协议 →
-  模型输出 `{"tool":...,"args":...}` → 网关执行（HTTP / 本地进程 / MCP）→ 把结果作为 tool 消息回填并再请求；
+  模型输出 `{"tool":...,"args":...}` → 网关执行（HTTP / 本地进程 / 外部工具）→ 把结果作为 tool 消息回填并再请求；
   支持流式时先发 tool_call 事件再继续。代价：依赖模型遵循 prompt，需要严格解析与重试。
 - **B. 固定内置工具增强**：仅使用 WebSearch / GenerateImage / LocationPrompt 等，不做任意工具。
 - **C. 客户端自行实现 tools**：网关只负责透传模型输出；实际调用与结果回填由客户端做（仍需要 prompt 协议）。

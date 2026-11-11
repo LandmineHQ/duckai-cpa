@@ -158,7 +158,7 @@ data: {"type":"error","message":"...","code":"...","status":429}
   - `ERR_REFUSAL` / moderation → 403 `content_filter`
   - `ERR_ANOMALY`(如出现) → 429/403 `upstream_anomaly_check`
 - 错误详情（事件片段、事件名、序号）写入 upstream 日志 `errorDetail` 字段（不存敏感内容）。
-- 另外依据 duck.ai 源码错误处理清单补充映射（见 `docs/PROTOCOL-ERRORS.md`，duck-protocol 产出）。
+- 另外依据 duck.ai 源码错误处理清单补充映射（见 `docs/PROTOCOL-ERRORS.md`，协议层 产出）。
 
 ## 7. 前端（React + shadcn）
 
@@ -197,7 +197,7 @@ data: {"type":"error","message":"...","code":"...","status":429}
 
 ### 9.1 依赖注入
 
-- `src/index.js` 在 `DuckClient` 之前创建 identityStore（`src/duck/identity.js`，duck-protocol 实现）并调用 `await identity.init()`；
+- `src/index.js` 在 `DuckClient` 之前创建 identityStore（`src/duck/identity.js`，协议层 实现）并调用 `await identity.init()`；
 - `new DuckClient({ ...config.duck, identityStore, logger })`；
 - `createServer({ config, store, duck, logger, identity })` 显式注入，QA/测试可用同签名注入 mock identityStore；
 - identityStore 不可用（duck 层缺失/初始化失败）时服务照常启动，`/admin/api/identity|sync|subscription` 返回 **503 `identity_unavailable`**（契约外补充码，带 `hint`），其余 v2 功能不受影响。
@@ -211,12 +211,12 @@ data: {"type":"error","message":"...","code":"...","status":429}
 
 ### 9.3 实现差异 / 补充
 
-- `GET /admin/api/identity` 的 `durableStream` 额外返回 `enabled`（= `config.identity.durableStream.enabled`）以及 duck 层健康状态 `configured/enabled/degraded/rejectedCount`（来自 `DuckClient.health().durableStream`；degraded=true 时附 `note` 提示）。**durableStream 默认开启**（duck-protocol 的公钥 JWK 带 `alg`/`use:"enc"`，上游已实测接受；可在设置/配置里关闭）。若上游仍返回 400 拒绝，duck 层自动降级为不带该字段重试一次，并记录非致命 `durable_stream_rejected`（warn 日志 + health 计数），`GET identity` 会显示 degraded。`identity.durableStream.enabled` 在 DuckClient 构造时读取，修改后需重启网关生效（配置会立即持久化）。
+- `GET /admin/api/identity` 的 `durableStream` 额外返回 `enabled`（= `config.identity.durableStream.enabled`）以及 duck 层健康状态 `configured/enabled/degraded/rejectedCount`（来自 `DuckClient.health().durableStream`；degraded=true 时附 `note` 提示）。**durableStream 默认开启**（协议层 的公钥 JWK 带 `alg`/`use:"enc"`，上游已实测接受；可在设置/配置里关闭）。若上游仍返回 400 拒绝，duck 层自动降级为不带该字段重试一次，并记录非致命 `durable_stream_rejected`（warn 日志 + health 计数），`GET identity` 会显示 degraded。`identity.durableStream.enabled` 在 DuckClient 构造时读取，修改后需重启网关生效（配置会立即持久化）。
 - `POST /identity/reveal` 需要 `{ field: "token"|"mainKey", confirm: true }`；缺少 confirm → 400 `confirmation_required`，field 非法 → 400 `invalid_field`（契约外补充码）。
 - `GET /identity/export`：`Content-Disposition: attachment; filename="duckai-identity-<ISO 时间戳>.json"`，`Cache-Control: no-store`；body 为 `{version,exportedAt,identity}`（含私钥/token，仅下载附件）。
 - `POST /identity/import`：接受 `{ identity }` 或直接 identity 对象；校验失败 → 400 `invalid_identity`。
 - `GET /admin/api/sync`：`recoveryCode` 返回 `{present,preview}`；完整恢复码只在 `POST /sync/enable` 返回一次，之后可用 `GET /sync/recovery-code`（需 admin token）读取或重新导入。
-- `POST /sync/pair`：本沙箱无法访问 duckduckgo.com，`identityStore.pair` 抛 `503 sync_transport_unavailable` 且**不修改本地状态**；错误体为 `{"error":{message,type:"sync_transport_unavailable",code,param,hint}}`（`hint` 为契约外补充字段，前端可直接展示）。
+- `POST /sync/pair`：本当前环境无法访问 duckduckgo.com，`identityStore.pair` 抛 `503 sync_transport_unavailable` 且**不修改本地状态**；错误体为 `{"error":{message,type:"sync_transport_unavailable",code,param,hint}}`（`hint` 为契约外补充字段，前端可直接展示）。
 - `POST /sync/pairing-code` 响应包含 `code/url/channelId/publicKey/createdAt/expiresAt`（契约 §3.2 的 code/url/expiresAt 为必选，其余为补充）。
 - 订阅：token 必须是三段 base64url JWT，否则 422 `token_invalid`；payload `exp` 过期 → 422 `token_expired`；在线 verify 失败不影响 HTTP 状态（仍 `200 {ok:true, subscription:{verified:false, verifyError}}`）；`DELETE` 清 token 回 free。**verified 语义（v2.2 修正）**：duck.ai 匿名 `/status` 不校验 Bearer token，`verified` 仅表示「token 本地解析通过 + 上游可达」，**不代表 token 有效**；`GET /admin/api/subscription` 与 `POST /subscription/activate|verify` 响应新增 `verifyScope:"reachability"` 与 `verifyNote`，真实档位以实际请求上游结果为准。
 - 错误映射（IdentityError → HTTP）：400 `invalid_identity` / `invalid_recovery_code` / `invalid_pairing_code` / `unsupported_pairing_version`；422 `token_invalid` / `token_expired`；409 `identity_busy` / `sync_not_enabled`；503 `sync_transport_unavailable`（带 hint）或 `identity_unavailable`。
@@ -250,7 +250,7 @@ data: {"type":"error","message":"...","code":"...","status":429}
 | `POST /admin/api/proxy/test` | body 可选覆盖（type/host/port/username/password/noProxy/testUrl/ipCheckUrl；不改保存值，用临时 dispatcher）→ **始终 200**：`{ ok,mode,target,status,latencyMs,exitIp,ipError,testedAt,error,code,bypassNoProxy? }`；连接失败 `code ∈ proxy_connect_failed|proxy_timeout|proxy_tls_failed`；**非法覆盖字段也返回 200** `{ok:false,code:"invalid_proxy",invalidField}`（前端只处理一种形态）；结果写入 `status.last*` |
 | `GET /healthz` | 新增 `proxy:{ enabled,mode,active,lastTestOk,lastTestLatencyMs,exitIp }`（无密码/用户名明文以外的敏感信息） |
 
-- `proxyManager` 未注入（duck-protocol `src/duck/proxy.js` 缺失/初始化失败）时：三组代理端点返回 `502 {"error":{type:"proxy_unavailable",code:"proxy_unavailable"}}`，其余 v2 功能不受影响（按直连）。
+- `proxyManager` 未注入（协议层 `src/duck/proxy.js` 缺失/初始化失败）时：三组代理端点返回 `502 {"error":{type:"proxy_unavailable",code:"proxy_unavailable"}}`，其余 v2 功能不受影响（按直连）。
 - `PUT /admin/api/proxy` 校验失败 vs 应用失败：均映射为 400 `invalid_proxy`（带 `param` 指明字段）；不会破坏已保存配置（配置仅在应用成功后写入 `data/config.json`）。
 
 ### 10.3 生效范围与启动接线
@@ -285,11 +285,11 @@ data: {"type":"error","message":"...","code":"...","status":429}
 
 - `pool.enabled=false` 时不创建池：`/admin/api/identities*` 全部返回 `503 identity_pool_unavailable`，`/v1/*` 回落到全局单 DuckClient（v2.3 行为）。
 - `strategy ∈ hash|least-loaded`；`onLimit ∈ trim|error`。旧配置启动时自动补 `pool/context` 并持久化；`PUT /admin/api/config` 白名单见 `ADMIN_EDITABLE_PATHS`。
-- 内部把 `runtimeIdleMs` 作为 duck-protocol 的 `idleTimeoutMs` 传入（对外键名保持契约）。
+- 内部把 `runtimeIdleMs` 作为 协议层 的 `idleTimeoutMs` 传入（对外键名保持契约）。
 
 ### 11.2 启动接线
 
-`createIdentityPool({ dataDir, config, logger, proxyManager })`（duck-protocol `src/duck/identity-pool.js`）→ `createServer({ identities })`；identity/proxy/pool 相互独立，任一失败只降级对应能力。启动日志打印池摘要（`total/enabled/subscribed/activeId/bindings/strategy`，不含任何私钥/token）。关闭时依次 `proxy.close()`、`identities.close()`。
+`createIdentityPool({ dataDir, config, logger, proxyManager })`（协议层 `src/duck/identity-pool.js`）→ `createServer({ identities })`；identity/proxy/pool 相互独立，任一失败只降级对应能力。启动日志打印池摘要（`total/enabled/subscribed/activeId/bindings/strategy`，不含任何私钥/token）。关闭时依次 `proxy.close()`、`identities.close()`。
 
 ### 11.3 Admin API（§5 全量）
 
@@ -346,7 +346,7 @@ data: {"type":"error","message":"...","code":"...","status":429}
 
 ## 13. v2.5：扫码配对（PairingHost）Admin API
 
-契约：`docs/PAIRING-IMPL.md` §2–§4；host 由 duck-protocol `src/duck/pairing.js` 提供，api-core 只在 Admin 层持有单例并注入 `createServer({ pairing })`。
+契约：`docs/PAIRING-IMPL.md` §2–§4；host 由 协议层 `src/duck/pairing.js` 提供，网关后端 只在 Admin 层持有单例并注入 `createServer({ pairing })`。
 
 ### 13.1 端点
 
@@ -392,7 +392,7 @@ data: {"type":"error","message":"...","code":"...","status":429}
 - `createServer({ syncDevices })` 显式注入；缺失时设备端点 503 `sync_transport_unavailable`（hint 提示检查 sync-client/代理）。
 - **token 复用**：login 成功的 token 仅保存在进程内（不写 identity.json），后续 `register-device/server-devices/delete` 在 token 有效时直接复用，避免每次 GET 都 `/login`；重启后首次操作才重新 login。`GET /sync/server-devices` 优先返回 `identity.sync.server.devices` 缓存（无 live session 时不再触发 login）。
 - **418 反滥用限流**：DuckDuckGo Sync 对 `/login` 返回 418 时映射为 **429 `sync_rate_limited`**（`Retry-After` + hint「DuckDuckGo Sync 限流，请稍后重试」），并进入 **2 分钟进程内 cooldown**；cooldown 内设备操作直接 429、不再请求上游。register-device 失败同样返回 429。
-- 服务使用 duck-protocol `src/duck/sync-client.js`（懒加载）；`identity.sync.server` 由 api-core 通过 identity 原子写持久化（包含 devices；duck 的 setSyncServer 只存子集）。
+- 服务使用 协议层 `src/duck/sync-client.js`（懒加载）；`identity.sync.server` 由 网关后端 通过 identity 原子写持久化（包含 devices；duck 的 setSyncServer 只存子集）。
 
 ### 14.3 joiner 后自动注册
 
@@ -426,7 +426,7 @@ data: {"type":"error","message":"...","code":"...","status":429}
 - `GET/POST /admin/api/sync/server-devices` 优先使用 `syncClient.listDevicesDetailed()`：name/type 为解密后的可读值（Android 手机/Chrome），无法解密 → `null`（不返回 JWE/info 原文）；返回项含 `matchedIdentityId`。`POST /admin/api/sync/register-device` 保留（兼容单设备/默认身份）。
 - 真实设备槽位顺序：`[id_default, 分身1]` → `DuckAI@main` + `DuckCPA@xxxx` 两台；`[id_default]` → 分身设备被注销；手机 My Devices 名称与槽位一致。
 - **真实联调结果（2026-11-01，官方码 + 10808）**：`GET device-slots` 解密出 `Android 手机`（手机，ddg）/Chrome/Edge 等；`PUT [id_default, 分身1]` **200**，两台设备注册成功（`DuckAI@main` + `DuckCPA@xxxx`，均 `matchedIdentityId` 映射正确、serverDeviceId=identity.deviceId）；`PUT [id_default]` **200** 后分身设备注销；`DELETE id_default` 与 `?force=true` 都 **409 default_identity_protected**。
-- 真实服务 `PATCH /devices` 只允许更新**当前 login 的 device_id**：duck-protocol `syncClient.registerDevices()` 内部为每个设备单独 login+PATCH（Admin 不感知，直接调用即可）；`forbidden_device` 401 目前表示“用错 token 尝试更新非当前设备”，不要当设备上限映射。
+- 真实服务 `PATCH /devices` 只允许更新**当前 login 的 device_id**：协议层 `syncClient.registerDevices()` 内部为每个设备单独 login+PATCH（Admin 不感知，直接调用即可）；`forbidden_device` 401 目前表示“用错 token 尝试更新非当前设备”，不要当设备上限映射。
 
 ---
 
@@ -487,7 +487,7 @@ data: {"type":"error","message":"...","code":"...","status":429}
 
 - 触发条件：历史消息字符数（含 system）> `compact.triggerChars`，或上游 `ERR_CONVERSATION_LIMIT`；`keepRecentMessages` 条最近消息不压缩；`maxSummaryChars` 传给 duck summarizer；`model:null` 用会话/请求模型。
 - `PUT /admin/api/config` 白名单含 `context.compact.*`，即时生效（每次请求读 config；无需重启）。`enabled=false` 时退回仅裁剪。
-- 摘要 API 使用 duck-protocol `summaryMessages`（原生 `/duckchat/v1/summarize`）；失败**回退**现有裁剪并 warn（日志 `context compaction failed; falling back to trim`）。
+- 摘要 API 使用 协议层 `summaryMessages`（原生 `/duckchat/v1/summarize`）；失败**回退**现有裁剪并 warn（日志 `context compaction failed; falling back to trim`）。
 
 ### 17.2 摘要结构与会话字段
 
@@ -1388,9 +1388,9 @@ cooldownScope = entity | account
 「会话历史」页据此渲染：工具调用徽章（位置调用 / 图片生成 / 联网搜索，可展开参数与结果）、
 生成图片（data URI 直接回放）、思考过程折叠块、来源链接。
 有生成图片但上游没有给 GenerateImage 工具帧时，网关会自动补一条「图片生成」记录。
-## 38. 网关级 function calling 与 MCP 工具（v2.39，**v2.42 已移除**）
+## 38. 网关级 function calling 与 外部工具（v2.39，**v2.42 已移除**）
 
-> v2.42 删除旧 functionCalling/MCP；v2.44 以 **client 模式工具桥** 重新支持 `tools[].function`（`tools.clientFunctionCalling.enabled`，默认 true），两种协议自动转换；仍不提供 MCP/auto 执行。保留内置工具 `tools.webSearch` / `tools.imageGeneration` / `tools.location`。
+> v2.42 删除旧 functionCalling/外部工具；v2.44 以 **client 模式工具桥** 重新支持 `tools[].function`（`tools.clientFunctionCalling.enabled`，默认 true），两种协议自动转换；仍不提供 外部工具/auto 执行。保留内置工具 `tools.webSearch` / `tools.imageGeneration` / `tools.location`。
 ## 39. 会话存储统一到 SQLite 与 session id 展示（v2.40）
 
 ### 39.1 存储
@@ -1428,7 +1428,7 @@ cooldownScope = entity | account
 - Chat：`message.tool_calls` + `finish_reason:"tool_calls"`；Responses：`function_call` output item；
 - 回传：chat `role:"tool"`；responses `function_call_output`；
 - 流式：chat `delta.tool_calls`；responses `response.function_call_arguments.delta/done`；
-- 网关不执行工具、不接 MCP；`/v1/responses` 的 `image_generation_call` 回放保留真实图片；
+- 网关不执行工具、不接入外部工具；`/v1/responses` 的 `image_generation_call` 回放保留真实图片；
 - **稳定前缀**：工具协议注入第一条 user（不是最后一条），保证历史消息逐字节不变、上游 prefix cache 可复用；
   压缩摘要/context-guard 裁剪会改变前缀。
 
@@ -1543,12 +1543,12 @@ CJK 字体默认 Windows `simhei.ttf`，可用 `DUCKAI_PDF_FONT` 覆盖。
 
 ---
 
-## 44. 会话 canonical 状态 + Codex 手动压缩 PDF（v2.51）
+## 44. 会话 canonical 状态 + 客户端手动压缩 PDF（v2.51）
 
 ### 44.1 稳定 session
 
 - 解析优先级：`X-Session-Id` → `conversation_id/session_id` → `prompt_cache_key` → `previous_response_id` → 首条 user 稳定哈希。
-- Codex 手动压缩会话通常没有 X-Session-Id，**使用 `prompt_cache_key` UUID 作为 session key**；同一会话压缩后不换 key。
+- 客户端手动压缩会话通常没有 X-Session-Id，**使用 `prompt_cache_key` UUID 作为 session key**；同一会话压缩后不换 key。
 - canonical 会话状态持久化在 SQLite `conversation_state`：
   `session_key / model / mode / system_prompt / canonical_json / upstream_json / tools_hash
    / compression_json / context_pdf_scope / compacted_at / updated_at / expires_at`。
@@ -1556,7 +1556,7 @@ CJK 字体默认 Windows `simhei.ttf`，可用 `DUCKAI_PDF_FONT` 覆盖。
   - `upstream_json`：发给 duck 的精确前缀（含 PDF file parts，供 prefix cache 复用）；
   - `compression_json`：`{trigger:'manual', summaryHash, summaryChars, summaryText, coveredMessageCount, hotMessageCount, contextPdf:{filename,pages,bytes}, contextPdfScope, reused, createdAt}`。
 
-### 44.2 Codex 手动压缩 marker（chat + responses 双链路）
+### 44.2 客户端手动压缩 marker（chat + responses 双链路）
 
 Marker 文本（role=user，位于旧历史之后、新 user 之前）：
 `Another language model started to solve this problem and produced a summary of its thinking process.`
@@ -1583,7 +1583,7 @@ Marker 文本（role=user，位于旧历史之后、新 user 之前）：
 | 路径 | context PDF 内容 | hot/text |
 | --- | --- | --- |
 | **自动溢出**（文本 > `context.pdfSpill.inputCharLimit`，默认 20000） | **完整旧上下文**（保持现状，用于绕过字符限制） | 当前 user 保留文本 + PDF file parts |
-| **Codex 手动 marker** | **仅摘要**（marker 摘要文本；覆盖旧同 session scope PDF） | marker 之后消息（含当前 user）；旧对话与摘要都不进文本 |
+| **客户端手动 marker** | **仅摘要**（marker 摘要文本；覆盖旧同 session scope PDF） | marker 之后消息（含当前 user）；旧对话与摘要都不进文本 |
 | **`POST /v1/compact`** | **仅 `summary.text`**（覆盖旧同 session scope PDF） | 返回 `summary` + `kept_messages`，客户端用摘要/最近消息继续 |
 
 - 摘要 PDF 的 scope 固定为 session（`pdfScopeKey({kind:'chat',sessionKey})`），不带 messages 哈希，保证同一 session 覆盖旧完整上下文 PDF。

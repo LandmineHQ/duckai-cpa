@@ -277,9 +277,9 @@ Bun 把 CJS `__dirname`/`require.resolve` 固化成构建机路径（典型：js
 确认用 `node scripts/build-exe.mjs` 构建（会自动打补丁），不要手工 `bun build`。
 升级 jsdom/css-tree 后若补丁匹配失败，脚本会报错并指明文件，更新补丁后重试。
 
-### 9.2 `bun build` 报 EPERM / `Cannot read file "C:\Users\<user>": EPERM`
+### 9.2 `bun build` 报 EPERM / `Cannot read file "用户目录": EPERM`
 
-老版本 Bun（1.3.x）在受限环境/沙箱下会以 home 为缓存并报 EPERM，且不支持 `--trim`/`--asset`。
+老版本 Bun（1.3.x）在受限环境/当前环境下会以 home 为缓存并报 EPERM，且不支持 `--trim`/`--asset`。
 升级到 Bun >= 1.4.4，或用 `BUN_BIN` 指向新版。
 
 ### 9.3 构建成功但 `/admin/` 404 / 页面白屏

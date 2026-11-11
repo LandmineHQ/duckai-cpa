@@ -705,7 +705,7 @@ export function buildConversationStateWrite({
    `conversation_limit_reached`、`queue_full/timeout`、`model_requires_subscription` 等全部不变。
 8. 响应头：`X-Session-Id`、`X-Session-Epoch`、`X-Duckai-*`、`X-Request-Id`、`X-Duckai-Queue-Wait` 不变。
 9. 日志字段（43 个 `ctx.log.*` 中与 session/PDF 相关的 14 个）名称与取值不变。
-10. DSH 标题请求（ephemeral）：仍跳过 diff/save，且不污染 canonical/history。
+10. 客户端标题请求（ephemeral）：仍跳过 diff/save，且不污染 canonical/history。
 
 ### A.8 验证清单
 

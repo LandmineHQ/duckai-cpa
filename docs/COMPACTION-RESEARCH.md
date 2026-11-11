@@ -81,7 +81,7 @@ function target({activePairs, baseCovered, activationTargetPairCount, allowPairF
   实际上服务端/UI 只在**正数**时传 activation target。
 - 网关实现约定：**`0` / `null` / `undefined` 都视为「未配置」→ 使用 fallback pair 规则**；只有正整数才按
   `target > covered && target <= pairCount` 触发；负数/非整数等非法值返回 false。
-- `getActivationTargetPairCount()` 同样只在 `>0` 时返回数字，`0` 返回 null（供 api-core 直接透传，无需手动把 0 改成 null）。
+- `getActivationTargetPairCount()` 同样只在 `>0` 时返回数字，`0` 返回 null（供 网关后端 直接透传，无需手动把 0 改成 null）。
 
 ---
 
@@ -182,7 +182,7 @@ fixedCostWindowUsage, ads, warnConversationLimit, stopReason, markers}`），供
 | 触发规则 | activationTargetPairCount 优先；fallback 4 pairs；skills/不可压缩消息检查 | ✅ pair 规则/allowPairFallback；⚠️ `$.ok` 完整可压缩性判定未逐条复刻（仅基础序列化） |
 | 摘要端点 | `/summarize`（newMessages `{role,text}`） | ✅ `summarizeNative`（真实 200 已验证）；❌ `/summarize/compact` |
 | 增量摘要 | `previousSummary` = 完整 summary 对象（含 version/digest） | ✅ 支持 text/version；⚠️ 不维护 `coveredPrefixDigest/signature` |
-| 摘要存储/checkpoint | `initialContext` + `slice(2*covered)`；anchorId/baseCompactionId；Chat Summary 编辑 | ⚠️ 由 api-core session summary 简化实现；无 checkpoint/编辑/撤销 |
+| 摘要存储/checkpoint | `initialContext` + `slice(2*covered)`；anchorId/baseCompactionId；Chat Summary 编辑 | ⚠️ 由 网关后端 session summary 简化实现；无 checkpoint/编辑/撤销 |
 | DONE 标记 | 全部解析 | ✅ SSE 层解析；✅ `parseCompactMarkers` 独立解析 |
 | 429/418 行为 | 429 usage-limit；418 视为异常/风控 | ✅ 原生失败 418/429 不回退；400/404 回退 chat |
 | 主动 compact | `/summarize/compact`（条件/payload 未证实） | ❌ 未实现（待证据） |

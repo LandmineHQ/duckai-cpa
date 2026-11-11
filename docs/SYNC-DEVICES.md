@@ -1,10 +1,10 @@
 # Sync 设备注册实现说明（v2.8，`src/duck/sync-client.js`）
 
 > 目标：让手机 DuckDuckGo「Sync & Backup → My Devices」里出现本机（`DuckCPA@xxxx`）。
-> 协议由 Lead 用真实账号验证（代理 10808）；本文记录实现、真实响应形状、接口契约、自测与风险。
+> 协议由 验收执行者 用真实账号验证（代理 10808）；本文记录实现、真实响应形状、接口契约、自测与风险。
 >
 > 与 pairing 的关系：`PairingHost` 的 joiner 完成会拿到**官方恢复码**；本模块用它登录 Sync 账号并注册设备。
-> `src/duck/pairing.js` 由 Lead 在真实手机联调中继续修改（不回声 hello、改发 exchange init），与本模块无硬依赖。
+> `src/duck/pairing.js` 由 验收执行者 在真实手机联调中继续修改（不回声 hello、改发 exchange init），与本模块无硬依赖。
 
 ---
 
@@ -76,7 +76,7 @@ const client = await createSyncClient({
   fetchImpl,                    // 或注入 fetch（mock 测试）
   logger,
   baseUrl: 'https://sync.duckduckgo.com/sync',
-  officialRecoveryCode,         // 由 api-core 从 data/pairing.json 传入；不自动读文件
+  officialRecoveryCode,         // 由 网关后端 从 data/pairing.json 传入；不自动读文件
   deviceId,                     // 稳定 identity.deviceId（uuid）
   deviceName,                   // 缺省 defaultDeviceName() = DuckCPA@<4hex>
   deviceType: 'browser',
@@ -104,7 +104,7 @@ const client = await createSyncClient({
 ### 2.3 设备名（v2.9）
 - 普通身份默认 `DuckCPA@<4 位小写 hex>`：`defaultDeviceName()`（`crypto.randomBytes(2).toString('hex')`），如 `DuckCPA@xxxx`。
 - **默认身份 `id_default` 默认 `DuckAI@main`**：新增导出 `DEFAULT_MAIN_DEVICE_NAME = 'DuckAI@main'`。
-- 自定义：`createSyncClient({deviceName})` / `login({deviceName})` / `registerDevice({name})` / `registerDevices([{deviceName}])`；持久化由 api-core 调 `identity.setDeviceName()`（1–100 字符）或 `pool.update(id,{deviceName})`。
+- 自定义：`createSyncClient({deviceName})` / `login({deviceName})` / `registerDevice({name})` / `registerDevices([{deviceName}])`；持久化由 网关后端 调 `identity.setDeviceName()`（1–100 字符）或 `pool.update(id,{deviceName})`。
 - identity-pool：`generate/create` 自动给每个身份写 `identity.deviceName`（默认身份 `DuckAI@main`，其他 `DuckCPA@<4hex>`），启动时迁移旧默认名；详见 §7。
 - `deviceId` 固定用 `identity.deviceId`（稳定 uuid）；`type` 默认 `browser`。
 
@@ -130,7 +130,7 @@ const host = await createPairingHost({ ..., onCompleted: autoRegister });
 
 ---
 
-## 3. `IdentityStore` 新增持久化（api-core 使用）
+## 3. `IdentityStore` 新增持久化（网关后端 使用）
 
 - `async setDeviceName(name)`：1–100 字符，trim 后写 `identity.deviceName` 并原子落盘（`_mutate`）。
 - `getDeviceName()`：读取当前设备名（IdentityStore 与 MemoryIdentityStore 都实现）。
@@ -191,7 +191,7 @@ const host = await createPairingHost({ ..., onCompleted: autoRegister });
 
 ## 5. 风险与限制
 
-1. **token 仅存内存**：不写 identity.json（避免泄漏）；进程重启需重新 login（api-core 可在需要时懒登录）。
+1. **token 仅存内存**：不写 identity.json（避免泄漏）；进程重启需重新 login（网关后端 可在需要时懒登录）。
 2. **官方恢复码是账号级敏感凭证**：`officialRecoveryCode` 在 `data/pairing.json`（0600），导出/日志必须脱敏；
    `scopedPassword`/`hashedPassword` 不得落盘。
 3. **account_info 私钥格式**：必须使用 PKCS#8 DER 的 Buffer 加密（bundle `L0`），不要用 JWK JSON 或 latin1 字符串，

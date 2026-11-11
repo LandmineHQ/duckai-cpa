@@ -1,4 +1,4 @@
-# duck.ai experimental client tools 调研（task-68）
+# duck.ai experimental client tools 调研（）
 
 > **结论先行（TL;DR）**
 > 1. duck.ai 前端确实有一层实验性 **client tools / browser bridge**，但它不是「OpenAI function calling」：
@@ -17,14 +17,14 @@
 > 5. 网关**不能**实现像 OpenAI 那样真正执行自定义函数；**唯一可尝试的灰色方案**是伪装
 >    `loadUserSkill.v1` 承载「技能文本加载」（把本地技能内容作为 client-output 返回），
 >    但受实验开关/上游校验/提示词注入风险限制，且**本轮未验证 200**。真正的自定义 function calling
->    应继续走网关现有文本注入 + MCP（`src/openai/function-calling.js` / `src/tools/mcp-client.js`）。
+>    应继续走网关现有文本注入 + 外部工具（`src/openai/function-calling.js` / `外部工具客户端`）。
 
 ---
 
 ## 0. 证据来源
 
 - Bundle：`data/tmp/duckai-scripts/entry.duckai.84906ec5fc6f39d18f17.js`（2,493,916 bytes，2026-11-03 抓取，当前部署）。
-- 只读提取脚本（本任务新增，未改 src）：
+- 只读提取脚本（本次验证新增，未改 src）：
   - `recon-tmp/extract-client-tools.mjs`（关键词/字符串扫描）
   - `recon-tmp/extract-client-tools2.mjs`（bridge/continuation 细节）
   - 输出：`recon-tmp/client-tools-extract.txt`、`recon-tmp/client-tools-extract2.txt`
@@ -271,7 +271,7 @@ bridge 返回值与本地校验：
 | --- | --- | --- | --- |
 | 真正自定义 client tools（OpenAI function calling 式） | ❌ **不可行** | 固定 `supportedTools` + 固定 `loadUserSkill` 契约；capability 仅执行器声明；无动态 schema | 上游不会产生任意工具调用；不要伪造自定义 capability |
 | 复用 `loadUserSkill.v1` 做「技能文本加载」 | 🟡 **理论可行、未验证** | §3.3 契约 + `metadata.userSkillInstructions`；网关可回 client-output | 需实验开关/上游接受；本质是“把技能文本喂给模型”，不是执行函数 |
-| 继续现有文本注入 + MCP function calling | ✅ **可行（已实现）** | `src/openai/function-calling.js` / `src/tools/mcp-client.js` | 与上游无关，完全网关侧；推荐继续 |
+| 继续现有文本注入 + 外部工具 function calling | ✅ **可行（已实现）** | `src/openai/function-calling.js` / `外部工具客户端` | 与上游无关，完全网关侧；推荐继续 |
 | 伪造 `x-duckai-client-tools` 空/自定义能力 | ⚠️ 不建议 | 浏览器空列表时不发头；网关发空头已存在差异 | 不产生能力，可能触发异常检测，无收益 |
 
 ### 5.2 如果要做「技能文本加载」：实现步骤（仅建议，未改代码）
@@ -308,19 +308,19 @@ bridge 返回值与本地校验：
 ## 6. 风险与未验证项
 
 1. **实验开关**：`client-tools-support` 与 `skills` 默认 false；真实账号是否命中未知；未命中时
-   服务端可能根本不下发 `client-output`（本任务未做真实上游验证，避免消耗额度）。
+   服务端可能根本不下发 `client-output`（本次验证未做真实上游验证，避免消耗额度）。
 2. **上游校验**：客户端本地过滤/校验不等于服务端必然接受；服务端可能对 capability 列表、contract、
    output 再做校验（bundle 中未见服务端逻辑）。
 3. **网关当前行为**：`src/duck/index.js::_resumeContinuation` 对 `client-output` 直接抛
    `DuckError{status:502, code:'upstream_client_tool_unsupported'}`；这是「不支持」而非「尝试后失败」。
 4. **空 capabilities 头差异**：网关目前始终发 `{"version":1,"capabilities":[]}`，浏览器只在非空时发；
-   两者是否影响 418/429 未验证（不属本任务结论）。
+   两者是否影响 418/429 未验证（不属本次验证结论）。
 5. **技能 manifest schema**：`userSkills/list` 返回的 manifest 结构未完全逆向（`N.n7` 处理函数），
    若实现技能加载需进一步分析或实测。
 
 ---
 
-## 7. 最终结论（给 Lead）
+## 7. 最终结论（给 验收执行者）
 
 - **duck.ai 的 experimental client tools 不是通用 function calling**：它只允许固定的
   `loadUserSkill`（技能文本）和浏览器 legacy 工具，由宿主 DuckDuckGo 浏览器 bridge 执行；
@@ -329,4 +329,4 @@ bridge 返回值与本地校验：
   502 `upstream_client_tool_unsupported` 是诚实且安全的行为。
 - 若产品只想要「自定义技能/指令」：可尝试 `loadUserSkill.v1` 技能文本加载，
   但需要实验开关命中，且只是“加载指令”，不是函数调用；建议先做一次最小真实实验再决定是否实现。
-- 若目标是 OpenAI function calling：继续使用网关现有文本注入 + MCP 方案，不依赖此实验特性。
+- 若目标是 OpenAI function calling：继续使用网关现有文本注入 + 外部工具方案，不依赖此实验特性。

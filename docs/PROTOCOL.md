@@ -1,6 +1,6 @@
 # Duck.ai 上游协议实测文档
 
-> 维护者：`duck-protocol`（`src/duck/**` 的唯一所有者）。
+> 维护者：`协议层`（`src/duck/**` 的唯一所有者）。
 > 本文件是 `src/duck/*` 的事实依据；任何上游反爬参数变化，先在这里记录「现象 + 修复」，再改代码。
 > 实测环境：Node.js 24 + `jsdom@29`，匿名 `public` 档位（无登录、无 cookie），出口为普通数据中心 IP。
 > 最近一次全量实测：**2026-11-01**（下文所有 HTTP 状态、字段、样例来自真实上游，非猜测）。
@@ -150,7 +150,7 @@ btoa(JSON.stringify({
    `https://duck.ai/dist/duckai-dist/entry.duckai.<hash>.js`（hash 从 homepage HTML 解析），
    不能出现 Node 的 `file:///` 或 `node:internal` 帧，否则触发 429 `ERR_BN_LIMIT`
    （"unsupported entrypoint"）。见 `docs/PROTOCOL-ERRORS.md` §3.1.1。
-   **2026-11-06 复核**：当前部署下该字段**不再严格校验**（真实 Chrome 页面用 chrome-devtools 的
+   **2026-11-06 复核**：当前部署下该字段**不再严格校验**（真实 Chrome 页面用 真实浏览器 的
    `file:///…` 垃圾帧仍 200；本轮 418 与 stack 无关，根因是 `client_hashes` 环境指纹）。
    历史结论保留以防其它 tier/部署生效；实现继续发送入口帧形态。
 4. `meta.duration` = 从 `atob()` 开始到后处理完成的毫秒数字符串。
@@ -232,13 +232,13 @@ duck.ai 的匿名识别不靠 cookie，而是 4 套标识叠加；网关必须�
 | --- | --- | --- | --- |
 | journey id | `x-ddg-journey-id: <32 hex>`（`crypto.getRandomValues` 生成，内存态） | 每次加载变化 | 持久化，每次请求复用 |
 | durable stream 身份 | body `durableStream:{messageId(uuid/请求), conversationId(稳定), publicKey(RSA-OAEP-256 JWK)}` | 本地 RSA 密钥对，只发公钥 | 持久化 RSA-2048 密钥对 + conversationId；**默认关闭**，拒绝后自动降级 |
-| Sync 密钥 | `mainKey`(32B) + `encryptedPrivateKey`(compact JWE `alg=dir/enc=A256GCM/kid=streams`) + `scopedPasswordSeed` | localStorage/IndexedDB + 配对码 | 本地生成/导入导出/配对码/恢复码；真实 sync 传输在本沙箱不可达（503） |
+| Sync 密钥 | `mainKey`(32B) + `encryptedPrivateKey`(compact JWE `alg=dir/enc=A256GCM/kid=streams`) + `scopedPasswordSeed` | localStorage/IndexedDB + 配对码 | 本地生成/导入导出/配对码/恢复码；真实 sync 传输在本当前环境不可达（503） |
 | 订阅 | `Authorization: Bearer <JWT>`；payload `api/email/exp/entitlements`，`product:"Duck.ai"` + `plus/pro` 定档 | 登录态 | token 持久化/在线验证；匿名无 token |
 
 - `durableStream.publicKey` 是 **JWK**（带 `alg:"RSA-OAEP-256"`、`ext:true`、`key_ops:["encrypt"]`、`use:"enc"`），
   不是 base64url SPKI；`conversationId` 必须稳定。
 - 实测：不携带 durableStream 的 chat 200；携带（本实现形状）的 chat **也 200**（2026-11-02），
-  Lead 侧另一种形状曾 400 → 因此实现默认关闭 + 400 自动降级一次（见 `docs/IDENTITY-RESEARCH.md` §3.4）。
+  验收执行者 侧另一种形状曾 400 → 因此实现默认关闭 + 400 自动降级一次（见 `docs/IDENTITY-RESEARCH.md` §3.4）。
 - 订阅 token 是 base64url 三段 JWT（62 字符旧 v1 token 被上游拒绝，`ERR_AUTH_V1_TOKEN`）。
 
 ---
@@ -709,7 +709,7 @@ console.log(challenge.stats());
 
 `duckai-cpa/data/tmp/` 下的 `probe-challenge.mjs`、`raw-client.mjs`、`test-client-text.mjs`、
 `test-client-search.mjs`、`test-client-image.mjs` 是协议探针；它们不提交。
-Lead 的浏览器抓包参考脚本在 `duckai-cpa/recon-tmp/`（`solver-ref.mjs`、`rolling.mjs`）。
+验收执行者 的浏览器抓包参考脚本在 `duckai-cpa/recon-tmp/`（`solver-ref.mjs`、`rolling.mjs`）。
 
 ---
 
@@ -764,7 +764,7 @@ Lead 的浏览器抓包参考脚本在 `duckai-cpa/recon-tmp/`（`solver-ref.mjs
 
 ## 9. A/B 实验记录（受匿名额度限制，部分待补测）
 
-Lead 要求验证「418 是否与 UA 一致性 / init 预热 / 请求间隔相关」。真实上游请求受共用出口 IP 的匿名额度限制，
+验收执行者 要求验证「418 是否与 UA 一致性 / init 预热 / 请求间隔相关」。真实上游请求受共用出口 IP 的匿名额度限制，
 无法在本次窗口内跑完全部对照组，下面区分【已观测】与【待验证】。
 
 | 变量 | 对照组 | 结论 | 状态 |
@@ -775,7 +775,7 @@ Lead 要求验证「418 是否与 UA 一致性 / init 预热 / 请求间隔相�
 | 同上 | 不预热（首个 chat 自行取挑战） | 未跑完 | 待验证 |
 | 请求间隔 | 1–2s（DuckClient 默认） | 额度健康时可连续 200；额度紧张时 418/429 | 已观测 |
 | 同上 | 12s | 未消除 418（额度紧张期连续 3 次 418） | 已观测 |
-| 同上 | 14s（Lead 的 E2E） | Lead 侧 6/6 全过（额度健康期） | 已观测（Lead） |
+| 同上 | 14s（验收执行者 的 E2E） | 验收执行者 侧 6/6 全过（额度健康期） | 已观测（验收执行者） |
 
 **当前判断**：418 的主要驱动因素是**匿名额度/软风控状态**，而不是 UA、warmup 或间隔的算法性问题；
 在额度健康时，同一套实现（UA 一致 + 预热 + 1s+ 间隔 + 滚动挑战）可以稳定 200。
@@ -803,7 +803,7 @@ INTERVAL=12000 WARMUP=0 UAMODE=consistent CHATS=3 node data/tmp/test-pacing.mjs
 1. **418 两种形态**：`ERR_CHALLENGE`（`dd89`/`f741`/`3501`）与 `ERR_BN_LIMIT`（`8e04`，"unsupported entrypoint"）。
    实测与额度/软风控状态强相关：额度健康时同样的实现连续 200；额度紧张时挑战正确也 418，再恶化 `/status` 直接 429。
    处理方式：丢失挑战 → 重新 `/status` → 指数退避重试，最多 3 次；仍失败抛 `DuckError`（`retriable=true`）。
-   **v2 映射**：`ERR_CHALLENGE` → 403 `upstream_anomaly_check`（`cd` 是 anomaly tile 挑战，网关不可解；与 api-core 错误映射对齐），
+   **v2 映射**：`ERR_CHALLENGE` → 403 `upstream_anomaly_check`（`cd` 是 anomaly tile 挑战，网关不可解；与 网关后端 错误映射对齐），
    `ERR_BN_LIMIT` → 429 `upstream_rate_limited`；传输层 418 仍先重试自愈。
 2. **匿名额度**：额度窗口与阈值未精确测得（共用出口 IP 时互相消耗，多 agent 并行测试会很快烧穿）；网关必须串行 + 退避，
    禁止并发刷；对外文档需明确「匿名额度有限，额度窗口恢复后可继续」。

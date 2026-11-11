@@ -1,6 +1,6 @@
 # Duck.ai 匿名身份 / durable stream / Sync & Backup / 订阅 —— 源码分析 + 实测
 
-> 产出：`duck-protocol`（task-12，v2.2）。契约见 `docs/IDENTITY-SYNC.md`；上游协议见 `docs/PROTOCOL.md`；
+> 产出：`协议层`（，v2.2）。契约见 `docs/IDENTITY-SYNC.md`；上游协议见 `docs/PROTOCOL.md`；
 > 错误映射见 `docs/PROTOCOL-ERRORS.md`。
 >
 > 目标：解释 duck.ai 如何在**无登录**状态下「认识同一个客户端」，并说明本项目如何把这些标识
@@ -19,7 +19,7 @@ duck.ai 的匿名追踪由 **4 套互不依赖的机制**叠加，而不是 cook
 | --- | --- | --- | --- | --- |
 | 1 | **journey id** | 请求头 `x-ddg-journey-id: <32 hex>` | ❌ 每次页面加载随机（`crypto.getRandomValues`） | ✅ 持久化到 `identity.json`，每次请求复用 |
 | 2 | **durable stream 身份** | body `durableStream:{messageId,conversationId,publicKey}`；`publicKey` 为 RSA-OAEP-256 **JWK**（只发公钥，私钥本地） | ✅ 客户端本地密钥 | ✅ 持久化 RSA-2048 密钥对 + 稳定 conversationId；默认关闭（见 §3.4） |
-| 3 | **DuckDuckGo Sync & Backup** | `mainKey`(32B) + `encryptedPrivateKey`(JWE `alg=dir/enc=A256GCM/kid=streams`) + `scopedPasswordSeed`；配对码 v2 / 恢复码 | ✅ localStorage/IndexedDB + 配对码 | ✅ 本地能力完整（生成/导入导出/配对码/恢复码）；真实同步 transport 在本沙箱不可达 |
+| 3 | **DuckDuckGo Sync & Backup** | `mainKey`(32B) + `encryptedPrivateKey`(JWE `alg=dir/enc=A256GCM/kid=streams`) + `scopedPasswordSeed`；配对码 v2 / 恢复码 | ✅ localStorage/IndexedDB + 配对码 | ✅ 本地能力完整（生成/导入导出/配对码/恢复码）；真实同步 transport 在本当前环境不可达 |
 | 4 | **订阅身份** | `Authorization: Bearer <jwt>`（`/duckchat/v1/auth/token`） | ✅ 登录态 | ✅ token 解析/落盘/在线验证；匿名无 token |
 
 **漂移根因**：旧实现每次进程启动都用 `crypto.randomBytes(16)` 生成 journey id（且不保存），
@@ -129,7 +129,7 @@ const pairingErrors = new Set(["bad_base64","bad_encoding","bad_json","bad_paylo
 
 - 恢复码（DuckDuckGo 官方）：`base64url(JSON({"recovery":{"user_id":...}}))`，本身**不含密钥材料**
   （恢复需要访问 sync 服务拿加密数据）。
-- 本沙箱 `duckduckgo.com` 不可达，因此 `duckai-cpa` 的恢复码扩展为
+- 本当前环境 `duckduckgo.com` 不可达，因此 `duckai-cpa` 的恢复码扩展为
   `{"recovery":{"user_id","main_key","scoped_password_seed","encrypted_private_key",...}}`
   （base64url JSON），可在**另一台 CPA 实例离线还原 mainKey/私钥**；官方短码仍可被识别，
   但 `importRecoveryCode` 会明确提示缺少密钥材料。
@@ -215,10 +215,10 @@ const client = new DuckClient({ ...config.duck, identityStore });   // 或 new D
 await client.init();
 ```
 
-> 与 api-core 的对齐（v2.2 最终裁决）：HTTP 层用 `createServer({ config, store, duck, logger, identity })`
+> 与 网关后端 的对齐（v2.2 最终裁决）：HTTP 层用 `createServer({ config, store, duck, logger, identity })`
 > **显式注入** identityStore（不再用 `store.identity` 隐式挂载）；`src/index.js` 同时把 identityStore 传给
 > DuckClient，并把 `config.identity.durableStream` 传入构造参数。IdentityError 的 `code/status/hint/detail`
-> 由 api-core 映射为 HTTP 状态；identity store 缺失时 api-core 返回 `503 identity_unavailable` 优雅降级。
+> 由 网关后端 映射为 HTTP 状态；identity store 缺失时 网关后端 返回 `503 identity_unavailable` 优雅降级。
 
 | 行为 | 实现 |
 | --- | --- |
@@ -233,16 +233,16 @@ await client.init();
 
 ### 3.4 durableStream 的匿名档行为（重要，含实测冲突说明）
 
-- Lead 2026-11-02 实测：匿名 public 档发送 `durableStream:{messageId,conversationId,publicKey(RSA-OAEP-256 JWK)}`
+- 验收执行者 2026-11-02 实测：匿名 public 档发送 `durableStream:{messageId,conversationId,publicKey(RSA-OAEP-256 JWK)}`
   → **400 ERR_BAD_REQUEST**（两次），因此约定 `enabled` 默认 **false**。
 - 本机 2026-11-02 实测（本实现形状：`publicKey` = 带 `alg/ext/key_ops/use` 的 JWK、`conversationId` = 持久化值、
   `messageId` = 每请求 uuid）：**携带 durableStream 的 chat 第一次即 200**（内容「鸭子」），且 journey id/指纹与
   此前不携带时完全一致（见 §4.3）。
-- 推测差异：Lead 的请求可能使用了不同的 `publicKey` 形态（例如 base64url SPKI 而非 JWK）、或 `conversationId`
+- 推测差异：验收执行者 的请求可能使用了不同的 `publicKey` 形态（例如 base64url SPKI 而非 JWK）、或 `conversationId`
   未持久化/为空、或当时处于额度软限流窗口。**结论**：
   1) `durableStream` 属于增强项，匿名档并非必然拒绝，但存在环境/形状差异；
   2) 保持默认 **false** + 400 自动降级作为安全策略（配置可显式开启）；
-  3) 待 Lead 复核后可考虑把默认值改为 true（本实现已支持）。
+  3) 待 验收执行者 复核后可考虑把默认值改为 true（本实现已支持）。
 - 身份稳定性不依赖 durableStream 是否被接受：journey id + RSA 指纹已经持久化，durableStream 只是
   上游侧「会话关联」的增强。
 
@@ -288,8 +288,8 @@ durableStream state: { configured:true, enabled:true, degraded:false, rejectedCo
 
 ### 4.4 订阅 / sync
 
-- 匿名 `GET /duckchat/v1/auth/token` → `200 {}`；伪造 Bearer 同样 `{}`；`/auth/authorize`、`/auth/callback` 无参 → 400（Lead 实测，与源码一致）。
-- `duckduckgo.com` 在本沙箱不可达（`fetch failed`，Lead 实测）→ `detectSyncTransport()` 返回
+- 匿名 `GET /duckchat/v1/auth/token` → `200 {}`；伪造 Bearer 同样 `{}`；`/auth/authorize`、`/auth/callback` 无参 → 400（验收执行者 实测，与源码一致）。
+- `duckduckgo.com` 在本当前环境不可达（`fetch failed`，验收执行者 实测）→ `detectSyncTransport()` 返回
   `{status:"blocked", reason:"network: fetch failed"}`，`pair()` 抛 `503 sync_transport_unavailable`，
   本地状态不变；`/admin/api/sync` 应展示 `transport:"blocked"` + 原因。
 
@@ -313,7 +313,7 @@ durableStream state: { configured:true, enabled:true, degraded:false, rejectedCo
 
 ## 6. 未决 / 风险
 
-1. **durableStream 匿名档行为存在实测冲突**（§3.4）：本实现 200、Lead 侧 400。已实现默认关闭 + 自动降级；
+1. **durableStream 匿名档行为存在实测冲突**（§3.4）：本实现 200、验收执行者 侧 400。已实现默认关闭 + 自动降级；
    建议用同一 identity 文件与配置再复测两次后决定默认值。
 2. **订阅 token 只能粘贴真实 token**：匿名无法获取；`verify` 依赖 `GET /duckchat/v1/status` + `/capabilities`
    带 `Authorization`（本机未用真实 token 验证过 HTTP 200，逻辑已 mock 验证）。

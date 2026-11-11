@@ -1,9 +1,9 @@
 # duckai-cpa v2 / v2.1 / v2.2 / v2.3 / v2.4 / v2.5 / v2.8 / v2.9 / v2.10 / v2.11 / v2.12 验收报告（QA）
 
-> 维护者：qa-verifier（task-8 / task-11 / task-15 / task-19 / task-23 / task-27）。契约唯一来源：**`docs/ADMIN_API_V2.md`**（v2 + v2.1 增量）、
+> 维护者：验证（ /  /  /  /  / ）。契约唯一来源：**`docs/ADMIN_API_V2.md`**（v2 + v2.1 增量）、
 > **`docs/IDENTITY-SYNC.md`**（v2.2 身份/Sync/订阅）、**`docs/PROXY.md`**（v2.3 代理）、**`docs/IDENTITY-POOL.md`**（v2.4 身份池/
 > 二维码/上下文）、**`docs/PAIRING-IMPL.md`**（v2.5 扫码配对握手实现）、`docs/IDENTITY-POOL-IMPL.md`（v2.5 会话并发实现）与
-> **`docs/SYNC-DEVICES.md`**（v2.8 Sync 设备注册/设备名，duck-protocol）。
+> **`docs/SYNC-DEVICES.md`**（v2.8 Sync 设备注册/设备名，协议层）。
 > 结论来自：`tests/`（node:test + mock DuckClient/代理/Sync 服务 + mock Sync 设备 API + jsdom 构建产物，**343 项**）、`scripts/smoke.js`（黑盒冒烟，强制 API Key）、
 > `scripts/build-check.mjs`（React 构建产物完整性 + 版本文案）、`scripts/page-check.mjs`（React 页面 + Admin API 契约）、
 > `scripts/proxy-live-check.mjs`（v2.3 本机代理真实联调）、`scripts/live-check.mjs` / `scripts/sdk-check.mjs`（真实上游，需额度窗口）。
@@ -45,7 +45,7 @@
 | IDENTITY-SYNC §5 验收标准（v2.2 共 9 条） | ✅ 8 条通过；1 条（真实订阅 token）BLOCKED | §7.3 |
 | PROXY §5 验收标准（v2.3 共 6 条） | ✅ 6 条通过（含真实 10808 联调） | §7.4 |
 | IDENTITY-POOL §8 验收标准（v2.4 共 8 条） | ✅ 8 条通过 | §7.5 |
-| v2.5 并发/配对验收（Lead 任务口径 4 组） | ✅ 4 组通过（后端并发、前端 jsdom 并发、配对模块/Admin、脚本与真实联调） | §7.6 |
+| v2.5 并发/配对验收（验收口径 4 组） | ✅ 4 组通过（后端并发、前端 jsdom 并发、配对模块/Admin、脚本与真实联调） | §7.6 |
 
 **QA 结论：v2–v2.12 mock/集成层可交付（343/343 全绿，脚本 9/9 · 16/16 · 22/22，真实代理 11/11，真实配对 start 200，真实设备注册 200，真实 device-slots 双设备注册/注销 200，真实删除保护 409/force 200，真实恢复码明文/下载一致，v2.12 真实 compact 上游 418 BLOCKED）；真实上游配额与官方 App 完整账号数据同步仍为已知边界。**
 
@@ -54,8 +54,8 @@
 ## 2. 环境与运行方式
 
 - Node.js 24.12.0（ESM）；运行时依赖 jsdom + undici（ProxyAgent/Agent）+ socks；前端为 Vite + React + Tailwind（devDependencies）。
-- 平台：Windows + DSH 沙箱（workspace-write；网络仅 `duck.ai` / `127.0.0.1`）。
-- **沙箱注意**：默认 `node --test` 会 spawn 子进程（stdio 管道）报 `spawn EPERM`，`package.json` 已使用
+- 平台：Windows + 客户端 当前环境（受限环境；网络仅 `duck.ai` / `127.0.0.1`）。
+- **当前环境注意**：默认 `node --test` 会 spawn 子进程（stdio 管道）报 `spawn EPERM`，`package.json` 已使用
   `node --test --test-isolation=none "tests/*.test.js"`；PowerShell 中避免 `node ... | ...`（管道被拒）。
 - 命令（在 `duckai-cpa/` 下）：
 
@@ -183,7 +183,7 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
      `import` 到新 dataDir 后身份一致；`reveal` 无 `confirm:true` 拒绝且限制字段；
    - `rotate` journey/device/all 生效并更新 `rotatedAt`；非法 scope → 400 `invalid_identity`；
    - `durableStream` 额外含运行态 `configured/enabled/degraded/rejectedCount`（来自 DuckClient.health；
-     **默认配置 `identity.durableStream.enabled=true`**（Lead 裁决），纯 identity 注入场景字段可缺省）。
+     **默认配置 `identity.durableStream.enabled=true`**（验收执行者 裁决），纯 identity 注入场景字段可缺省）。
 9. **v2.2 JWE（A256GCM/dir）**：`generateKey32()` 32B；`encryptJwe` → compact 5 段、
    `encrypted_key` 为空、protected=`{"alg":"dir","enc":"A256GCM","kid":"streams"}`；
    `decryptJwe` round-trip（含真实 RSA 私钥 JWK 大对象），错误 key 解密失败。
@@ -194,7 +194,7 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
     - `createRecoveryCode → decodeRecoveryCode` round-trip（mainKey/scopedPasswordSeed/encryptedPrivateKey 还原）；
     - `POST /sync/enable` 返回一次性 recoveryCode，状态持久（recoveryCode.present/preview、本机 device 标记）；
       `disable` 清空 sync 但 durableStream 指纹不变；未启用时 `GET /sync/recovery-code` → 200 `{recoveryCode:null}`；
-    - `transport: blocked`（沙箱探测 duckduckgo.com 失败）时 `POST /sync/pair` → **503 `sync_transport_unavailable` + hint**，
+    - `transport: blocked`（当前环境探测 duckduckgo.com 失败）时 `POST /sync/pair` → **503 `sync_transport_unavailable` + hint**，
       本地状态与 device 数不变；非法配对码在探测前 → 400 `invalid_pairing_code`；
     - 恢复码导入**另一个 identity 目录**后 `mainKey` 与源一致（AC5）；非法恢复码 400 `invalid_recovery_code`。
 11. **v2.2 DuckDuckGo 订阅**：伪造三段 JWT（payload 可解析）→ activate 解析 `email/tier=plus/expiresAt`，
@@ -418,7 +418,7 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
 ✔ page-check 通过: 21 passed, 0 failed
 ```
 
-> 浏览器交互（九个页面点击流、SSE 渲染、身份页二维码/代理页/身份池页操作、连接测试并发切换、主题切换）由 web-dashboard-2 自测 + Lead/人工验收；
+> 浏览器交互（九个页面点击流、SSE 渲染、身份页二维码/代理页/身份池页操作、连接测试并发切换、主题切换）由 管理后台 自测 + 验收执行者/人工验收；
 > page-check 提供可复现的静态资源 + API 契约自动化检查。
 
 ### 5.6 `proxy-live-check.mjs --with-proxy`（真实本机代理 127.0.0.1:10808，exit 0，11/11）
@@ -484,7 +484,7 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
 
 ### 5.9 v2.5 joiner 修复验收（真实手机配对失败 → 本地端到端复现与修复验证）
 
-- 现象（Lead 真实手机日志）：hello 成功 → 手机发 `recovery_code_available` → 网关错误回
+- 现象（验收执行者 真实手机日志）：hello 成功 → 手机发 `recovery_code_available` → 网关错误回
   `recovery_code_unavailable` → 手机提示「绑定失败」。
 - 修复后本地端到端（`tests/pairing-joiner-api.test.js`，真实 PairingHost + mock Sync + PairingStore +
   PairingService + createServer，**1/1 PASS**）：
@@ -500,7 +500,7 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
   暴露恢复码；request+本地官方码→response(base64 JSON 正确)+completed(host)；same_account；awaiting_confirmation→
   confirmed→completed / denied→failed(denied)。
 - 冲突策略（`tests/pairing-joiner-api.test.js` 3 项）：已有不同官方码且 `sync.pairing.overwriteAccount=false`（默认）→ 保留已有码；相同码 → no-op；`sync.pairing.overwriteAccount=true` → 覆盖为新码。`completedAs:"host"` 不保存（host 使用的就是本地码）。`GET /sync/pairing` 已剥离 `recoveryCode` 原文，仅保留 `recoveryCodeReceived/recoveryUserId/accountConflict`。
-- 说明：真实手机端复测需 Lead 持设备执行（本次仅本地协议端到端复现修复路径）。
+- 说明：真实手机端复测需 验收执行者 持设备执行（本次仅本地协议端到端复现修复路径）。
 ### 5.10 v2.8 真实联调（真实官方恢复码 → 注册设备，经 10808 代理）
 
 ```
@@ -582,8 +582,8 @@ key（打印一次并写入 `data/keys.json`），也可在后台 API Key 页创
 
 ### 6.1 现状
 
-- 当前 duck.ai 匿名额度处于 **429 冷却期**（多 agent 共用出口 IP；api-core 真实 smoke 的 chat stream 返回 429 JSON，
-  属预期限流）。真实上游 v2 端到端与 OpenAI SDK 真实兼容**均未执行**，由 Lead 统一安排额度窗口。
+- 当前 duck.ai 匿名额度处于 **429 冷却期**（多 agent 共用出口 IP；网关后端 真实 smoke 的 chat stream 返回 429 JSON，
+  属预期限流）。真实上游 v2 端到端与 OpenAI SDK 真实兼容**均未执行**，由 验收执行者 统一安排额度窗口。
 - v1 时代的真实上游记录（`docs/ACCEPTANCE.md`、`data/tmp/live-check-acceptance.json`）在 v2 BREAKING 后
   仅作历史参考：v2 强制 API Key、RPS 队列、付费模型、会话式测试、严格校验均改变了行为，需按 v2 重跑。
 
@@ -614,7 +614,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | v2.2 durableStream 上游接受 / journeyId 稳定性 | ✅ **已实测**（§6.5：默认开启 + 真实 chat **200**、`durableStreamRejected=0/degraded=false`；重启身份稳定） |
 | v2.2 真实订阅 token（activate/verify） | ⏳ BLOCKED（需真实 DuckDuckGo 登录态） |
 | v2.3 本机代理（HTTP/SOCKS5）出站与 Sync 可达 | ✅ **已实测**（§5.6/§6.6：test exitIp=203.0.113.10、`/status` 200、duckduckgo.com 200、sync available） |
-| v2.3 经代理的真实 chat | ⚠️ 部分：SOCKS5 曾 200（duck-protocol 实测）、HTTP 代理遇上游 418 额度软限流（非链路问题） |
+| v2.3 经代理的真实 chat | ⚠️ 部分：SOCKS5 曾 200（协议层 实测）、HTTP 代理遇上游 418 额度软限流（非链路问题） |
 | v2.4 身份池真实路由（2 身份 × 2 会话真实消息） | ✅ **已实测**（§5.7/§6.7：两个身份各 1 条真实 200「分身/分身1」，identityId 响应头/日志/绑定一致） |
 | v2.4 上下文守卫真实超长会话 | ⏳ BLOCKED（需真实超长会话触发 ERR_CONVERSATION_LIMIT；mock 层已覆盖 trim 重试） |
 | v2.5 会话并发（后端/jsdom） | ✅ **已实测**（§5.8/§6.8：2 身份并行真实消息双 200 且 identityId 不同；前端 jsdom 并发 2/2；mock 层 maxInFlight/串行断言） |
@@ -623,11 +623,11 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | v2.10 slots 内身份删除保护（官方码+10808） | ✅ **已实测**（§5.12/§6.11：DELETE 409 identity_in_device_slots → force 200 removedDevice:true、slots 无残留、默认身份 force 409） |
 | v2.11 官方恢复码明文/下载 + 模型能力 | ✅ **已实测**（§5.13/§6.12：GET 明文 len=191/source=pairing、download 一致；/v1/models chars=16000/tokens=5333） |
 | v2.11 真实 compact | ⏳ **BLOCKED**（上游 rate limited/418；mock 层自动/手动/limit 重试已覆盖） |
-| v2.5 joiner（手机有账号）真实配对 | ✅ mock 端到端 + 模块层 4 项；真实手机复测待 Lead（原「绑定失败」根因已修） |
+| v2.5 joiner（手机有账号）真实配对 | ✅ mock 端到端 + 模块层 4 项；真实手机复测待 验收执行者（原「绑定失败」根因已修） |
 
-### 6.5 api-core v2.2 真实原始证据（fresh dataDir，默认配置）
+### 6.5 网关后端 v2.2 真实原始证据（fresh dataDir，默认配置）
 
-> 由 api-core 在真实 duck.ai 上执行并回传（同一代码/工作区，供 QA.md 交叉引用；非本报告独立复跑）。
+> 由 网关后端 在真实 duck.ai 上执行并回传（同一代码/工作区，供 QA.md 交叉引用；非本报告独立复跑）。
 
 1. **首启 identity**（日志）：
    `[duck:identity] identity ready {"source":"generated","journeyId":"360f205ce74460aac42f085ac1203755","fingerprint":"1f08ed366585b136aa0e891e82746eef"}`；
@@ -664,7 +664,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
   - SOCKS5 代理：`ok:true, status:200, latencyMs=1662, exitIp=203.0.113.10`（与直连出口不同）；
   - `GET /healthz` → `proxy.mode=http|socks5, active=true`；关闭/恢复后 `mode=direct`；
   - `GET /admin/api/sync` → `transport:"available"`（代理可达 duckduckgo.com）；恢复原配置后回到 blocked。
-- duck-protocol 独立实测（同 10808，真实 duck.ai）：`/duckchat/v1/status` 200 + 挑战头、`duckduckgo.com/sync/pairing` 200、
+- 协议层 独立实测（同 10808，真实 duck.ai）：`/duckchat/v1/status` 200 + 挑战头、`duckduckgo.com/sync/pairing` 200、
   SOCKS5 下真实 chat **200**（「代理」）；HTTP 代理下真实 chat 遇上游 `418 ERR_BN_LIMIT`（额度软限流，非代理链路问题）。
 - 结论：v2.3 代理链路（HTTP CONNECT / SOCKS5）+ Admin 端点 + sync transport 解锁均真实可用；真实 chat 受额度限流影响，
   与代理无因果关系（§6.3 记录）。
@@ -717,7 +717,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 - 结果（`data/tmp/v210-real-integration.json`，§5.12）：分身（DuckCPA@xxxx）加入 slots 200 → `DELETE` **409 `identity_in_device_slots`**
   （identityId/deviceName 正确）→ `DELETE ?force=true` **200 `{ok:true,id,removedDevice:true}`** → GET slots `identityIds:["id_default"]`、orphans=0；
   `DELETE id_default?force=true` → **409 `default_identity_protected`**。
-- 限界：真实 logout 失败（429/503）时身份仍会删除（仅 warn），设备列表中可能残留服务端条目（best-effort 传播）；手机 App 复核需 Lead 持设备。
+- 限界：真实 logout 失败（429/503）时身份仍会删除（仅 warn），设备列表中可能残留服务端条目（best-effort 传播）；手机 App 复核需 验收执行者 持设备。
 ### 6.12 v2.11 真实联调（QA 独立执行，官方码 + 10808）
 
 - 环境：临时 dataDir（真实 identity.json/pairing.json），真实 IdentityStore/PairingStore/ChatSummaryStore/DuckClient，代理 10808，端口 18792。
@@ -789,7 +789,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | --- | --- | --- | --- |
 | 1 | PUT 关闭/开启、四种类型切换；非法字段 → 400 `invalid_proxy`；密码不回显、空密码不覆盖 | ✅ | `proxy-api.test.js`（9 类非法值、密码语义、不发 password）；`proxy-manager.test.js` |
 | 2 | POST /proxy/test：HTTP 10808 → ok/status=200/latency/exitIp 为代理出口；错误 host/port → ok:false+code+lastError；禁用时直连 ok | ✅ 真实 10808（§5.6/§6.6） | exitIp=203.0.113.10（http+socks5）；不可达端口 `ok:false`；直连测试分支 |
-| 3 | 代理启用后 DuckClient 真实请求走代理；/status 200；chat 200（额度允许时）；healthz.proxy 正确；sync transport 变 available | ✅（链路）/ ⚠️（chat 受 418/429 限流） | `proxy-manager.test.js` 端到端 mock 代理；`duck-client.test.js` proxyManager.fetch 计数；§6.6 真实 `/status` 200、duckduckgo.com 200、sync available；真实 chat SOCKS5 200（duck-protocol）/HTTP 418 额度 |
+| 3 | 代理启用后 DuckClient 真实请求走代理；/status 200；chat 200（额度允许时）；healthz.proxy 正确；sync transport 变 available | ✅（链路）/ ⚠️（chat 受 418/429 限流） | `proxy-manager.test.js` 端到端 mock 代理；`duck-client.test.js` proxyManager.fetch 计数；§6.6 真实 `/status` 200、duckduckgo.com 200、sync available；真实 chat SOCKS5 200（协议层）/HTTP 418 额度 |
 | 4 | 代理关闭后行为与 v2.2 完全一致（回归全绿） | ✅ | `npm test` 250/250（v2.0–v2.5 全部用例） |
 | 5 | 前端代理页可保存/测试/状态展示；身份页 Sync blocked 文案带代理引导；无 console 报错 | ✅（构建/静态契约） | build-check「v2.3 代理页文案」11/11；page-check proxy 契约 16/16；浏览器交互人工验收 |
 | 6 | 自动化：npm test 全绿；build-check/page-check 覆盖代理页与端点 | ✅ | 250/250、build-check 11/11、page-check 16/16 |
@@ -798,7 +798,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 
 | # | 标准 | 状态 | 证据 |
 | --- | --- | --- | --- |
-| 1 | 配对码生成后显示可扫描二维码（内容=配对 URL），可下载/复制；QR 与 code2 URL 一致 | ✅（数据层+源码/产物）/ ⏳（浏览器人工） | `identity-qr.test.js`（qrcode→PNG data URL、identity.tsx `QRCode.toDataURL`+`<img src=data:image>`、下载/复制按钮、构建产物标记）；浏览器点击由 Lead 人工验收 |
+| 1 | 配对码生成后显示可扫描二维码（内容=配对 URL），可下载/复制；QR 与 code2 URL 一致 | ✅（数据层+源码/产物）/ ⏳（浏览器人工） | `identity-qr.test.js`（qrcode→PNG data URL、identity.tsx `QRCode.toDataURL`+`<img src=data:image>`、下载/复制按钮、构建产物标记）；浏览器点击由 验收执行者 人工验收 |
 | 2 | 批量生成 3 身份 journeyId/deviceId/指纹互异；列表正确；导出→导入新池一致 | ✅ | `identity-pool.test.js` generate/export-import；`identity-pool-api.test.js` generate/list |
 | 3 | 创建 4 个测试会话各自绑定（hash 分布合理）；同会话多轮 identityId 不变；重启后不变 | ✅（mock+真实） | `identity-routing.test.js`（X-Session-Id/无 header/重启）；§5.7/§6.7 真实 2 身份 200；4 会话分布见 module hash 用例 |
 | 4 | 同身份并发串行（queueWaitMs 递增/inFlight≤1）；不同身份并行 | ✅ | `identity-pool.test.js` 队列 2 项（rps=1、peakInFlight、queue_full/queue_timeout） |
@@ -807,7 +807,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | 7 | 长会话/`ERR_CONVERSATION_LIMIT` 自动裁剪重试（或按配置映射），会话标记 contextTrimmed | ✅（mock）/ ⏳（真实超长） | `context-guard.test.js` 6 项（trim 重试、onLimit=error 409/413、context_trimmed、maxInputChars/maxMessages）；真实超长会话 BLOCKED |
 | 8 | 回归：npm test 全绿；build-check/page-check 含身份池页与二维码；浏览器无 console 报错 | ✅（自动化）/ ⏳（浏览器） | 250/250；build-check 11/11；page-check 16/16；浏览器人工验收 |
 
-### 7.6 v2.5 并发 / 扫码配对验收（Lead 任务口径，4 组）
+### 7.6 v2.5 并发 / 扫码配对验收（验收口径，4 组）
 
 | # | 标准 | 状态 | 证据 |
 | --- | --- | --- | --- |
@@ -816,7 +816,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | 3 | 配对：信封 round-trip、start→PUT 204+QR、hello、404/sequence gap/超时、status 状态机；**joiner（available 不回 unavailable→response→completed(joiner)）**、host(same_account/awaiting/confirmed/denied)、Admin 与官方恢复码落盘 | ✅（模块+Admin+joiner 端到端）/ ⏳（真实手机复测） | `tests/pairing.test.js` 14 项；`tests/pairing-api.test.js` 4 项；`tests/pairing-joiner-api.test.js` 4 项（含冲突策略）；真实 start 200/waiting（§5.8/§5.9） |
 | 4 | 脚本与真实联调：build-check 并发/配对文案、page-check pairing 契约、真实 2 身份并行消息 + 配对真实 start（代理 10808） | ✅ | build-check 11/11（v2.5 项）；page-check 16/16（pairing 项）；§5.8/§6.8 真实数据 |
 
-### 7.7 v2.8 设备注册 / 设备名 / 轮换确认验收（Lead 任务口径，5 组）
+### 7.7 v2.8 设备注册 / 设备名 / 轮换确认验收（验收口径，5 组）
 
 | # | 标准 | 状态 | 证据 |
 | --- | --- | --- | --- |
@@ -826,7 +826,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | 4 | 构建/脚本：build-check 设备列表/轮换警告、page-check server-devices/register-device | ✅ | build-check 12/12；page-check 17/17（sync 设备契约） |
 | 5 | 真实联调：register-device 200、server-devices 含本机 DuckCPA@xxxx | ✅ | §5.10/§6.9（真实官方码 + 10808，total=5 current DuckCPA@xxxx） |
 
-### 7.8 v2.9 设备名 / 设备槽验收（Lead 任务口径，5 组）
+### 7.8 v2.9 设备名 / 设备槽验收（验收口径，5 组）
 
 | # | 标准 | 状态 | 证据 |
 | --- | --- | --- | --- |
@@ -834,9 +834,9 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | 2 | device-slots：GET 默认含 id_default；PUT 增量注册/注销（批量调用次数、`identity.sync.slots` 持久化/重启）；空列表；非法/禁用 400；418→429；serverDevices 解密 name/type + matchedIdentityId | ✅ | `tests/device-slots.test.js` 6 项（stateful fake 验证 registerDevices/logoutDevices 各一次） |
 | 3 | sync-client 多设备：registerDevices 批量（真实每设备 login+PATCH）、listDevicesDetailed 解密、logoutDevices 批量（404 容忍/自动重登） | ✅ | `tests/sync-client-multidevice.test.js` 3 项（updates=1×N、Android 手机 解密、404 removed 排除） |
 | 4 | 前端 jsdom：身份池设备名/默认删除 disabled、两栏拖拽、未保存提示、保存 PUT payload、保存后刷新、429 文案；build-check/page-check 契约 | ✅ | `tests/web-device-slots.test.js` 2 项（真实产物 + DragEvent 模拟）；build-check 13/13、page-check 18/18 |
-| 5 | 真实联调：GET device-slots → PUT [id_default,分身] → My Devices 出现 DuckAI@main+DuckCPA@xxxx → PUT [id_default] 注销 | ✅（协议/接口）/ ⏳（手机 My Devices 人工复核） | §5.11/§6.10：双设备注册 200、serverDevices 解密 Android 手机/DuckCPA@xxxx、注销 200；手机端可见性需 Lead 持设备复核 |
+| 5 | 真实联调：GET device-slots → PUT [id_default,分身] → My Devices 出现 DuckAI@main+DuckCPA@xxxx → PUT [id_default] 注销 | ✅（协议/接口）/ ⏳（手机 My Devices 人工复核） | §5.11/§6.10：双设备注册 200、serverDevices 解密 Android 手机/DuckCPA@xxxx、注销 200；手机端可见性需 验收执行者 持设备复核 |
 
-### 7.9 v2.10 删除/禁用保护 + 孤儿自愈验收（Lead 任务口径，5 组）
+### 7.9 v2.10 删除/禁用保护 + 孤儿自愈验收（验收口径，5 组）
 
 | # | 标准 | 状态 | 证据 |
 | --- | --- | --- | --- |
@@ -846,7 +846,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | 4 | 前端 jsdom：独立设备列表卡、409 弹窗两操作、force ?force=true、orphans 提示+清理、默认身份无 force；build-check/page-check 契约 | ✅ | `tests/web-device-protection.test.js` 3 项（真实产物）；build-check 14/14、page-check 19/19 |
 | 5 | 真实联调：分身加入 slots → 删除 409 → force 成功、slots 无残留 | ✅（接口）/ ⏳（手机设备消失人工复核） | §5.12/§6.11（407 双设备注册、真实 409/force 200、orphans=0） |
 
-### 7.10 v2.11 compact / 模型上下文验收（Lead 任务口径，5 组）
+### 7.10 v2.11 compact / 模型上下文验收（验收口径，5 组）
 
 | # | 标准 | 状态 | 证据 |
 | --- | --- | --- | --- |
@@ -856,7 +856,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | 4 | 前端 jsdom：模型下拉上下文、压缩按钮 loading/成功、summary 徽章展开/复制、自动压缩提示条、无报错；build/page 契约 | ✅ | `tests/web-compact.test.js`（真实产物）；build-check 15/15、page-check 21/21 |
 | 5 | 真实联调：多轮触发自动压缩并继续对话 | ⏳ BLOCKED（上游 429/418 额度；mock 覆盖全路径） | §5.13/§6.12 |
 
-### 7.11 v2.11 官方恢复码查看/下载验收（Lead 任务口径，5 组）
+### 7.11 v2.11 官方恢复码查看/下载验收（验收口径，5 组）
 
 | # | 标准 | 状态 | 证据 |
 | --- | --- | --- | --- |
@@ -866,7 +866,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 | 4 | 前端 jsdom：完整展示/复制/下载/配对后自动刷新/未配置提示；build/page 契约 | ✅ | `tests/web-recovery-code.test.js`（QR Modal 含 data:image/复制/下载 PNG/关闭；未配置提示由 page-check/build-check 覆盖） |
 | 5 | 真实账号：GET/download 一致 | ✅ | §5.13/§6.12（len=191、source=pairing、内容一致） |
 
-### 7.12 v2.12 compact 触发语义 + 摘要折叠块验收（Lead 口径，4 组）
+### 7.12 v2.12 compact 触发语义 + 摘要折叠块验收（验收执行者 口径，4 组）
 
 | # | 标准 | 状态 | 证据 |
 | --- | --- | --- | --- |
@@ -879,7 +879,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 
 ## 8. v2 契约差异与裁决记录（实现最终态）
 
-1. **旧 `POST /admin/api/test` 已删除 → 404 `not_found`**（task-5/用户要求；`docs/ADMIN_API_V2.md` §5.2 中
+1. **旧 `POST /admin/api/test` 已删除 → 404 `not_found`**（/用户要求；`docs/ADMIN_API_V2.md` §5.2 中
    "兼容保留"一句为旧残留，以 404 为准）。
 2. **418 ERR_CHALLENGE**：映射为 `upstream_anomaly_check`（403），但**保留传输层 418 重试**
    （刷新挑战后重试；耗尽后抛 anomaly）。测试覆盖两条路径。
@@ -904,7 +904,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 11. **v2.2 identity 文件与稳定性**：`data/identity.json`（同目录 `identity.json.tmp-*` → rename 原子写、权限尽力 0600）；
     损坏文件备份为 `identity.corrupt-<ts>.json` 后重建；`journeyId` 32 hex、`deviceId` uuid v4 跨重启不变。
 12. **v2.2 durableStream 默认开启**：`identity.durableStream.enabled` 默认 **true**（DEFAULT_CONFIG/normalize/migration
-    与 `config/config.example.json` 一致，Lead 实测裁决；上游公共 JWK 现已接受）。DuckClient 仍保留自动降级：
+    与 `config/config.example.json` 一致，验收执行者 实测裁决；上游公共 JWK 现已接受）。DuckClient 仍保留自动降级：
     上游 400 → 去 durableStream 重试 1 次 + `durable_stream_rejected` 计数 + `health().durableStream.degraded=true`；
     `config.durableStream.enabled=false` 可显式关闭。未注入 identityStore 的旧用法降级为 volatile
     （随机 journeyId、不发 durableStream、health stable=false）。
@@ -914,7 +914,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 14. **v2.2 sync 恢复码**：`createRecoveryCode` 产物含 JWE 包裹的 RSA-2048 私钥 JWK（实测 ~3.3KB），
     解析上限按恢复码放宽到 64KB（配对码仍 2048）；`decodeRecoveryCode` 返回 `{ok,recovery:{user_id,main_key,
     scoped_password_seed,encrypted_private_key}}`。
-15. **v2.2 sync 传输与错误**：`detectSyncTransport()` 探测 duckduckgo.com（默认 3s 超时）→ 本沙箱 `blocked`；
+15. **v2.2 sync 传输与错误**：`detectSyncTransport()` 探测 duckduckgo.com（默认 3s 超时）→ 本当前环境 `blocked`；
     `POST /sync/pair` 在 blocked 时 **503 `sync_transport_unavailable` + error.hint**，本地状态/设备数不变；
     未启用 sync 时 `GET /sync/recovery-code` → 200 `{recoveryCode:null}`（不抛 409）。
 16. **v2.2 订阅**：activate 仅解析 JWT payload（HS256 签名不校验，符合匿名网关用途）；过期 → **422 `token_expired`**、
@@ -982,7 +982,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
     hello 校验 channel_id/public_key/version(2.x)→回 hello 到 scanner 频道→state=exchange；错误：
     `read_channel_lost`(GET 404)/`write_channel_lost`(POST 404)/`network`/`sequence_gap`(seq 必须连续)/`self_scan`/
     `version_mismatch`/`peer_key_changed`/`protocol_violation`；`waitForPeer` 超时→`PairingError{code:'timeout'}`。
-    exchange 分支（**task-26b 修复后最终态**）：
+    exchange 分支（** 修复后最终态**）：
     - `recovery_code_available`（对方/手机已有账号）→ **不回任何消息**，`state='exchange'`、
       `substate='joiner_awaiting'`、记录 `peerUserId`；随后 `recovery_code_response`（`recovery_code` 为
       base64/base64url JSON `{recovery:{user_id,secret}}`，兼容裸 JSON/顶层 `{user_id,secret}`）→ 解析、
@@ -1059,19 +1059,19 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 
 ## 9. 已知观察项 / 风险
 
-1. **真实上游限流**：匿名额度按出口 IP 共享，当前 429 冷却；v2 真实终验需在额度窗口执行（Lead 统一安排）。
+1. **真实上游限流**：匿名额度按出口 IP 共享，当前 429 冷却；v2 真实终验需在额度窗口执行（验收执行者 统一安排）。
    网关侧已实现：RPS 队列限速、429 冷却、`Retry-After` 透传。
 2. **前端交互**：page-check 覆盖构建产物与 API 契约；九个页面（含身份与订阅、代理、身份池、连接测试并发切换）的真实
-   点击流/SSE 渲染建议 Lead 在额度窗口做一次浏览器验收（v2 UI 为 React SPA，无构建步骤外的运行时依赖）。
+   点击流/SSE 渲染建议 验收执行者 在额度窗口做一次浏览器验收（v2 UI 为 React SPA，无构建步骤外的运行时依赖）。
 3. **`/v1/models` duck- 前缀**：v2 仍同时暴露 canonical 与 `duck-` 前缀（兼容 OpenAI 客户端的模型别名习惯）；
    配置别名可解析。若后续要求只列 canonical，需同步更新 smoke/models 断言。
-4. **沙箱运行**：`npm test` 依赖 `--test-isolation=none`；`build-check --build` 使用 stdio=inherit spawn 以兼容沙箱。
-5. **v2.2 durableStream 上游行为**：默认 `identity.durableStream.enabled=true`（Lead 裁决）；真实 chat 已取得
+4. **当前环境运行**：`npm test` 依赖 `--test-isolation=none`；`build-check --build` 使用 stdio=inherit spawn 以兼容当前环境。
+5. **v2.2 durableStream 上游行为**：默认 `identity.durableStream.enabled=true`（验收执行者 裁决）；真实 chat 已取得
    **HTTP 200**，且 `durableStreamRejected=0`、`degraded=false`（§6.5）→ 上游接受 durableStream；
    若某次上游 400 拒绝，DuckClient 自动降级一次且请求仍成功，不影响其它请求路径。
 6. **v2.2 身份私钥落盘**：`data/identity.json` 含 durableStream 私钥与（激活后的）订阅 token 明文，仅依赖
    文件权限（尽力 0600）与 `.gitignore`；部署时请确保 `data/` 目录权限受控，且不要提交到仓库。
-7. **v2.2 sync 传输**：本沙箱无法访问 `duckduckgo.com`，跨设备配对/同步不可用（`transport:blocked` + pair 503 已优雅处理）；
+7. **v2.2 sync 传输**：本当前环境无法访问 `duckduckgo.com`，跨设备配对/同步不可用（`transport:blocked` + pair 503 已优雅处理）；
    本地密钥生成/配对码/恢复码/导入导出均可用；**v2.3 起可启用代理解锁 `transport:available`**（pair 仍 501 握手未实现）。
 8. **v2.3 代理作用域**：仅影响**网关服务端出站**（DuckClient/sync 探测/订阅 verify/`/proxy/test`），
    不影响浏览器或调用方；`noProxy` 规则只看 hostname（精确/`*.suffix`/后缀），不解析路径。
@@ -1118,7 +1118,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
     因此 sync-client 对 N 台设备内部执行 N 次 login+PATCH（一次调用对外）；401/forbidden_device 多为「用错 token」而非上限。
 26. **v2.9 device-slots 增量为「服务端设备」驱动**：remove 判断基于 `serverDevices.matchedIdentityId`（id 或解密 name 匹配），
     若服务端列表传播延迟/名称为 null，可能暂时无法匹配（不影响已保存 identity.sync.slots；刷新后重试）。
-27. **v2.9 My Devices 可见性**：真实联调已确认接口返回双设备注册 200 与解密列表，但手机 App「My Devices」显示需 Lead 持设备人工复核；
+27. **v2.9 My Devices 可见性**：真实联调已确认接口返回双设备注册 200 与解密列表，但手机 App「My Devices」显示需 验收执行者 持设备人工复核；
     设备删除/注销在服务端传播 best-effort（可能延迟）。
 28. **v2.10 force 删除为 best-effort**：logout 失败（429/503）时身份仍删除、`removedDevice:true`，服务端设备可能残留（仅 warn）；
     需在限流窗口后清理或依赖 GET slots 的 orphans/reconcile。
@@ -1127,8 +1127,8 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 31. **v2.11 原生 summarize 依赖**：`/duckchat/v1/summarize` 真实可达但匿名额度可能 418/429（不回退、原样抛）；成功 200 样例待额度恢复；失败回退 chat 摘要可用但无 pair/version 语义（文档已注明）。
 32. **v2.11 token 为估算**：`estimateTokens=ceil(chars/3)`，模型能力 `max_input_tokens` 为 chars/3 取整估算，非精确 tokenizer；文档/UI 均标「估算」。
 33. **v2.11 jsdom QR 渲染依赖 canvas stub**：`web-recovery-code.test.js` 用最小 canvas stub 让 qrcode 产出 data:image（jsdom 无 canvas）；未配置提示分支改由 page-check/build-check 覆盖（jsdom 下该分支页面挂起/内存异常）。
-34. **v2.12 pendingCompaction 前端未展示**：web task-49 明确「无 pendingCompaction 字段实现」，前端暂不显示「摘要待刷新」提示；后端/接口已透出，后续前端补齐后可加 jsdom 断言。
-35. **v2.12 真实 compact 仍受额度限制**：共享出口 418 ERR_BN_LIMIT/429 时真实自动压缩无法验证（gpt-6-luna 与 gpt-5.4-mini 会话均 BLOCKED）；duck-protocol 已用 gpt-5.4-mini 原生 summarize 拿到 200，待额度窗口补真实证据。
+34. **v2.12 pendingCompaction 前端未展示**：web  明确「无 pendingCompaction 字段实现」，前端暂不显示「摘要待刷新」提示；后端/接口已透出，后续前端补齐后可加 jsdom 断言。
+35. **v2.12 真实 compact 仍受额度限制**：共享出口 418 ERR_BN_LIMIT/429 时真实自动压缩无法验证（gpt-6-luna 与 gpt-5.4-mini 会话均 BLOCKED）；协议层 已用 gpt-5.4-mini 原生 summarize 拿到 200，待额度窗口补真实证据。
 
 ---
 
@@ -1140,7 +1140,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 - 构建产物：`web/index.html` + `web/assets/index-*.js|css`（由 `npm run build:web` 生成，webapp/ 源码）。
 - 真实上游历史证据（v1，仅参考）：`docs/ACCEPTANCE.md`、`data/tmp/live-check-acceptance.json`、`data/tmp/sdk-check-mock.json`。
 - v2.2 证据：`data/tmp/sdk-check-v2-mock.json`（SDK×mock）；identity/sync/subscription 证据内嵌在 `npm test` 断言与
-  `page-check` 输出；**真实上游 durableStream 200 / 重启稳定原始报文见 §6.5（api-core 实测回传）**。
+  `page-check` 输出；**真实上游 durableStream 200 / 重启稳定原始报文见 §6.5（网关后端 实测回传）**。
 - v2.3 证据：`data/tmp/proxy-live-check-*.json`（真实 10808 HTTP+SOCKS5 联调，§5.6/§6.6）；
   mock 代理辅助 `tests/helpers/mock-proxy.js`（HTTP CONNECT/SOCKS5，随机端口；单测不访问外网）；
   mock 网关脚本（临时）`data/tmp/qa-mock-server-v2.mjs` 演示 identity+proxy 注入方式。
@@ -1179,18 +1179,18 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 - [ ] 真实上游 v2.1 harness：会话消息 → 重试该轮（验证真实上游 retry 链路）→ 会话详情确认截断/替换；
       以及真实「推理已加密（匿名档）」时 `reasoningEncrypted=true` 的透出。
 - [x] v2.2 durableStream：默认开启下真实 chat **HTTP 200**、`durableStreamRejected=0/degraded=false`、
-      重启 identity 稳定（§6.5，api-core 实测）。
+      重启 identity 稳定（§6.5，网关后端 实测）。
 - [x] v2.3 代理真实联调：本机 10808 HTTP/SOCKS5 `proxy/test` ok + exitIp、`/status` 200、duckduckgo.com 200、
       sync transport available（§5.6/§6.6；HTTP 代理下 chat 418 属额度软限流）。
 - [x] v2.4 身份池真实路由：2 身份 × 2 会话真实消息均 200（identityId 响应头/日志/绑定一致，§5.7/§6.7）。
 - [x] v2.5 真实联调：2 身份并行真实消息双 200（identityId 不同）+ 配对真实 start 200/waiting/stop（经 10808，§5.8/§6.8）。
 - [x] v2.5 joiner 修复：`recovery_code_available` 不再回 unavailable → 等待 response → completed(joiner)，
       官方码落盘并暴露 `accountAvailable`（§5.9 端到端；模块级 14 项含 same_account/awaiting/confirmed/denied）。
-- [ ] 真实手机复测扫码配对（用真实 DuckDuckGo App 扫码，验证原「绑定失败」已修复；需 Lead 持设备）。
+- [ ] 真实手机复测扫码配对（用真实 DuckDuckGo App 扫码，验证原「绑定失败」已修复；需 验收执行者 持设备）。
 - [x] v2.8 真实注册设备：真实官方恢复码 + 10808 → register-device 200、server-devices 含本机 `DuckCPA@xxxx`（§5.10/§6.9）。
-- [ ] v2.8 余项：真实手机端「My Devices」可见性复核（注册后手机 App 查看本机，需 Lead 持设备）；
+- [ ] v2.8 余项：真实手机端「My Devices」可见性复核（注册后手机 App 查看本机，需 验收执行者 持设备）；
 - [x] v2.9 真实 device-slots：双设备注册 200（DuckAI@main + DuckCPA@xxxx）、serverDevices 解密 Android 手机、PUT 注销 200（§5.11/§6.10）。
-- [ ] v2.9 余项：手机 My Devices 实际可见性人工复核（需 Lead 持设备）；多设备注销后的列表传播延迟观察。
+- [ ] v2.9 余项：手机 My Devices 实际可见性人工复核（需 验收执行者 持设备）；多设备注销后的列表传播延迟观察。
 - [x] v2.10 真实删除保护：slots 内分身 DELETE 409 → force 200 removedDevice、slots 无残留、默认身份 force 409（§5.12/§6.11）。
 - [ ] v2.10 余项：手机 My Devices 中设备实际消失的人工复核；force 时 logout 失败后的服务端残留清理（依赖 window/orphans）。
 - [x] v2.11 真实恢复码明文/下载：GET 完整 code（len=191/source=pairing）与 download 一致；模型能力 API 200（§5.13/§6.12）。
@@ -1209,7 +1209,7 @@ journeyId 跨重启稳定（上游日志可见同一值）；真实 duck.ai 订�
 - [ ] 浏览器人工验收：身份页二维码（扫码/下载/复制/实验性提示）、身份池页面操作、连接测试并发切换（A 慢流/B 发送/
       切会话/生成中徽章）、会话页 identityLabel 展示、代理页与身份页 Sync 提示跳转。
 - [ ] 将结果回填 §6.3，并把 §7.1 第 2/3/4/5 条、§7.2 第 7 条、§7.3 第 3 条的剩余真实上游证据补齐
-      （可引用 Lead 的 `docs/ACCEPTANCE.md` v2/v2.1/v2.2/v2.3/v2.4/v2.5 版本）。
+      （可引用 验收执行者 的 `docs/ACCEPTANCE.md` v2/v2.1/v2.2/v2.3/v2.4/v2.5 版本）。
 
 ---
 

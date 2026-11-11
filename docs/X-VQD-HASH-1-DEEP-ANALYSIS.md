@@ -27,12 +27,12 @@
 | --- | --- | --- |
 | Chrome 真机抓包 | 隔离上下文打开 duck.ai，抓 `/status`、`/chat` 全量请求/响应头，并在页面内用真实 `#jsa` iframe 解挑战 | `recon/2026-11-06/browser-probe*`、本文 §2.2 |
 | 前端 bundle 静态分析 | 下载当前部署 4 个 JS，按 webpack module 切分、prettier 美化、关键字定位 | `recon/2026-11-06/entry.duckai.9eb647a002c7954fd3aa.js`、`recon/2026-11-06/modules/` |
-| 挑战 JS 去混淆 | 自研通用 deobfuscator（字符串数组+rotation+decoder 还原、调用点替换） | `recon/2026-11-06/scratch-lead/deobfuscate.mjs`、`variants/*.pretty.js` |
-| 真实上游差分实验 | 以「有效模型 + 真实 `/chat`」为 oracle：`418`=挑战被拒，`200`=通过；`invalid-model` 探针只做粗校验 | `scratch-lead/probe.mjs`、`verifyfix.mjs`、`fix-validate.mjs` |
-| 批量变体扫描 | 44+ 个实时挑战，逐个 plain(旧) vs emulated(新) 求解对比，按 suite 分类统计 | `scratch-lead/variant-scan*.json`、`fix-scan/` |
+| 挑战 JS 去混淆 | 自研通用 deobfuscator（字符串数组+rotation+decoder 还原、调用点替换） | `本地验证脚本/deobfuscate.mjs`、`variants/*.pretty.js` |
+| 真实上游差分实验 | 以「有效模型 + 真实 `/chat`」为 oracle：`418`=挑战被拒，`200`=通过；`invalid-model` 探针只做粗校验 | `本地验证脚本/probe.mjs`、`verifyfix.mjs`、`fix-validate.mjs` |
+| 批量变体扫描 | 44+ 个实时挑战，逐个 plain(旧) vs emulated(新) 求解对比，按 suite 分类统计 | `本地验证脚本/variant-scan*.json`、`fix-scan/` |
 | 单元/回归测试 | 新增 `tests/challenge-env.test.js`（page-state/layout/legacy 对照） | `npm test` 493/493 |
 
-**环境事实 [已验证]**：本沙箱 Node 原生 `fetch` 可直连 duck.ai（无需 AGENTS.md 所述代理）；校验实验使用匿名会话，无 cookie、`x-duckai-client-tools` 可省略、`x-fe-signals` 空 events 也可被接受——这些都不是本次 418 的判别因素。
+**环境事实 [已验证]**：本当前环境 Node 原生 `fetch` 可直连 duck.ai（无需 AGENTS.md 所述代理）；校验实验使用匿名会话，无 cookie、`x-duckai-client-tools` 可省略、`x-fe-signals` 空 events 也可被接受——这些都不是本次 418 的判别因素。
 
 ---
 
@@ -123,8 +123,8 @@ module 35488 的入参是一个 iframe 元素；调用方传入的正是 `#jsa`�
 | --- | --- | --- |
 | 真实 chat 阶段**精确校验** `client_hashes` | 同一挑战：旧实现头 → `418 ERR_CHALLENGE`；仿真头 → `200 SSE`（多轮、跨 4 类 suite） | 已验证 |
 | `invalid-model` 请求只做**粗校验**（存在/签名/时效），不校验环境指纹 | 旧实现头 + invalid model → `404 ERR_MODEL_UNAVAILABLE`；`initial` → `418`。所以健康探针/404 路径无法暴露偏差 | 已验证 |
-| `meta.origin/stack/duration/debug` 当前**不严格校验** | 真实 Chrome 控制组用 chrome-devtools 的 `file:///…chrome-devtools-mcp…` 垃圾 stack 仍 `200`；duration 14ms 与 305ms 均可 | 已验证 |
-| `418` 的 `overrideCode` 与失败 suite 对应：`f741` ↔ `q7klm`(LAYOUT)（4/4 相关），`d78d` ↔ `vz95n`(PAGE_STATE)（4/4 相关），`975b` 为缺失/`initial` 类；`d0aa` 仅 Lead 页面实验出现一次，未复现 | `418` body `cd`/`overrideCode` 采样；42 样本审计 | 已验证（f741/d78d），d0aa 待确认 |
+| `meta.origin/stack/duration/debug` 当前**不严格校验** | 真实 Chrome 控制组用 真实浏览器 的 `file:///…真实浏览器…` 垃圾 stack 仍 `200`；duration 14ms 与 305ms 均可 | 已验证 |
+| `418` 的 `overrideCode` 与失败 suite 对应：`f741` ↔ `q7klm`(LAYOUT)（4/4 相关），`d78d` ↔ `vz95n`(PAGE_STATE)（4/4 相关），`975b` 为缺失/`initial` 类；`d0aa` 仅 验收执行者 页面实验出现一次，未复现 | `418` body `cd`/`overrideCode` 采样；42 样本审计 | 已验证（f741/d78d），d0aa 待确认 |
 | `server_hashes` 为每挑战随机的 32B nonce，**不是** client_hashes 的哈希（SHA-256/编码/HMAC 变体穷举均不匹配），客户端只需原样回显 | `challenge-payload.md` §4.1 | 已验证 |
 | `debug` = XOR(JSON.stringify(检查表 map), 每挑战随机 16-hex key)；42/42 解码后均为 `"{}"`（2 字节），当前无信息量 | `challenge-payload.md` §4.4 | 已验证 |
 | `challenge_id` = 64 hex + **suite tag**（后缀）；`timestamp` = 服务端生成时刻（与响应 `date` 对齐） | 42/42 样本 | 已验证 |
@@ -191,11 +191,11 @@ module 35488 的入参是一个 iframe 元素；调用方传入的正是 `#jsa`�
 | `npm test`（含新增 4 个环境仿真用例 + v2.63 的 8 个残余路径用例） | **501/501 pass** | `duckai-cpa/tests/challenge-env.test.js`、`challenge-lifecycle-v262.test.js`、`summarize-retry-override.test.js`、`continuation.test.js` |
 | v2.63 continuation 修复 | 续传 header 为**已解值**（不再是原始挑战）；418 后自动重试成功 | `tests/continuation.test.js`（新增断言/用例） |
 | v2.63 overrideCode 归因 / summarize 重试 | `d78d`/`f741` 归因到 `error.overrideCode` 与 `stats.overrideCodes`；summarize 418→200 | `tests/summarize-retry-override.test.js` |
-| v2.63 continuation 真实上游验证 | **BLOCKED**：出口 IP 触发上游临时 `451 ERR_COUNTRY_NOT_SUPPORTED` 软限流（手动同头请求亦复现，非代码回归）；额度恢复后可跑 `scratch-lead/live-continuation-check.mjs` | `recon/2026-11-06/scratch-lead/diag-*.mjs` |
-| 真实上游 live（修补后的 `ChallengeManager`）：fresh `/status` 挑战 + 滚动挑战各一次真实 chat | **200 / 200**，`solves=2`、`solveErrors=0`、`envFallbacks=0`；最终复测的第二条与滚动挑战恰好是 **`q7klm` 布局 suite**（`lastChallengeId` 后缀），说明布局仿真在真实上游生效 | `recon/2026-11-06/scratch-lead/live-module-check.mjs` 输出 |
+| v2.63 continuation 真实上游验证 | **BLOCKED**：出口 IP 触发上游临时 `451 ERR_COUNTRY_NOT_SUPPORTED` 软限流（手动同头请求亦复现，非代码回归）；额度恢复后可跑 `本地验证脚本/live-continuation-check.mjs` | `本地验证脚本/diag-*.mjs` |
+| 真实上游 live（修补后的 `ChallengeManager`）：fresh `/status` 挑战 + 滚动挑战各一次真实 chat | **200 / 200**，`solves=2`、`solveErrors=0`、`envFallbacks=0`；最终复测的第二条与滚动挑战恰好是 **`q7klm` 布局 suite**（`lastChallengeId` 后缀），说明布局仿真在真实上游生效 | `本地验证脚本/live-module-check.mjs` 输出 |
 | 差分验证：旧实现 vs 仿真实现（同一挑战） | page-state：旧 418 / 新 200；layout：旧 418 / 新 200 | `verifyfix` / `fix-validate` 日志 |
 | 四类 suite 的仿真头真实 chat | generic / innerHtml / layout / pageState 全部 **200**（5/5 次） | `fix-validate.mjs` 输出 |
-| **42/42 挑战样本仿真指纹 == 真实 Chrome** | 队友用隐藏 srcDoc iframe + 本地 HTTP harness 在真实 Chrome 156 中执行 42 个原始载荷，与仿真环境求解结果逐字节比对：42/42 一致（裸 jsdom 仅 23/42） | `recon/2026-11-06/analysis/challenge-payload.md` §3、`scratch-challenge/chrome-ground-truth.json` |
+| **42/42 挑战样本仿真指纹 == 真实 Chrome** | 协作者用隐藏 srcDoc iframe + 本地 HTTP harness 在真实 Chrome 156 中执行 42 个原始载荷，与仿真环境求解结果逐字节比对：42/42 一致（裸 jsdom 仅 23/42） | `recon/2026-11-06/analysis/challenge-payload.md` §3、`scratch-challenge/chrome-ground-truth.json` |
 | 真实 Chrome 控制组 | 页面内真实求解 → 200（尽管 stack 是 pptr 垃圾帧） | `evaluate_script` 抓包 |
 | 旧实现对照 | 旧扁平环境确定性地产出 `seed+0`/`seed+1` 指纹 | `tests/challenge-env.test.js` legacy 用例 |
 | v2.62 后状态机未变（只读复核） | 原竞态脚本在新代码上重跑 6/6 pass；新增残余路径脚本 5/5 pass；418 重试仍 invalidate+重新 `/status` | `recon/2026-11-06/analysis/gateway-418-audit.md` §11、`scratch-gateway/results.txt` |
@@ -228,19 +228,19 @@ module 35488 的入参是一个 iframe 元素；调用方传入的正是 `#jsa`�
 | 文件 | 用途 |
 | --- | --- |
 | `recon/fresh-fetch.mjs` | 抓取当前部署 HTML/bundle/一个实时挑战 |
-| `recon/2026-11-06/scratch-lead/deobfuscate.mjs` | 通用挑战去混淆（字符串数组 + rotation + 别名替换） |
-| `recon/2026-11-06/scratch-lead/solver.mjs` | 仿真求解器（#jsa + CSP meta + 页面全局 + 布局 shim） |
-| `recon/2026-11-06/scratch-lead/probe.mjs` | 上游语义探针（invalid-model oracle、滚动、复用、时效、header 变体） |
-| `recon/2026-11-06/scratch-lead/variant-scan.mjs` | 批量挑战变体扫描（plain vs emulated，含 suite 分类） |
-| `recon/2026-11-06/scratch-lead/verifyfix.mjs` / `fix-validate.mjs` | 修复前后真实 chat 差分验证 |
-| `recon/2026-11-06/scratch-lead/live-module-check.mjs` | 用真实 `src/duck/challenge.js` 直连上游的 live 验证 |
-| `recon/2026-11-06/scratch-lead/variants/` | 去混淆后的随机 suite 样本（00–14） |
+| `本地验证脚本/deobfuscate.mjs` | 通用挑战去混淆（字符串数组 + rotation + 别名替换） |
+| `本地验证脚本/solver.mjs` | 仿真求解器（#jsa + CSP meta + 页面全局 + 布局 shim） |
+| `本地验证脚本/probe.mjs` | 上游语义探针（invalid-model oracle、滚动、复用、时效、header 变体） |
+| `本地验证脚本/variant-scan.mjs` | 批量挑战变体扫描（plain vs emulated，含 suite 分类） |
+| `本地验证脚本/verifyfix.mjs` / `fix-validate.mjs` | 修复前后真实 chat 差分验证 |
+| `本地验证脚本/live-module-check.mjs` | 用真实 `src/duck/challenge.js` 直连上游的 live 验证 |
+| `本地验证脚本/variants/` | 去混淆后的随机 suite 样本（00–14） |
 | `duckai-cpa/tests/challenge-env.test.js` | 回归测试（page-state/layout/legacy） |
 | `duckai-cpa/tests/challenge-lifecycle-v262.test.js` | v2.63：旁路挑战 idle-only、pending TTL、版本刷新、诊断字段、signals 语义 |
 | `duckai-cpa/tests/summarize-retry-override.test.js` | v2.63：summarize 418 重试、overrideCode 归因 |
 | `duckai-cpa/tests/continuation.test.js` | v2.63：续传已解值/418 重试用例 |
-| `recon/2026-11-06/scratch-lead/live-continuation-check.mjs` | continuation 真实上游验证脚本（本次被 451 软限流 BLOCKED） |
-| `recon/2026-11-06/scratch-lead/diag-*.mjs` | 451 归因诊断（请求头/同进程对照，证明为上游软限流） |
+| `本地验证脚本/live-continuation-check.mjs` | continuation 真实上游验证脚本（本次被 451 软限流 BLOCKED） |
+| `本地验证脚本/diag-*.mjs` | 451 归因诊断（请求头/同进程对照，证明为上游软限流） |
 | `recon/2026-11-06/analysis/frontend-challenge.md` | 前端 bundle 源码专项报告（bundle-traffic） |
 | `recon/2026-11-06/analysis/challenge-payload.md` | 挑战载荷逆向专项报告：42 样本 suite 目录、Chrome ground truth、仿真清单（challenge-reverse） |
 | `recon/2026-11-06/scratch-challenge/suite-catalog.mjs` | 42 样本批量去混淆/分类/plain-vs-仿真求解 |
@@ -266,7 +266,7 @@ module 35488 的入参是一个 iframe 元素；调用方传入的正是 `#jsa`�
 
 **待确认**
 - overrideCode ↔ suite 的完整映射；真实 chat 的挑战一次性/消费语义；`ERR_BN_LIMIT` 在其它 tier 下的触发条件；时间窗口的精确上界；是否存在第 5+ 类 suite。
-- v2.63 continuation/真实续传的**在线**验证被上游临时 `451 ERR_COUNTRY_NOT_SUPPORTED` 软限流阻断（手动同头请求亦复现），额度恢复后跑 `scratch-lead/live-continuation-check.mjs` 即可补齐。
+- v2.63 continuation/真实续传的**在线**验证被上游临时 `451 ERR_COUNTRY_NOT_SUPPORTED` 软限流阻断（手动同头请求亦复现），额度恢复后跑 `本地验证脚本/live-continuation-check.mjs` 即可补齐。
 
 **BLOCKED**
 - v2.63 continuation 真实上游实机验证（原因同上；离线用例已覆盖行为）。

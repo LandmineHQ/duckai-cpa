@@ -37,7 +37,7 @@
 3. 订阅 token 的在线校验；
 4. `POST /admin/api/proxy/test` 的测试请求。
 
-> 说明：沙箱原本只允许 `duck.ai`，本机代理已验证可访问 `duckduckgo.com` 与任意外网（exit IP 会变化）。
+> 说明：当前环境原本只允许 `duck.ai`，本机代理已验证可访问 `duckduckgo.com` 与任意外网（exit IP 会变化）。
 > 因此**启用代理后 Sync 的 `transport` 应变为 `available`**（跨设备配对握手机制本身仍待实现，见 §6）。
 
 ## 3. Admin API

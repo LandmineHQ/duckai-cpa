@@ -3,8 +3,8 @@
 > 契约：`docs/IDENTITY-POOL.md` §1–§3。本文记录 **协议层实现**：存储布局、路由公式、绑定、每身份 RPS 队列、
 > 运行时（每身份一个 DuckClient）、订阅身份路由、接口签名与自测结果。
 >
-> Admin API（`/admin/api/identities*`）、`/v1/*` 的 `X-Session-Id` 解析、上下文裁剪守卫由 api-core 实现；
-> 身份页/身份池页/配对二维码由 web-dashboard 实现。协议层只暴露 `IdentityPool`，不直接暴露 HTTP 端点。
+> Admin API（`/admin/api/identities*`）、`/v1/*` 的 `X-Session-Id` 解析、上下文裁剪守卫由 网关后端 实现；
+> 身份页/身份池页/配对二维码由 管理后台 实现。协议层只暴露 `IdentityPool`，不直接暴露 HTTP 端点。
 
 ---
 
@@ -115,7 +115,7 @@ bindings[sessionKey] = { identityId, createdAt, updatedAt }   // 持久化，此
 - `stats()`：`{waiting,inFlight,rps,maxConcurrent,queueLimit,requests,failures,lastStartedAt,lastCompletedAt,peakInFlight,totalWaitMs,avgWaitMs,lastWaitMs}`。
 
 `pool.run(identityId, fn, {signal})`：入队 → `fn(runtime)`（`runtime.queueWaitMs` 为该请求排队时长）→ 统一计数
-`stats.requests` / `stats.failures` / `lastUsedAt`。api-core 用它把上游调用包在身份队列里：
+`stats.requests` / `stats.failures` / `lastUsedAt`。网关后端 用它把上游调用包在身份队列里：
 
 ```js
 const identityId = await pool.route(sessionKey, { paidModel });
@@ -152,7 +152,7 @@ const result = await pool.run(identityId, (runtime) => runtime.chat(params, hand
 
 ---
 
-## 7. 接口清单（api-core / QA 使用）
+## 7. 接口清单（网关后端 / QA 使用）
 
 | 方法 | 签名/返回 |
 | --- | --- |
@@ -231,8 +231,8 @@ chat 成功与否取决于出口 IP 的匿名额度/风控（与 v2.3 观察一�
 - `MemoryIdentityStore`：与 `IdentityStore` 同读接口（journey/conversation/durableStream/auth/health 摘要），
   不落盘；池负责持久化。
 - `mapUpstreamError`：`ERR_CONVERSATION_LIMIT` 由 429 改为 **409 `conversation_limit_reached`**
-  （`openaiType:"invalid_request_error"`，不可重试），供 api-core 的上下文守卫使用。
-- 上下文裁剪（`config.context`、`ERR_INPUT_LIMIT`/`ERR_CONVERSATION_LIMIT` 裁剪后重试一次）由 api-core 在
+  （`openaiType:"invalid_request_error"`，不可重试），供 网关后端 的上下文守卫使用。
+- 上下文裁剪（`config.context`、`ERR_INPUT_LIMIT`/`ERR_CONVERSATION_LIMIT` 裁剪后重试一次）由 网关后端 在
   server 层实现；会话 `contextTrimmed` 由 sessions store 记录。
 
 ---

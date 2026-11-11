@@ -4,7 +4,7 @@
 > 关键更新（2026-11-01）：duck.ai 真实 bundle 里存在**原生摘要接口**，本实现优先使用它，
 > 原生不可用时回退到普通 chat 生成摘要（保底）。
 >
-> 关联：`docs/SYNC-DEVICES.md`（无关）；自动压缩接线（task-40）由 api-core 实现。
+> 关联：`docs/SYNC-DEVICES.md`（无关）；自动压缩接线（）由 网关后端 实现。
 
 ---
 
@@ -63,7 +63,7 @@ import {
   - 无 activation：`pairCount - covered >= 4 && pairCount >= 4`（`allowPairFallback:false` 时 false）；
 - messages 形式：`shouldCompact(messages, {model?, coveredPairCount?, activationTargetPairCount?, triggerChars?})`；
   `triggerChars` 仅在显式传入时按字符判断（旧网关行为，duck.ai 不按字符）。
-- `getActivationTargetPairCount()` 只在 >0 时返回数字（0 → null），api-core 可直接透传，无需手动把 0 改成 null。
+- `getActivationTargetPairCount()` 只在 >0 时返回数字（0 → null），网关后端 可直接透传，无需手动把 0 改成 null。
 
 `options`：`{ model?, maxSummaryChars?, previousSummary?: string|{text,version}, previousSummaryVersion?, systemPrompt?, signal?, inputCharsLimit?, targetPairCount?, coveredPairCount?, newMessages?, extraHeaders?, systemPromptMode? }`
 
@@ -113,7 +113,7 @@ capabilities: {                    // 对象
 }
 ```
 导出 `getModelCapabilities(id)` → `{model, displayName, tier, paid, webSearch, imageGeneration, reasoningEfforts, contextWindowChars, maxInputChars, maxOutputTokens, maxOutputTokensEstimated, capabilities}`；未知 id → `null`；支持 `MODEL_ALIASES`（`gpt-6` → `gpt-6-luna`）。
-`getApiModelCatalog()` 现在带上述顶层字段（`/v1/models` 的 `context_window`/`max_input_tokens` 等映射由 api-core 做）。
+`getApiModelCatalog()` 现在带上述顶层字段（`/v1/models` 的 `context_window`/`max_input_tokens` 等映射由 网关后端 做）。
 示例：`gpt-6-luna`：tier free、webSearch true、imageGeneration true、reasoningEfforts `['none','low']`、contextWindowChars 16000；`mistral-small-2603`：webSearch/imageGeneration false；付费模型 paid true、tier plus/pro。
 
 ---
@@ -121,7 +121,7 @@ capabilities: {                    // 对象
 ## 4. 与 duck.ai 原生摘要的差异 / 限制
 
 1. **原生语义一致部分**：端点、请求体（`model/previousSummary/targetPairCount/newMessages`）、响应 `summary.text/version/coveredPairCount`、滚动挑战提交、`fixedCostWindowUsage`、`ERR_*`/`retriable` 映射；`previousSummary` 增量与 pair 语义按原生实现。
-2. **未实现**：`POST /duckchat/v1/summarize/compact`（主动 compact，body 形状待确认）；`[SUMMARY_REFRESH_HINT]`/`[SUMMARY_INVALID]` 的**自动触发**由 api-core（task-40）根据 session 状态与 DONE 行决定，本模块只提供摘要能力与 `shouldCompact`。
+2. **未实现**：`POST /duckchat/v1/summarize/compact`（主动 compact，body 形状待确认）；`[SUMMARY_REFRESH_HINT]`/`[SUMMARY_INVALID]` 的**自动触发**由 网关后端（）根据 session 状态与 DONE 行决定，本模块只提供摘要能力与 `shouldCompact`。
 3. **usage 非精确**：上游可能不返回 token usage；本模块只有字符数与 `estimateTokens=ceil(chars/3)` 估算，不能当计费依据。
 4. **回退质量差异**：原生端点不可用时用普通 chat 生成；prompt 由我们构造，可能与原生摘要风格/覆盖范围不同（返回 `native:false, fallbackReason` 便于上层标注）。
 5. **额度/风控**：匿名出口 IP 共享额度；原生端点偶发 `418 ERR_BN_LIMIT`（`overrideCode 8e04`）或 `418 ERR_CHALLENGE`；

@@ -1,6 +1,6 @@
-﻿# AGENTS.md — duckai-cpa 项目指南（给未来的 agent / 协作者）
+﻿# AGENTS.md — duckai-cpa 项目指南（面向后续开发者与协作者）
 
-> 本文件是 **项目级** 指令。优先级：用户即时指令 > 本文件 > 全局 `~/.dsh/AGENTS.md`。
+> 本文件是 **项目级** 约定。优先级：用户即时指令 > 本文件。
 > 最后更新：2026-11-06（v2.63）。改代码前先读本文件相应章节。
 
 ## 1. 项目是什么
@@ -15,7 +15,7 @@
 ## 2. 常用命令
 
 ```powershell
-npm start                 # 启动网关（前台；agent 用后台 job 启动）
+npm start                 # 启动网关（前台；开发时可用后台进程启动）
 npm run dev               # 热重载
 npm run build:web         # 构建管理后台 → web/（会改 index-*.js hash）
 npm test                  # ★ 全量测试；只有它算数（见下方“测试铁律”）
@@ -107,7 +107,7 @@ data/                运行时数据（不入库；含敏感文件）
 - **工具策略**（v2.22–v2.23）：只能开关上游支持的 tool（`web_search` / `image_generation`）；
   不可用 tool 默认**静默清理**（`config.models.tools.dropUnsupported=true`），设为 `false` 时才 400
   （`unsupported_tool` / `tool_not_supported` / `tool_disabled`）。OpenAI `tools[].function` 由 **client 工具桥**支持
-  （v2.44，网关不执行、不接 MCP；见下）。模型配置页是**防抖自动保存**（无保存按钮）、
+  （v2.44，网关不执行、不接入外部工具；见下）。模型配置页是**防抖自动保存**（无保存按钮）、
   每个参数可单独重置，底部「危险 / 高级操作」卡片放静默清理开关与「重置全部模型配置」。
 - **压缩**：只对白名单模型自动压缩；触发按 pair / `activationTargetPairCount`（不按字符）；
   `gpt-6-luna` 等不自动压缩（会话上限时只能新会话，见 `docs/CONTEXT-TOKENS.md`）。
@@ -117,8 +117,8 @@ data/                运行时数据（不入库；含敏感文件）
   `test_sessions`、`chat_summaries`、`meta.stats.*`、`meta.keys.managed`（旧 JSON 仅首启导入一次，随后可归档到 `data/legacy-json-archive/`）。
 - **session id 展示（v2.40）**：连接测试 header/列表与会话历史详情/列表都展示完整 session id（可复制）；无 X-Session-Id 的 v1 请求历史 key 为 `auto:<hash>`。
 - **Responses 生图（v2.40/v2.44）**：`/v1/responses` 只有图片时必须补 message item + output_text；下一轮 input 里的 `image_generation_call` 必须接受，并保留为真实 image part（v2.44 起不再转文本占位），JPEG 转 PNG ≤512px 后转发。
-- **客户端工具桥（v2.44/v2.45）**：OpenAI `tools[].function` 重新支持，但**只做 client 模式**（Codex/DSH 本地执行，
-  网关不执行、不接 MCP）。Completions 与 Responses 的 tools 形状由 `src/openai/tool-protocol.js` 自动归一化，
+- **客户端工具桥（v2.44/v2.45）**：OpenAI `tools[].function` 重新支持，但**只做 client 模式**（客户端本地执行，
+  网关不执行、不接入外部工具）。Completions 与 Responses 的 tools 形状由 `src/openai/tool-protocol.js` 自动归一化，
   输出分别映射为 `tool_calls` / `function_call`；下一轮接受 `role:"tool"` 与 `function_call_output`。
   协议注入必须放在**第一条 user 消息**（v2.45 稳定前缀，保证旧消息逐字节不变、上游 prefix cache 可命中；
   不要改回最后一条 user：下一轮协议消失会导致历史文本变化、cache miss）。配置 `tools.clientFunctionCalling.enabled`（默认 true）。
@@ -128,11 +128,11 @@ data/                运行时数据（不入库；含敏感文件）
   把除当前 user 以外的全部历史渲染成 **两个 PDF**：`client-tools.pdf`（工具说明，1 页）+ `conversation-context.pdf`（上下文，≤15 页，250 行/页）；当前 user 保留文本并同时附带两个 `file` part；图片嵌入上下文 PDF。
   同一会话的 context PDF 持久化在 `context_pdfs` 表（scope = session id / previous_response_id / 首条 user 稳定哈希），后续轮次复用同一 PDF，不再每轮生成；只有再次触发溢出/手动 `/v1/compact` 才更新。
   15 页是 Free 实测硬限制；超过时返回 413 `context_pdf_capacity_exceeded`，不静默丢内容。
-  会话历史跳过 system/developer 消息（Codex 系统提示不再渲染成巨大 pill）；只保存 PDF 元数据（filename/pages/bytes），前端 `ChatMessageBubble` 渲染 PDF chip（用户气泡内）；`ReadDocument` 等工具显示为「文档读取」；历史展示会去掉注入的「[系统提示] 附件…」指令文本。
+  会话历史跳过 system/developer 消息（system/developer 消息不再渲染成巨大 pill）；只保存 PDF 元数据（filename/pages/bytes），前端 `ChatMessageBubble` 渲染 PDF chip（用户气泡内）；`ReadDocument` 等工具显示为「文档读取」；历史展示会去掉注入的「[系统提示] 附件…」指令文本。
   只要本次请求带 client tools，就生成 **client-tools.pdf**（即使文本 <20k、没有 context PDF）；完整工具协议不再注入文本。历史 `injection.protocolText` 改为 PDF 用途说明（protocolKind=client-tools-pdf），完整工具协议在 client-tools.pdf 弹窗查看；无 context PDF 时历史显示 `工具说明 PDF` 徽章。
   token 用量改用 gpt-tokenizer（`src/openai/tokens.js`），PDF/图片也计入；chat 返回 prompt/completion tokens，responses 返回 input/output tokens。
   `scripts/page-check.mjs` 默认**不再向上游发真实消息**；需要真实会话压缩验收时显式加 `--allow-upstream`。
-- **手动压缩 marker（v2.56）**：Codex 手动压缩不调用 `/v1/compact`，而是在 `/v1/responses` 的 input 里发一条 user 消息：
+- **手动压缩 marker（v2.56）**：客户端手动压缩不调用 `/v1/compact`，而是在 `/v1/responses` 的 input 里发一条 user 消息：
   `Another language model started to solve this problem ...`。网关必须识别 marker，把 marker 之前旧对话 + 摘要写入
   `conversation-context.pdf`，marker 之后的消息（含当前 user）作为 hot text；同一 session/canonical，旧 user 不残留。
   历史只保留压缩后 hot 视图 + `injection.compression` 徽章；marker/摘要不再进入 hot 文本，摘要只在 `conversation-context.pdf`（可点击 chip 查看），标题取 marker 后的第一条真实 user；
@@ -143,8 +143,8 @@ data/                运行时数据（不入库；含敏感文件）
   会话历史详情可查看完整协议与注入后的第一条 user；upstream 日志新增 `clientTools/protocolInjected/upstreamMessageCount/conversationChain`；
   `GET /admin/api/history/:id/upstream` 返回脱敏后的真实 upstream messages（图片 base64 替换为 `[image data ...]`）。
   手动 `/v1/compact` 现在会把 assistant.tool_calls / role:"tool" 编码成文本再摘要，不再丢工具轨迹。
-- **DSH 辅助请求（v2.61）**：DSH 的「Generate the session title...」标题生成请求虽复用同一 session，但**不得**写入 canonical/history；网关按“最后一条 user 是否标题提示”识别为 ephemeral，仍正常返回但跳过 diff/save。
-  旧 canonical 若已混入标题请求/回复，下一轮自动 strip（同时 strip incoming）并标记 `stateRepaired`、重建 upstream 前缀；因此 `session_history_mismatch` 的 DSH 会话重试即可恢复，不需要手动建新 session。
+- **客户端辅助请求（v2.61）**：客户端的「Generate the session title...」标题生成请求虽复用同一 session，但**不得**写入 canonical/history；网关按“最后一条 user 是否标题提示”识别为 ephemeral，仍正常返回但跳过 diff/save。
+  旧 canonical 若已混入标题请求/回复，下一轮自动 strip（同时 strip incoming）并标记 `stateRepaired`、重建 upstream 前缀；因此 `session_history_mismatch` 的 客户端 会话重试即可恢复，不需要手动建新 session。
 - **工具调用容错（v2.60）**：上游可能返回被截断、少一个闭合括号的 `{"tool_call":...}` JSON；`parseToolCalls` 必须做括号/字符串补齐再解析，绝不能把原始 JSON 字符串当 assistant 正文发给客户端。
 - **Authoritative session（v2.59，BREAKING）**：网关是唯一会话所有者。稳定 session（X-Session-Id/conversation_id/prompt_cache_key/previous_response_id 链）下：
   客户端历史只用于 diff，canonical 由网关维护；`conversation_state.client_json` 保存上次完整客户端视图，第二轮回放只 append suffix，
@@ -209,7 +209,7 @@ data/                运行时数据（不入库；含敏感文件）
   角色措辞在 `src/duck/duckai-roles.json`（从 bundle 提取）。改文案要同步这三处与 `tests/prompt-generator.test.js`。
 - **设置页保存**：header 不放按钮；每张卡片自带保存（只 PUT 自己的配置段）。**不要**再订阅 `/overview` 轮询做数据源，
   否则每 5 秒 `setLoading(true)` 会导致页面抖动（v2.28 已修）。
-- **代理**：沙箱访问 duck.ai / sync.duckduckgo.com 需要 `http://127.0.0.1:10808`（配置见「代理」页）。
+- **代理**：当前环境访问 duck.ai / sync.duckduckgo.com 需要 `http://127.0.0.1:10808`（配置见「代理」页）。
 - **订阅登录（v2.26 坑）**：① Chrome 地址栏**粘贴** `javascript:` 会被剥离变成搜索 → 只能拖成书签或用 Console 脚本；
   ② duck.ai CSP `connect-src` 不含 duckduckgo.com → 浏览器内只能用同源 `/duckchat/v1/auth/token`；
   ③ Chrome Local Network Access 会拦公网→`127.0.0.1` 的 fetch → 脚本回退 `window.open` 打开管理台，
@@ -295,33 +295,32 @@ data/                运行时数据（不入库；含敏感文件）
 ## 7. 交付流程（必须照做）
 
 1. **改代码 → 构建（如涉及 webapp）→ 重启网关（如涉及 src）**：
-   - 后台 job 启动：`node src/index.js`；改完先 `job_kill` 旧 job 再起，避免端口占用/旧代码。
+   - 用后台进程启动：`node src/index.js`；改完先停止旧进程再重启，避免端口占用/旧代码。
 2. **跑验证矩阵**（不允许只看单测就宣布完成）：
    - `npm test` 全绿；
    - `npm run build:web` + `node scripts/build-check.mjs`；
    - `node scripts/page-check.mjs --admin-token <ADMIN> --api-key <KEY>`（真实网关 22/22；
      Sync 未配置时相关用例自动 SKIP）；
    - 涉及真实上游时 `scripts/live-check.mjs`（额度受限则记录 BLOCKED，不虚报）。
-3. **实机验证**：浏览器操作**必须**通过 MCP `chrome-devtools`（用户明确要求；直接用浏览器
-   调用会触发人工授权）。截图保存到 `docs/screenshots/` 并 `present`。
+3. **真实浏览器验证**：涉及页面/前端的改动必须在真实浏览器中操作验证，不能只看 jsdom 用例。
+   截图保存到 `docs/screenshots/`，并在验收记录与汇报中附上。
+
 4. **更新文档**：对应 `docs/*.md` + `docs/ACCEPTANCE.md`（每版一节，写明证据/结果）；
    有 BLOCKED 的必须标明原因与复现命令。
 5. **汇报**：中文、结论先行、区分「已验证 / 分析结论 / 待确认 / BLOCKED」；不要用未验证的结论
    冒充成功。
 
-## 8. Agent Teams 协作
+## 8. 协作与代码边界
 
-- 用 `team_task_create` 建任务（写 `write_scopes` 避免重叠），`send_message` 派给队友；
-  队友 `inactive` 时消息会启动新一轮。
-- 队友模型由用户统一配置为 `deepseek/deepseek-v4.1-flash`（与 Lead 一致）。`list_agents` 在
-  inactive 时可能显示 `deepseek-v4.1-flash`、running 时显示 `deepseek/deepseek-v4.1-flash`，
-  这是解析时机差异，不是配置错误。
-- 曾出现「队友进程启动失败」，2026-11-03 已由用户更新模型选择后恢复：qa-verifier /
-  duck-protocol / api-core 均已实测可正常执行任务（见 `docs/ACCEPTANCE.md` §2.16）。
-  若再遇到启动失败：先重试一次，仍失败则由 Lead 自己完成并在汇报里说明。
-- 文件写权限按 `write_scopes` 自律：`src/duck/**` 归协议、`src/**`（除 duck）归后端、
-  `webapp/**`+`web/**` 归前端、`tests/**`+`scripts/**` 归 QA。
-- 队友完成后 Lead 必须自己跑一遍全量验证与实机检查，再给用户最终答复。
+- 一个改动只动自己负责模块内的文件；需要跨模块时先说明方案与影响面，再协调实施。
+- 模块边界（同时作为目录归属约定）：
+  - `src/duck/**`：上游协议层（挑战、SSE、会话、压缩语义、代理）；
+  - `src/**`（除 `duck/`）：网关后端（HTTP、OpenAI 兼容层、管理 API、存储）；
+  - `webapp/**`、`web/**`：管理控制台前端；`web/` 是构建产物，不手改；
+  - `tests/**`、`scripts/**`：测试与验证脚本；
+  - `docs/**`：文档与验收记录。
+- 多人/多任务并行时按上述边界拆分文件范围，合并前统一跑一遍全量验证与实机检查。
+- 汇报与文档统一用中文，结论先行。
 
 ## 9. 当前状态（v2.21）
 
@@ -378,7 +377,7 @@ data/                运行时数据（不入库；含敏感文件）
 - **测试**：`npm test` **501/501**（新增 `tests/challenge-lifecycle-v262.test.js`、
   `tests/summarize-retry-override.test.js`、`tests/continuation.test.js` +1）。
 - **BLOCKED**：continuation 真实上游实机验证被上游临时 `451 ERR_COUNTRY_NOT_SUPPORTED` 软限流阻断
-  （手动同头请求亦复现）；额度恢复后跑 `recon/2026-11-06/scratch-lead/live-continuation-check.mjs`。
+  （手动同头请求亦复现）；额度恢复后重新执行续传验证脚本。
 - **未修（设计级）**：多身份并发 / admin 旁路 `/status`（`identity-pool` 每身份队列、usage 轮询）。
 
 ## 9.3 windows / platform-binaries 分支：多平台单文件二进制（2026-11-06）

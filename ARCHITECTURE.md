@@ -1,7 +1,7 @@
 # DuckAI CPA — 项目架构与协作规范
 
 > 本项目里的 **CPA** 指「类似 CPA2API 的网页版 AI → OpenAI 兼容 API 网关」：
-> 把 **duck.ai** 的网页聊天能力包装成标准 OpenAI 接口，供 Agent / SDK / 客户端直接调用。
+> 把 **duck.ai** 的网页聊天能力包装成标准 OpenAI 接口，供 SDK / 客户端直接调用。
 > 目标不是爬虫，而是**协议适配层**：会话管理、反爬挑战求解、SSE 解析、参数映射、工具映射、后台管理。
 
 > ## ⚠️ v2 重构（2026-11-01，BREAKING）
@@ -18,7 +18,7 @@
 > ## v2.2（稳定身份 / Sync & Backup / 订阅）
 > - 身份持久化到 data/identity.json：journeyId(32hex)、deviceId、stable conversationId、RSA-OAEP-256 密钥对与指纹；**重启不漂移**。
 > - durableStream 默认开启（上游接受本实现 JWK；被 400 时自动降级并计数）。
-> - 控制页 #/identity：匿名身份 / Sync & Backup（本地密钥、恢复码、v2 配对码；沙箱 duckduckgo.com 不可达时 503 提示）/ DuckDuckGo 订阅（粘贴 token 激活、tier/email/exp、注销）。
+> - 控制页 #/identity：匿名身份 / Sync & Backup（本地密钥、恢复码、v2 配对码；当前环境 duckduckgo.com 不可达时 503 提示）/ DuckDuckGo 订阅（粘贴 token 激活、tier/email/exp、注销）。
 > - 契约见 docs/IDENTITY-SYNC.md，源码分析见 docs/IDENTITY-RESEARCH.md。
 
 ---
@@ -185,7 +185,7 @@ data: [DONE]
 
 浏览器本地设置（tone/length/角色/昵称/附加指令≤500字），本轮抓包未在请求体发现独立字段。
 网关策略：OpenAI `instructions`/system/developer → 合并为 system 消息前置；若上游拒绝 system 角色，
-降级为拼进首条 user 文本（`promptMode: "system" | "inline"` 可配置）。duck-protocol 负责实测并记录结论。
+降级为拼进首条 user 文本（`promptMode: "system" | "inline"` 可配置）。协议层 负责实测并记录结论。
 
 ### 2.5 模型目录（来自官网 bundle，Free 可用）
 
@@ -212,40 +212,40 @@ data: [DONE]
 
 ```
 duckai-cpa/
-├─ ARCHITECTURE.md          [Lead]
-├─ README.md                [web-dashboard]
-├─ package.json             [Lead]（依赖变更需 Lead 同意）
-├─ config/config.example.json [Lead]
+├─ ARCHITECTURE.md          [验收执行者]
+├─ README.md                [管理后台]
+├─ package.json             [验收执行者]（依赖变更需 验收执行者 同意）
+├─ config/config.example.json [验收执行者]
 ├─ src/
-│  ├─ index.js              [api-core]   进程入口：加载配置、启动 HTTP
-│  ├─ config.js             [api-core]   配置读取/校验/热更新（JSON 文件 + env）
-│  ├─ store.js              [api-core]   JSON 原子持久化（配置、密钥、日志、统计）
-│  ├─ logger.js             [api-core]
-│  ├─ http/server.js        [api-core]   路由、鉴权、CORS、静态资源、SSE 转发
-│  ├─ openai/models.js      [api-core]
-│  ├─ openai/chat.js        [api-core]   /v1/chat/completions
-│  ├─ openai/responses.js   [api-core]   /v1/responses
-│  ├─ openai/images.js      [api-core]   /v1/images/generations
-│  ├─ openai/errors.js      [api-core]
-│  ├─ admin/routes.js       [api-core]   /admin/api/*（配置、密钥、测试、日志、统计）
-│  ├─ duck/index.js         [duck-protocol]  DuckClient（会话/挑战/chat/images/models）
-│  ├─ duck/challenge.js     [duck-protocol]  x-vqd-hash-1 求解器
-│  ├─ duck/sse.js           [duck-protocol]  SSE 解析 + 事件归一化
-│  └─ duck/models.js        [duck-protocol]  模型目录数据（以上表为准）
-├─ web/                     [web-dashboard] 管理后台静态页面（无构建步骤，原生 JS/CSS）
+│  ├─ index.js              [网关后端]   进程入口：加载配置、启动 HTTP
+│  ├─ config.js             [网关后端]   配置读取/校验/热更新（JSON 文件 + env）
+│  ├─ store.js              [网关后端]   JSON 原子持久化（配置、密钥、日志、统计）
+│  ├─ logger.js             [网关后端]
+│  ├─ http/server.js        [网关后端]   路由、鉴权、CORS、静态资源、SSE 转发
+│  ├─ openai/models.js      [网关后端]
+│  ├─ openai/chat.js        [网关后端]   /v1/chat/completions
+│  ├─ openai/responses.js   [网关后端]   /v1/responses
+│  ├─ openai/images.js      [网关后端]   /v1/images/generations
+│  ├─ openai/errors.js      [网关后端]
+│  ├─ admin/routes.js       [网关后端]   /admin/api/*（配置、密钥、测试、日志、统计）
+│  ├─ duck/index.js         [协议层]  DuckClient（会话/挑战/chat/images/models）
+│  ├─ duck/challenge.js     [协议层]  x-vqd-hash-1 求解器
+│  ├─ duck/sse.js           [协议层]  SSE 解析 + 事件归一化
+│  └─ duck/models.js        [协议层]  模型目录数据（以上表为准）
+├─ web/                     [管理后台] 管理后台静态页面（无构建步骤，原生 JS/CSS）
 ├─ docs/
-│  ├─ PROTOCOL.md           [duck-protocol] 上游协议实测文档
-│  └─ API.md                [web-dashboard] 对外 API 文档（OpenAI 兼容说明 + 示例）
+│  ├─ PROTOCOL.md           [协议层] 上游协议实测文档
+│  └─ API.md                [管理后台] 对外 API 文档（OpenAI 兼容说明 + 示例）
 ├─ tests/                   [qa]           node:test 单测 + mock 集成测试
 ├─ scripts/                 [qa]           smoke.js（真实上游冒烟）、mint-key.js 等
-├─ Dockerfile               [web-dashboard]
-├─ docker-compose.yml       [web-dashboard]
+├─ Dockerfile               [管理后台]
+├─ docker-compose.yml       [管理后台]
 └─ data/                    运行时数据（config.json、logs、stats；已 gitignore）
 ```
 
 ---
 
-## 4. DuckClient 接口契约（`src/duck/index.js`，由 duck-protocol 实现）
+## 4. DuckClient 接口契约（`src/duck/index.js`，由 协议层 实现）
 
 ```js
 export class DuckClient {
@@ -388,10 +388,10 @@ OpenAI `{"object":"list","data":[{id,object:"model",created,owned_by,created_by,
 
 ## 8. 协作规则
 
-1. **只写自己作用域内的文件**；跨域修改先在共享任务里说明，由 Lead 协调。
+1. **只写自己作用域内的文件**；跨域修改先在共享任务里说明，由 验收执行者 协调。
 2. 所有测试/脚本输出不要污染仓库根目录；临时文件放 `data/tmp/` 或 `tests/fixtures/`。
 3. 网络只访问 `https://duck.ai`（及本地 127.0.0.1）；不得抓取其它站点。
 4. 提交前自测：`node --check`、`npm test`（若已有）、手动 curl 验证。
-5. 与协议相关的结论先写进 `docs/PROTOCOL.md`（duck-protocol 负责），API 层依赖该文档而非猜测。
+5. 与协议相关的结论先写进 `docs/PROTOCOL.md`（协议层 负责），API 层依赖该文档而非猜测。
 6. 任何上游反爬参数变化，先在 `docs/PROTOCOL.md` 记录「现象 + 修复」，再改代码。
 7. 敏感信息（cookie/session）只存 `data/`，不写日志、不提交。

@@ -1,12 +1,12 @@
 # Duck.ai 错误处理与异常分析（源码逆向 + 实测）
 
-> 产出：`duck-protocol`（task-7）。来源：`recon/entry.duckai.2d2656b1fcd20ced62d9.js`（duck.ai Web 前端 bundle）、
+> 产出：`协议层`（）。来源：`recon/entry.duckai.2d2656b1fcd20ced62d9.js`（duck.ai Web 前端 bundle）、
 > `recon/allchunks.js`、`recon/TEAM-NOTES.md` 抓包，以及 2026-11-01/02 的真实上游实测。
 > 目的：让 `docs/PROTOCOL.md` 的「正常路径」之外，把「异常路径」也固化下来，供 `src/duck/**`（已实现）
 > 与 `src/openai/**`（错误映射）直接引用。
 >
 > 阅读顺序建议：§1 帧与伪事件 → §2 错误对象 → §3 ERR_* 清单 → §4 客户端处理行为 → §5 anomaly/captcha
-> → §6 moderation/refusal → §7 continuation/409 → §8 流中断与重连 → §9 网关映射表（api-core 直接用）。
+> → §6 moderation/refusal → §7 continuation/409 → §8 流中断与重连 → §9 网关映射表（网关后端 直接用）。
 
 ---
 
@@ -147,7 +147,7 @@ bundle 中一共扫到 **153 个唯一 `ERR_*` 标识**（含同步/语音/文�
 {"action":"error","status":429,"type":"ERR_BN_LIMIT","message":"You appear to be using an unsupported entrypoint, please use https://duck.ai/ instead"}
 ```
 
-这不是普通频率限流，而是**入口/自动化检测**。真实浏览器请求（Chrome + MCP 抓包）与网关请求的差异：
+这不是普通频率限流，而是**入口/自动化检测**。真实浏览器请求（Chrome + 外部工具 抓包）与网关请求的差异：
 
 | 信号 | 真实浏览器（200） | 网关旧实现（会被判定 unsupported） |
 | --- | --- | --- |
@@ -318,7 +318,7 @@ bundle 中一共扫到 **153 个唯一 `ERR_*` 标识**（含同步/语音/文�
 4. 失败达上限或用户关闭 → 隐藏挑战，走普通错误提示。
 
 **网关策略**：网关没有人工/视觉能力，无法解 anomaly 挑战。因此 `ERR_CHALLENGE` 映射为
-`403 upstream_anomaly_check`（`anomaly:true`，与 api-core 的 `DUCK_CODE_MAP` 对齐），`ERR_BN_LIMIT` 映射为 `429 upstream_rate_limited`；
+`403 upstream_anomaly_check`（`anomaly:true`，与 网关后端 的 `DUCK_CODE_MAP` 对齐），`ERR_BN_LIMIT` 映射为 `429 upstream_rate_limited`；
 两者都记录 `overrideCode` 与 `challengeData` 摘要到 `health().recentErrors`，供运维判断。
 若某次 `418` 后重新取挑战即可通过（实测常见），`DuckClient` 的传输层重试会先自愈。
 

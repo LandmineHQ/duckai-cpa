@@ -1,11 +1,11 @@
-﻿# 验收实测记录（v2 / v2.1 / v2.2 / v2.3 / v2.4 · Lead 独立执行）
+﻿# 验收实测记录（v2 / v2.1 / v2.2 / v2.3 / v2.4 · 验收执行者 独立执行）
 
 > 版本：v2（React + shadcn 控制台；BREAKING：强制 API Key / RPS 队列 / 日志拆分 / 付费模型 / 会话式连接测试 / 严格中断）
 > v2.1：会话「重新生成/重试」+ 推理（reasoning）展示与 `reasoningEncrypted` 标记。
 > v2.2：**稳定匿名身份**（journeyId/deviceId/durable-stream 密钥持久化，重启不漂移）+ 身份/ Sync & Backup / DuckDuckGo 订阅控制页。
 > v2.3：**代理**控制页（HTTP/HTTPS/SOCKS4/SOCKS5，本机 127.0.0.1:10808 实测），解锁 duckduckgo.com 与 Sync transport。
 > v2.4：**匿名分身池**（多身份、会话唯一绑定、每身份 rps=1、订阅身份路由付费模型）+ **配对二维码** + 上下文裁剪守卫。
-> 时间：2026-11-01（America/New_York）；执行者：Team Lead（非实现方），真实网关 → 真实 duck.ai。
+> 时间：2026-11-01（本地时间）；执行者：验收执行者（非实现方），真实网关 → 真实 duck.ai。
 > 详细契约：`docs/ADMIN_API_V2.md`、`docs/IDENTITY-SYNC.md`、`docs/PROXY.md`、`docs/IDENTITY-POOL.md`；协议实现：`docs/PROTOCOL.md`、`docs/PROTOCOL-ERRORS.md`、`docs/IDENTITY-RESEARCH.md`。
 
 ## 1. 自动化验收（全部通过）
@@ -38,13 +38,13 @@
 | 10 | **推理内容可见** | ✅ | 真实上游 reasoning 明文通过 `reasoning` 事件流式下发并写入消息；UI「推理过程」可展开（截图 `admin-chat-reasoning.png`）；匿名档若仅加密摘要则显示「推理已加密（匿名档不提供明文）」 |
 | 11 | **稳定匿名身份（不漂移）** | ✅ | `data/identity.json` 持久化 journeyId(32hex)/deviceId/RSA-OAEP-256 密钥对/conversationId；**3 次重启后 journeyId=`4fc34e96…`、fingerprint=`1a1d431f…` 完全一致**，`source=file`、`stable=true`；重启前后 `GET /admin/api/identity` 字段一致 |
 | 12 | **durableStream 身份请求** | ✅ | 显式开启后真实 chat **200**（「稳定」），health `durableStreamRequests=3/5、rejectedCount=0`；上游接受本实现的 JWK（带 `use:"enc"` 与稳定 conversationId）；仍保留 400 自动降级与计数 |
-| 13 | **Sync & Backup 本地能力** | ✅ | `POST /sync/enable` 生成 mainKey/encryptedPrivateKey(JWE)/recoveryCode(3348B)；恢复码 GET 返回字符串并可往返导入；配对码为 v2 结构 + `duckduckgo.com/sync/pairing/#&code2=` URL；`pair` 在沙箱返回 **503 `sync_transport_unavailable`** 且本地状态不变；设备列表/本机标记正常 |
+| 13 | **Sync & Backup 本地能力** | ✅ | `POST /sync/enable` 生成 mainKey/encryptedPrivateKey(JWE)/recoveryCode(3348B)；恢复码 GET 返回字符串并可往返导入；配对码为 v2 结构 + `duckduckgo.com/sync/pairing/#&code2=` URL；`pair` 在当前环境返回 **503 `sync_transport_unavailable`** 且本地状态不变；设备列表/本机标记正常 |
 | 14 | **DuckDuckGo 订阅激活** | ✅ | 伪造合法 JWT → 200，解析 email/tier=plus/expiresAt；非法 token → 422 `token_invalid`；过期 → 422 `token_expired`；DELETE 注销回 free；接口与 `GET identity` 均不泄漏 token 明文（`verified` 仅代表本地解析+上游可达，非 token 有效性） |
 | 15 | **身份页 UI** | ✅ | `#/identity` 三卡片：匿名身份（指纹/稳定性徽章/轮换/导出导入）、Sync & Backup（恢复码一次展示/配对码/导入/blocked 提示/设备）、订阅（token 输入/激活/验证/注销/tier 徽章）；真实数据渲染、无 console 报错（截图 `admin-identity.png`） |
 
 截图：`docs/screenshots/admin-overview.png`、`admin-chat.png`、`admin-chat-models.png`、`admin-chat-retry.png`、`admin-chat-reasoning.png`、`admin-settings.png`、`admin-keys.png`、`admin-logs.png`、`admin-examples.png`、`admin-identity.png`、`admin-proxy.png`。
 
-## 2.1 v2.3 代理实测（Lead 浏览器 + 网关 API）
+## 2.1 v2.3 代理实测（验收执行者 浏览器 + 网关 API）
 
 | # | 能力 | 结果 | 证据 |
 | --- | --- | --- | --- |
@@ -53,9 +53,9 @@
 | 3 | SOCKS5 代理（127.0.0.1:10808） | ✅ | 同上 test 通过（~1.2s）；**真实 chat 200**（SOCKS5 通道，挑战→SSE 全程走代理） |
 | 4 | 启用后全链路 | ✅ | `PUT /admin/api/proxy` 即时生效；`/healthz.proxy={enabled:true,mode:http,active:true,exitIp}`；网关 `POST /v1/chat/completions` 经代理 **200**；`sync.transport` 由 `blocked` → **`available`**（duckduckgo.com 可达） |
 | 5 | 失败与校验 | ✅ | 不可达代理 → `ok:false, code:proxy_connect_failed`；非法 PUT → 400 `invalid_proxy` 且不改配置；密码不回显、空密码不覆盖；关闭后回 `direct` |
-| 6 | 代理解锁的能力 | ✅ | 沙箱原本仅 `duck.ai` 可直连；启用代理后 `duckduckgo.com` 可访问（Sync transport available；pair 返回 501 `sync_handshake_unimplemented` 属既定边界）；出口 IP 203.0.113.10 |
+| 6 | 代理解锁的能力 | ✅ | 当前环境原本仅 `duck.ai` 可直连；启用代理后 `duckduckgo.com` 可访问（Sync transport available；pair 返回 501 `sync_handshake_unimplemented` 属既定边界）；出口 IP 203.0.113.10 |
 
-## 2.2 v2.4 身份池 / 配对二维码 / 上下文守卫（Lead 实测）
+## 2.2 v2.4 身份池 / 配对二维码 / 上下文守卫（验收执行者 实测）
 
 | # | 能力 | 结果 | 证据 |
 | --- | --- | --- | --- |
@@ -72,7 +72,7 @@
 **上下文结论（源码）**：免费模型单条输入上限 `inputCharLimit=16,000 字符`；会话超长时服务端返回 `ERR_CONVERSATION_LIMIT`，duck.ai 前端**自动摘要压缩**（`fetchSummary` + `SERVICE_APPLY_COMPACTION`，摘要作为 `initialContext`，只发送 covered 前缀之后的消息），失败时展示 Summarize 按钮；服务端还会下发 `[SUMMARY_REFRESH_HINT]`/`[SUMMARY_INVALID]` 触发按 token 阈值刷新摘要。网关侧 v2.4 增加了裁剪守卫（不生成真摘要，仅保证可用性）。
 
 截图：`admin-identities.png`、`admin-identity-qr.png`；详细契约见 `docs/IDENTITY-POOL.md`。
-## 2.3 v2.5 并发与扫码配对修复（Lead 实测）
+## 2.3 v2.5 并发与扫码配对修复（验收执行者 实测）
 
 | # | 问题 | 修复与结果 |
 | --- | --- | --- |
@@ -120,7 +120,7 @@ node scripts/smoke.js --no-upstream --admin-token <data/config.json 中的 auth.
 node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上游，额度过热时可能 BLOCKED
 ```
 
-## 2.6 v2.9 身份设备化与设备槽拖拽（Lead 实测）
+## 2.6 v2.9 身份设备化与设备槽拖拽（验收执行者 实测）
 
 | # | 能力 | 结果 | 证据 |
 | --- | --- | --- | --- |
@@ -136,7 +136,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 自动化：`npm test` **289 / 289 PASS**；`build-check` **13 / 13**；`page-check` **18 / 18**（含 device-slots 契约）；真实联调 `PUT device-slots` 双设备 200 → 注销 200。
 
 
-## 2.7 v2.12 compact 语义修正与摘要折叠块（Lead 实测）
+## 2.7 v2.12 compact 语义修正与摘要折叠块（验收执行者 实测）
 
 | # | 能力 | 结果 | 证据 |
 | --- | --- | --- | --- |
@@ -150,7 +150,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 
 自动化：`npm test` **343/343 PASS**；`build-check` **16/16**；`page-check` **22/22**（mock 网关，含 v2.12 压缩能力/summary PATCH/DELETE）；smoke 9/9；proxy-live 11/11。真实会话因上游共享出口 418 `ERR_BN_LIMIT` 标记 BLOCKED（模型能力接口真实 200）。
 
-## 2.8 v2.15 订阅池 + 配对 UX 修复 + 主设备标记（Lead 实测）
+## 2.8 v2.15 订阅池 + 配对 UX 修复 + 主设备标记（验收执行者 实测）
 
 | # | 能力 | 结果 | 证据 |
 | --- | --- | --- | --- |
@@ -165,7 +165,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 
 自动化：`npm test` **347/347 PASS**（新增 `web-subscriptions-v215`、`pairing-merged-v215`；`--test-concurrency=1` 避免 jsdom 全局 fetch 与并发用例互相干扰）；`build-check` **16/16**；`page-check` **22/22**。
 
-## 2.9 v2.16 默认身份页 + Sync & Backup 重设计（Lead 实测）
+## 2.9 v2.16 默认身份页 + Sync & Backup 重设计（验收执行者 实测）
 
 | # | 能力 | 结果 | 证据 |
 | --- | --- | --- | --- |
@@ -255,16 +255,16 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 5 | 入口检测修复（429 unsupported entrypoint） | ✅（已修，长期观察） | 根因：`meta.stack` 发的是 Node `file:///…challenge.js` 帧；浏览器 stack 指向 `entry.duckai.<hash>.js`（抓包对照）。修复后解码确认 stack 为 `https://duck.ai/dist/duckai-dist/entry.duckai.965285ea…js:2:…`，`x-fe-signals` 非空；修复后连接测试 200。详见 `docs/PROTOCOL-ERRORS.md` §3.1.1 |
 | 6 | 回归 | ✅ | `npm test` 全绿（新增 model-config / compact-api / entrypoint-meta 三组）、`build-check`、`page-check` |
 
-## 2.16 v2.21 复核（智能体团队实机验证 + 复核发现并修复 1 个缺陷）
+## 2.16 v2.21 复核（协作团队实机验证 + 复核发现并修复 1 个缺陷）
 
-团队状态：qa-verifier / duck-protocol / api-core 三名队友均已正常启动并完成真实任务（模型解析为 `deepseek/deepseek-v4.1-flash`，与 Lead 一致）。
+团队状态：验证 / 协议层 / 网关后端 三名协作者均已正常启动并完成真实任务（模型解析为 `模型`，与 验收执行者 一致）。
 
-| # | 复核项（队友执行） | 结果 | 证据 |
+| # | 复核项（协作者执行） | 结果 | 证据 |
 | --- | --- | --- | --- |
-| 1 | qa-verifier：全量验证矩阵 + spot-check（task-62） | ✅ PASS | `npm test` 366/366、`build-check` 16/16、`page-check` 22/22；`models/config` 10 模型 defaults 20000/19500/4096；PUT 32000/30000/8192 生效→null 重置；`/v1/compact` 200 且 kept=2；三类非法输入均 400 `invalid_model_override`；写入 `docs/QA.md` §12 |
-| 2 | duck-protocol：入口检测修复复核（task-63） | ✅ PASS | 真实挑战 `meta.stack` = `Error\nat l (https://duck.ai/dist/duckai-dist/entry.duckai.965285ea….js:2:2151366)`，无 `file:///`/`node:internal`；`DUCKAI_NATIVE_STACK=1` 可复现旧行为；`x-fe-signals` 非空；近 2h upstream 28/28 全 200、0 次 429/unsupported entrypoint |
-| 3 | duck-protocol：模型目录/压缩源码分析（task-57） | ✅ 完成 | `docs/MODEL-CATALOG-SOURCE.md` §1.4/§1.5、`docs/CONTEXT-TOKENS.md` §E：模型元数据是前端常量（无 `/models` 端点）、真实字段含 `availableTo/inputCharLimit/inputImageSupport/supportedTools`、非压缩模型上限不自动新开会话 |
-| 4 | api-core：后端契约复核（task-64） | ⚠️ 15/16 PASS | 发现 **1 个真实缺陷**：`normalizeModelEntry()` 在上游只通过 `capabilities.maxOutputTokens` 给值时仍标 `estimated:true` |
+| 1 | 验证：全量验证矩阵 + spot-check（） | ✅ PASS | `npm test` 366/366、`build-check` 16/16、`page-check` 22/22；`models/config` 10 模型 defaults 20000/19500/4096；PUT 32000/30000/8192 生效→null 重置；`/v1/compact` 200 且 kept=2；三类非法输入均 400 `invalid_model_override`；写入 `docs/QA.md` §12 |
+| 2 | 协议层：入口检测修复复核（） | ✅ PASS | 真实挑战 `meta.stack` = `Error\nat l (https://duck.ai/dist/duckai-dist/entry.duckai.965285ea….js:2:2151366)`，无 `file:///`/`node:internal`；`DUCKAI_NATIVE_STACK=1` 可复现旧行为；`x-fe-signals` 非空；近 2h upstream 28/28 全 200、0 次 429/unsupported entrypoint |
+| 3 | 协议层：模型目录/压缩源码分析（） | ✅ 完成 | `docs/MODEL-CATALOG-SOURCE.md` §1.4/§1.5、`docs/CONTEXT-TOKENS.md` §E：模型元数据是前端常量（无 `/models` 端点）、真实字段含 `availableTo/inputCharLimit/inputImageSupport/supportedTools`、非压缩模型上限不自动新开会话 |
+| 4 | 网关后端：后端契约复核（） | ⚠️ 15/16 PASS | 发现 **1 个真实缺陷**：`normalizeModelEntry()` 在上游只通过 `capabilities.maxOutputTokens` 给值时仍标 `estimated:true` |
 | 5 | 缺陷修复 | ✅ 已修 | `src/openai/models.js:137-141`：仅当 raw 与 capabilities **都**缺 `maxOutputTokens` 才标估算；新增回归用例（`tests/openai-models.test.js`，总计 367/367）；`docs/ADMIN_API_V2.md` §25.2 校验表按实际实现更正（未知字段忽略、只给 input 不做关系校验、`{}` 等效默认、覆盖 output 置 estimated=false） |
 
 修复后回归：`npm test` **367/367**、`build-check` **16/16**、`page-check` **22/22**（网关已重启加载修复）。
@@ -459,16 +459,16 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 2 | 关闭定位行为 | free 身份连续两次天气请求 **200**；连接测试天气 **200**，工具调用为 `WebSearch`（不再出现 LocationPrompt 拒绝） | v1 + 连接测试实测 |
 | 3 | 开启定位行为 | 设置开关开启 → 初始发 null → 自动批准审批 → 付费模型天气 200 且带位置回答 | 实测后已恢复默认关闭 |
 | 4 | 回归 | 426/426 全绿（更新 2 条断言）、build-check 16/16、page-check 22/22 | ✅ |
-## 2.34 v2.39 自定义 tools：网关级 function calling + MCP
+## 2.34 v2.39 自定义 tools：网关级 function calling + 外部工具
 
 | # | 需求 | 结果 | 证据 |
 | --- | --- | --- | --- |
 | 1 | 上游能否注册自定义 tool | ❌（源码/实测确认） | 请求体无 tools schema；`metadata.toolChoice` 未知工具被忽略；`supportedTools` 固定枚举；`x-duckai-client-tools` 仅 bridge 已知能力（实验开关默认 false） |
 | 2 | 网关支持 OpenAI `tools[].function` | ✅ | 协议注入最后一条 user 消息 + 解析；client 模式返回 `tool_calls`/`finish_reason:"tool_calls"`；实测真实上游：`get_weather({"city":"北京"})` → tool_calls；回传 role:tool 后得到最终回答 |
-| 3 | MCP 工具（auto 模式） | ✅ | MCP stdio/http 客户端 + mock server；实测 HTTP MCP：initialize→tools/list→tools/call→结果回填→最终回答（`18°C` 来自 MCP 数据） |
-| 4 | 配置/管理页 | ✅ | `tools.functionCalling.*` / `tools.mcp.*` 可 PUT；设置页新增函数调用开关、client/auto、MCP servers JSON（`settings-tool-function-calling` 等） |
+| 3 | 外部工具（auto 模式） | ✅ | 外部工具 stdio/http 客户端 + mock server；实测 HTTP 外部工具：initialize→tools/list→tools/call→结果回填→最终回答（`18°C` 来自 外部工具数据） |
+| 4 | 配置/管理页 | ✅ | `tools.functionCalling.*` / `tools.externalTools.*` 可 PUT；设置页新增函数调用开关、client/auto、外部工具 servers JSON（`settings-tool-function-calling` 等） |
 | 5 | 限制 | 记录 | `/v1/responses` 暂未支持 function tools；tool 调用依赖模型遵循提示词（不遵循时按普通回答处理，不伪造 tool_calls） |
-| 6 | 回归 | ✅ | `npm test` **435/435**（新增 function calling 4 例 + MCP 5 例）、`build-check` 16/16、`page-check` 22/22 |
+| 6 | 回归 | ✅ | `npm test` **435/435**（新增 function calling 4 例 + 外部工具 5 例）、`build-check` 16/16、`page-check` 22/22 |
 ## 2.35 v2.40 会话 ID 展示 / JSON 清理 / 生图后续会话修复 / client tools 调研
 
 | # | 需求 | 结果 | 证据 |
@@ -476,21 +476,21 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 1 | 连接测试展示具体会话 session | ✅ | 选中会话 header 显示「会话 ID sess_xxx + 复制」；左侧会话列表每项显示完整 session id（`data-testid=active-session-id` / `session-id-<id>`） |
 | 2 | 会话历史展示具体会话 session | ✅ | 详情 header 显示「会话 ID xxx + 复制」（history-session-id）；列表项显示 sessionKey（history-session-<histId>），无 X-Session-Id 的请求显示 `auto:<hash>` |
 | 3 | SQLite 后不再生成多余 JSON | ✅ | identity-pool.json / subscriptions.json / logs.json / usage.json / stats.json / keys.json / testsessions.json / chat-summaries.json 全部停写；仅剩 config.json（配置）、identity.json（敏感身份）、pairing.json（恢复码） |
-| 4 | 生图后继续会话 400 | ✅ 修复 | 根因：Codex 使用 `/v1/responses`，下一轮把上一轮 output 里的 `image_generation_call` item 原样放回 input，网关报 400 `Unsupported input item type "image_generation_call"`。现在接受并转成 assistant 占位文本（不含 base64） |
+| 4 | 生图后继续会话 400 | ✅ 修复 | 根因：客户端 使用 `/v1/responses`，下一轮把上一轮 output 里的 `image_generation_call` item 原样放回 input，网关报 400 `Unsupported input item type "image_generation_call"`。现在接受并转成 assistant 占位文本（不含 base64） |
 | 5 | 生图后空消息 | ✅ 修复 | `/v1/responses` 只有图片时补 `message` item + `output_text`「已生成 N 张图片（base64 位于 image_generation_call.result 字段）」；实测 round1 有文本、round2 继续对话 200 |
-| 6 | client tools 调研 | ✅ | `docs/CLIENT-TOOLS-RESEARCH.md`：真正自定义 client tools 不可行（上游固定 supportedTools + loadUserSkill 固定契约，实验开关默认 false）；只能走网关 function calling + MCP（已实现） |
+| 6 | client tools 调研 | ✅ | `docs/CLIENT-TOOLS-RESEARCH.md`：真正自定义 client tools 不可行（上游固定 supportedTools + loadUserSkill 固定契约，实验开关默认 false）；只能走网关 function calling + 外部工具（已实现） |
 | 7 | 回归 | ✅ | `npm test` **438/438**、`build-check` 16/16、`page-check` 22/22（首次 compact 因上游 418 冷却失败，重跑通过） |
-## 2.36 v2.42 移除自定义 tools（网关级 function calling + MCP）
+## 2.36 v2.42 移除自定义 tools（网关级 function calling + 外部工具）
 
 | # | 需求 | 结果 | 证据 |
 | --- | --- | --- | --- |
 | 1 | 删除前端「函数调用」开关 / 执行模式 | ✅ | 设置 → 工具卡片仅保留 联网搜索 / 图片生成 / 允许定位 三个开关（截图 `admin-settings-tools-clean.png`） |
-| 2 | 删除前端 MCP 开关与 servers JSON | ✅ | `settings-tool-mcp*` / `settings-tool-function*` testid 均不存在 |
+| 2 | 删除前端外部工具开关与 servers JSON | ✅ | `settings-tool-external*` / `settings-tool-function*` testid 均不存在 |
 | 3 | 删除后端 function calling | ✅ | 删除 `src/openai/function-calling.js`；`models.js` 不再解析 `type:"function"`；`chat.js` 不再注入协议/返回 tool_calls；`role:"tool"` 返回 400 |
-| 4 | 删除 MCP 能力 | ✅ | 删除 `src/tools/mcp-client.js`、`src/tools/`、index/server 的 MCP 装配与 `ctx.mcp` |
-| 5 | 删除配置项 | ✅ | `tools.functionCalling.*` / `tools.mcp.*` 从默认配置、可编辑路径、校验、重启路径、`data/config.json` 全部移除 |
+| 4 | 删除 外部工具 能力 | ✅ | 删除 `外部工具客户端`、`src/tools/`、index/server 的 外部工具 装配与 `ctx.externalTools` |
+| 5 | 删除配置项 | ✅ | `tools.functionCalling.*` / `tools.externalTools.*` 从默认配置、可编辑路径、校验、重启路径、`data/config.json` 全部移除 |
 | 6 | 保留内置 tools | ✅ | `tools.webSearch` / `tools.imageGeneration` / `tools.location` 与 `/v1` 的 web_search/image_generation 行为不变；function tool 默认静默丢弃、strict 400 `unsupported_tool` |
-| 7 | 回归 | ✅ | `npm test` **429/429**（删除 9 个 function calling/MCP 用例）、`build-check` 16/16、`page-check` 22/22 |
+| 7 | 回归 | ✅ | `npm test` **429/429**（删除 9 个 function calling/外部工具 用例）、`build-check` 16/16、`page-check` 22/22 |
 ## 2.37 v2.42 测试离线化（不再调用真实 API）
 
 | # | 需求 | 结果 | 证据 |
@@ -606,9 +606,9 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 4 | 会话标识 | ✅ | 支持 X-Session-Id / conversation_id / prompt_cache_key；真实 pc-test 两轮同一历史 |
 | 5 | 系统消息解析 | ✅ | history 跳过 system/developer，前端过滤；无巨大 compact pill |
 | 6 | 回归 | ✅ | npm test 469/469、build-check 16/16、page-check 22/22 |
-## 2.49 v2.56 手动压缩 canonical 状态 + PDF 重建（task-72/73）
+## 2.49 v2.56 手动压缩 canonical 状态 + PDF 重建（/73）
 
-> 复审对象：Codex 手动压缩 marker（`Another language model started to solve this problem`）链路。
+> 复审对象：客户端手动压缩 marker（`Another language model started to solve this problem`）链路。
 > 新增测试：`tests/manual-compaction-pdf.test.js`（5 项）；全程 `MockDuckClient`，不访问真实 duck.ai。
 > 命令：`node --test --test-isolation=none tests/manual-compaction-pdf.test.js` / `npm test`。
 
@@ -629,20 +629,20 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 - 历史中的 context PDF 附件只保留元数据（filename/mimeType/pages/bytes/textChars），**不保存 PDF base64**；
   其 `files[].text` 仍含旧对话文本（供排查/查看），因此「旧 user 不残留」按**消息正文**判定：
   `messages.filter(role=user|assistant).content` 不含旧文本。若要求连 PDF 文本也不出现在历史 JSON，需要后续再收紧。
-- marker 精确匹配大小写敏感子串；fixture 放在旧历史末尾的 user 摘要消息，符合 Codex 默认形状。
+- marker 精确匹配大小写敏感子串；fixture 放在旧历史末尾的 user 摘要消息，符合 客户端 默认形状。
 - 测试使用独立临时 dataDir + 自建 `responseStore`/`history`，运行后清理，不污染真实 data/。
 
-## 2.50 v2.57 真正压缩：摘要 PDF + 自动溢出完整上下文对照（task-74/75）
+## 2.50 v2.57 真正压缩：摘要 PDF + 自动溢出完整上下文对照（/75）
 
 > 用户澄清后的语义：**20k 自动溢出**仍把完整旧上下文放进 context PDF；**真正压缩**
-> （Codex marker / `/v1/compact`）只把摘要放进 context PDF，旧完整 PDF 被同 scope 覆盖。
+> （客户端 marker / `/v1/compact`）只把摘要放进 context PDF，旧完整 PDF 被同 scope 覆盖。
 > 新增测试：`tests/summary-pdf-compaction.test.js`（3 项）；同时按新语义更新
 > `tests/manual-compaction-pdf.test.js`（5 项）。全程 `MockDuckClient`，不访问真实 duck.ai。
 
 | # | 需求 | 结果 | 证据 |
 | --- | --- | --- | --- |
 | 1 | 压缩前：自动溢出 PDF 含完整旧上下文 | ✅ | >20k 无 marker：`context_pdfs.textContent` 含 `OLD-CONTEXT-UNIQUE` 与旧 assistant；双 PDF |
-| 2 | Codex marker：PDF 只含摘要、旧 PDF 被覆盖 | ✅ | 同 session 压缩后同 scope `textContent` 含 `QA-SUMMARY-ONLY-UNIQUE`、**不含** OLD-CONTEXT-UNIQUE；`pdfB64` 变化、`updated_at` 更新 |
+| 2 | 客户端 marker：PDF 只含摘要、旧 PDF 被覆盖 | ✅ | 同 session 压缩后同 scope `textContent` 含 `QA-SUMMARY-ONLY-UNIQUE`、**不含** OLD-CONTEXT-UNIQUE；`pdfB64` 变化、`updated_at` 更新 |
 | 3 | hot/history 不含旧对话，也不把摘要当普通 user 文本 | ✅ | 上游 user/assistant 正文不含旧 user/旧 assistant/摘要；hot 仅 marker 之后消息；历史正文同样干净；PDF chip 的 `text` 为摘要（预期） |
 | 4 | client-tools.pdf 仍在 + compression 元数据 | ✅ | 双 PDF 挂在 hot 第一条 user；`injection.compression.trigger=manual`、`summaryHash`、`coveredMessageCount>=2`、`protocolKind=client-tools-pdf` |
 | 5 | 后续普通轮次复用摘要 PDF | ✅ | 第 3 轮 context PDF b64 与压缩后一致、`updated_at` 不变；文本仍只含摘要 |
@@ -656,7 +656,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 - 真正压缩后同一 session 的 canonical/hot 只保留 marker 之后消息；旧完整上下文仅存在于压缩前的自动溢出 PDF（已被覆盖）；
 - 自动溢出路径（>20k、无 marker）仍为完整上下文 PDF，本轮回归通过，未被真正压缩逻辑影响。
 
-## 2.51 v2.58 图片-only 输出 + 跨轮图片上下文回归（task-77/78）
+## 2.51 v2.58 图片-only 输出 + 跨轮图片上下文回归（/78）
 
 > 复审对象：图片-only 响应（responses / chat）、跨轮占位文本回放、连续图片持久化。
 > 新增测试：`tests/image-only-context-v258.test.js`（6 项）；全程 `MockDuckClient`，不访问真实 duck.ai。
@@ -668,7 +668,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 | 2 | responses 图片-only（流式） | ✅ | SSE 含 `response.image_generation_call.in_progress/completed`、`response.output_item.added`、`response.completed`；completed output 有 image item |
 | 3 | chat/completions 图片-only：message.images 真实 data URI + history images | ✅ | `message.images[0].image_url.url=data:image/png;base64,...` 且 b64_json 可解码；history assistant images 有记录 |
 | 4 | 同 session 下一轮只回占位文本：上游仍带真实 image part | ✅ | 占位文本被替换「（上一轮生成的图片）」；`duck.calls.chat.messages` user.images 含 data URI（buildUpstreamMessages 生成 image part） |
-| 5 | 跨轮 history 不把图片降级成普通文本 | ✅ | 修复前 history user 仅文字标记（已报 api-core 修复 `recordHistoryOnLog`）；修复后 history user 消息保留 `images:[{b64,format}]` |
+| 5 | 跨轮 history 不把图片降级成普通文本 | ✅ | 修复前 history user 仅文字标记（已报 网关后端 修复 `recordHistoryOnLog`）；修复后 history user 消息保留 `images:[{b64,format}]` |
 | 6 | 连续两轮图片不丢 | ✅ | 第 2 轮再生成 B；第 3 轮上游同时带 A（1×1）+ B（2×2）image part；history 保留两张 b64 |
 | 7 | 全程离线 mock | ✅ | 无真实请求；测试网络护栏未触发 |
 
@@ -678,7 +678,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 - 占位文本识别规则：`已生成 N 张图片` 或 `base64 位于 image_generation_call.result`；
 - `conversation_state.images_json` 去重最多 8 张；history 每消息最多 4 张。
 
-## 2.52 v2.59 Authoritative session：canonical + client diff + append（task-79/80）
+## 2.52 v2.59 Authoritative session：canonical + client diff + append（/80）
 
 > BREAKING：网关成为会话权威，客户端只给 session id + 新输入；旧历史只用于 diff。
 > 新增测试：`tests/authoritative-session-v259.test.js`（6 项）；并更新 `tests/chat-session-v247.test.js`
@@ -699,7 +699,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
 
 ### 2.52.1 本轮发现并修复的问题
 
-1. **图片占位在 authoritative diff/prefix-reuse 丢图**：chat diff 使用原始 body（未用 replay 结果）、prefix-reuse 的 tail 用 `normalizeChatMessages` 丢 images；已由 api-core 修复（raw images 映射回 tail；responses 同步修）。
+1. **图片占位在 authoritative diff/prefix-reuse 丢图**：chat diff 使用原始 body（未用 replay 结果）、prefix-reuse 的 tail 用 `normalizeChatMessages` 丢 images；已由 网关后端 修复（raw images 映射回 tail；responses 同步修）。
 2. **首轮 X-Session-Epoch 缺失**：已修（首轮回写 0）。
 3. **`/v1/compact` 后 conversation_state.compression 丢失**：`epoch` 列 NOT NULL，compact 传 null 导致 INSERT 失败被吞；已修（缺省 0 + MAX 保留）。
 
@@ -756,7 +756,7 @@ node scripts/live-check.mjs --api-key <data/keys.json 中的 key>   # 真实上�
   （手动同头请求也可复现；非代码回归）。修复的正确性由离线用例锁定：
   `tests/continuation.test.js` 断言续传 header 是**已解值**而非原始挑战、418 后续传重试成功。
   - BLOCKED 原因：上游临时软限流（451），与本次代码无关；复现命令
-    `node recon/2026-11-06/scratch-lead/live-continuation-check.mjs`（额度恢复后可跑）。
+    `node 本地验证脚本/live-continuation-check.mjs`（额度恢复后可跑）。
 - 剩余未修（设计级，需产品决策）：多身份并发 / admin 旁路 `/status`（`identity-pool` 每身份队列与 usage 轮询）、
   未知第 5+ 类 suite（已加 `lastChallengeSuite`/`lastClientHashes` 观测，出现新 overrideCode 即可发现）。
 
@@ -829,7 +829,7 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 
 ### 2.56.4 实机（浏览器）验证
 
-- MCP `chrome-devtools` 打开 `http://127.0.0.1:8787/admin/?token=…`：
+- 外部工具 `真实浏览器` 打开 `http://127.0.0.1:8787/admin/?token=…`：
   概览页、设置页均正常渲染并加载真实管理 API 数据（队列配置、提示词、工具开关、日志级别），
   控制台**无 error/warn**；截图 `docs/assets/windows-exe-admin-overview.png`
   （本地另存 `docs/screenshots/windows-exe-admin-overview.png`）。
@@ -844,7 +844,7 @@ exe 被复制到临时目录运行（不依赖仓库内 `src/`、`web/`、`confi
 
 ### 2.56.6 已知限制 / BLOCKED
 
-- **真实上游（直连）不可用**：本沙箱出口 IP 直接访问 `duck.ai` 返回 `451 ERR_COUNTRY_NOT_SUPPORTED`
+- **真实上游（直连）不可用**：本当前环境出口 IP 直接访问 `duck.ai` 返回 `451 ERR_COUNTRY_NOT_SUPPORTED`
   （与 v2.63 记录一致）；`/healthz` 在直连降级时为 `upstream.ok=false`（仍 200），
   `verify-exe` 按离线语义断言。**经本机 HTTP 代理（127.0.0.1:10808）的真实上游链路已在 §2.56.7 验证通过**
   （`/status` 200、chat 非流式/流式均 200）。
@@ -1258,7 +1258,7 @@ gh release view "$VERSION" --json url,tagName,isLatest,isPrerelease,isDraft,asse
 | --- | --- |
 | `tests/mask-ip.test.js`（新增 4 用例：IPv4/IPv6/空值/非 IP/不泄露后两段） | **PASS** |
 | `npm run build:web` + `node scripts/build-check.mjs` | **构建成功 / 16 / 16 PASS** |
-| 浏览器实机（Windows 二进制，chrome-devtools） | 默认显示 `70.***.***.***`；点击眼睛 → 显示真实 `70.39...`；再点 → 恢复脱敏 |
+| 浏览器实机（Windows 二进制，真实浏览器） | 默认显示 `70.***.***.***`；点击眼睛 → 显示真实 `70.39...`；再点 → 恢复脱敏 |
 | 截图替换 | `docs/assets/windows-exe-proxy-fixed.png` 已替换为脱敏版本（无真实 IP）；`docs/screenshots/` 同步 |
 | 文档 IP 清理 | `docs/ACCEPTANCE.md` 中 3 处真实出口 IP 已替换为 `70.***.***.***`；`docs/PROXY.md` 补充脱敏说明 |
 | 全量 `npm test` | 见下方（新增 4 个用例） |

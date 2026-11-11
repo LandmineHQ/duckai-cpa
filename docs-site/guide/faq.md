@@ -68,7 +68,7 @@ authoritative session 检测到客户端回放的历史与网关 canonical 不�
 - 只发送最新 user/tool 输入（delta）；
 - 或显式 fork/新 epoch。
 
-DSH 标题生成等辅助请求会被识别为 ephemeral，不写入 canonical；若旧会话曾被污染，重试一次通常会自动修复。
+客户端标题生成等辅助请求会被识别为 ephemeral，不写入 canonical；若旧会话曾被污染，重试一次通常会自动修复。
 
 ### 图片生成了但下一轮上下文没有图
 

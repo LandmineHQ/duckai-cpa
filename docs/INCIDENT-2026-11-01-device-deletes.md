@@ -7,14 +7,14 @@
   - `name: Android 手机`，`type: phone`，`credential_id: ddg`
 - 手机端表现：从「My Devices」消失；无法再与其他设备配对/同步（该设备的 Sync 会话被 `/logout-device` 注销）。
 
-## 时间线（America/New_York）
+## 时间线（本地时间）
 
 | 时间 | 事件 |
 | --- | --- |
 | 11-01 09:45 | 用户手机扫码配对成功，账号与设备（Android 手机）建立 |
 | 11-01 10:00–13:40 | 反复联调设备注册/槽位；此阶段设备列表仍含 Android 手机 |
 | ~11-01 13:50 | 执行 `node scripts/page-check.mjs`（带 admin token / real account）；用例「sync 设备契约（v2.8）」中「删除其它设备 → 预期 200」挑选**第一个非当前设备** → 恰为 Android 手机 → `DELETE /admin/api/sync/server-devices/c2458c0e…` → 后端 `logoutDevices([id])` → **手机设备被注销并从账号删除** |
-| 11-01 14:14 | Lead 复查设备列表发现 Android 手机 已消失（当时误以为是缓存问题） |
+| 11-01 14:14 | 验收执行者 复查设备列表发现 Android 手机 已消失（当时误以为是缓存问题） |
 | 11-02 01:57 | 用户反馈手机无法配对、设备消失 |
 
 ## 根本原因
@@ -49,13 +49,13 @@
 
 ---
 
-## 取证细节（Lead，2026-11-02 复核）
+## 取证细节（验收执行者，2026-11-02 复核）
 
 - 恢复码**未被修改/轮换/删除**：网关只把它用于 Sync 登录（HKDF 派生 `scopedPassword`/`hashed_password`）与设备注册；存储于 `data/pairing.json`（权限 0600），未写入日志。
 - 账号 `user_id` 仍为 `489adc11-ab46-4046-8411-c2ce3f0a18bf`，恢复码仍可正常登录（2026-11-02 复核 `login 200`）。
 - 手机设备 `c2458c0e-…` 已不在账号设备列表中，其余设备为：`Chrome 156.0.0.0`、`Edge 156.0.0.0`、`DuckAI@main`（网关自身）。
 - 删除动作来自 `scripts/page-check.mjs` 的「sync 设备契约（v2.8）」用例（2026-11-01 约 13:50 EDT 执行多次），其逻辑为「任取一台非当前 uuid 设备执行 DELETE→期望 200」。
-- 事后清理：Lead 用固定 `identity.deviceId` 登录清理了调试产生的 `DuckAI@probe` / `DuckAI@cleanup*` 临时设备，避免继续污染账号。
+- 事后清理：验收执行者 用固定 `identity.deviceId` 登录清理了调试产生的 `DuckAI@probe` / `DuckAI@cleanup*` 临时设备，避免继续污染账号。
 
 ## v2.13 后续修复（已完成）
 

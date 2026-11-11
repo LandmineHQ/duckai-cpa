@@ -24,7 +24,7 @@
 
 ## 📖 Overview
 
-**DuckAI CPA** is a reverse-engineered bridge between **DuckDuckGo AI Chat (`duck.ai`)** and any OpenAI-compatible client, SDK or agent framework. Unlike browser-automation proxies, it speaks Duck.ai's native HTTP/SSE protocol directly from Node.js, including the rolling `X-VQD-Hash-1` anti-bot challenge, continuation frames for tool approvals, and durable streams.
+**DuckAI CPA** is a reverse-engineered bridge between **DuckDuckGo AI Chat (`duck.ai`)** and any OpenAI-compatible client, SDK or development framework. Unlike browser-automation proxies, it speaks Duck.ai's native HTTP/SSE protocol directly from Node.js, including the rolling `X-VQD-Hash-1` anti-bot challenge, continuation frames for tool approvals, and durable streams.
 
 It ships with a complete self-hosted control plane: identity pool management, subscription login (including refresh-token auto-renewal), two-pool model routing, quota cooldowns, session history, request logs, token usage statistics, prompt generation, model configuration and a connection-test playground.
 
@@ -40,7 +40,7 @@ It ships with a complete self-hosted control plane: identity pool management, su
 - **Web search** as `tools:[{"type":"web_search"}]`: citation markers are cleaned, `annotations[].url_citation` and `sources[]` are returned.
 - **Image generation** via `GenerateImage` (OpenAI Images format + chat `message.images` data-URI extension; JPEG/PNG auto-detected).
 - **Image context across turns**: replayed `image_generation_call` / `image_url` inputs are sent upstream as real image parts (JPEG automatically converted to PNG ≤512px), so follow-up prompts like “modify the previous image” keep visual context instead of degrading to text.
-- **Client tool bridge**: OpenAI `tools[].function` is accepted on both Chat Completions and Responses, auto-normalized between protocols, and returned as native `tool_calls` / `function_call` items. File tools run **client-side** (Codex/DSH); the gateway never executes them.
+- **Client tool bridge**: OpenAI `tools[].function` is accepted on both Chat Completions and Responses, auto-normalized between protocols, and returned as native `tool_calls` / `function_call` items. File tools run **client-side** (客户端); the gateway never executes them.
 - **Automatic PDF context spill**: when the text input exceeds duck.ai's 20k-character limit, older turns are rendered into two PDFs — `client-tools.pdf` (client tool protocol) and `conversation-context.pdf` (max 15 pages, 250 lines/page, images embedded) — and attached as `file` parts. The context PDF is persisted per session and reused across turns; manual `/v1/compact` also creates a new context PDF. This bypasses the duck.ai text char limit, not the model token window.
 - **Server-side sessions**: Responses `previous_response_id` chaining is supported (the gateway stores canonical conversation + exact upstream prefix); Chat Completions can opt into server sessions with `X-Session-Id` + `X-Conversation-Mode: server` (or `X-Conversation-Delta: true` for delta-only messages). Historical prefix is reused byte-for-byte so image compression and tool protocol don't change earlier turns.
 
@@ -307,7 +307,7 @@ curl -N http://127.0.0.1:8787/v1/chat/completions \
 
 ---
 
-### Client tools (Codex / DSH file tools)
+### Client tools (local file tools)
 
 Both protocols are auto-normalized — no manual allowlist needed:
 
@@ -318,16 +318,16 @@ Both protocols are auto-normalized — no manual allowlist needed:
 {"tools":[{"type":"function","name":"read_file","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}]}
 ```
 
-- `client` mode only: the model asks, **Codex/DSH executes locally**, and the result is sent back as `role:"tool"` (chat) or `function_call_output` (responses);
+- `client` mode only: the model asks, **the calling client executes locally**, and the result is sent back as `role:"tool"` (chat) or `function_call_output` (responses);
 - Streaming returns `delta.tool_calls` / `response.function_call_arguments.*` events;
 - **Stable prefix (v2.45)**: the tool protocol is attached to the **first** user message, so all historical messages stay byte-identical across turns and upstream prefix/prompt caches can be reused; do not move it to the last user message.
-- Disable with **Settings → Tools → 客户端工具** (`tools.clientFunctionCalling.enabled`); no MCP/auto execution exists.
+- Disable with **Settings → Tools → 客户端工具** (`tools.clientFunctionCalling.enabled`); no external tool execution exists.
 
 ## 📐 Architecture
 
 ```mermaid
 flowchart LR
-    Client["Client / SDK / Agent"] -->|"POST /v1/*"| API["Node.js Gateway (src/http/server.js)"]
+    Client["Client / SDK"] -->|"POST /v1/*"| API["Node.js Gateway (src/http/server.js)"]
     API --> Router["Model + tool resolution<br/>session → identity routing"]
     Router --> Pool["Identity Pool<br/>(paid / free pools, cooldown, TTL)"]
     Pool --> Duck["Duck.ai protocol client<br/>(SSE, continuation, challenge)"]
@@ -383,7 +383,7 @@ Frequently used settings:
 | `pool.quotaCooldownMinutes` | `1440` | Quota cooldown fallback |
 | `tools.webSearch` / `imageGeneration` | `true` | Built-in tools |
 | `tools.location` | `false` | Approximate location (user-location) |
-| `tools.clientFunctionCalling.enabled` | `true` | Client tool bridge (Codex/DSH file tools) |
+| `tools.clientFunctionCalling.enabled` | `true` | Client tool bridge (client-side file tools) |
 | `responses.enabled` / `retentionDays` | `true` / `7` | Responses `previous_response_id` chaining |
 | `conversations.mode` | `stateless` | Chat Completions server sessions (`stateless` / `auto` / `server`) |
 | `history.retentionDays` | `30` | Session history retention |

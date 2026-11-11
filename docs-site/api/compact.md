@@ -10,7 +10,7 @@ POST /v1/compact
 
 - 上下文 PDF 超过 15 页，返回 `413 context_pdf_capacity_exceeded`；
 - 想主动清理旧对话、保留摘要；
-- Codex 手动压缩之外的显式压缩。
+- 客户端手动压缩之外的显式压缩。
 
 ## 请求
 

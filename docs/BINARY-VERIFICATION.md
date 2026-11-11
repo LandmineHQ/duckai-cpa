@@ -127,7 +127,7 @@ node scripts/verify-exe.mjs --exe dist/windows-x64/duckai-cpa.exe --timeout 3000
 
 同一 exe 的其它验收（见 `docs/ACCEPTANCE.md` §2.56/§2.57）：`npm test` 全绿、
 `build-check` 16/16、`page-check` 22/22（对 exe 网关）、`smoke --mock --search` 9/9、
-浏览器 MCP 实机打开概览/设置页且 console 无 error/warn。
+浏览器 外部工具 实机打开概览/设置页且 console 无 error/warn。
 
 ## 7. 已知限制与排障
 
@@ -137,8 +137,8 @@ node scripts/verify-exe.mjs --exe dist/windows-x64/duckai-cpa.exe --timeout 3000
   `fetch(url,{proxy})` 路径）另见 `docs/ACCEPTANCE.md` §2.56.7；需要本机代理
   `127.0.0.1:10808` 才能复现 `POST /admin/api/proxy/test` 的通过结果。
 - **离线**：不访问真实 duck.ai；聊天/生图的上游链路由 Node 单测与 mock smoke 覆盖，
-  exe 内真实上游验收需要可访问 duck.ai 的网络（本沙箱为 `451 ERR_COUNTRY_NOT_SUPPORTED`，BLOCKED）。
-- **node 模式**（`--node`）用于脚本自测；在受限沙箱里它比 exe 模式慢，偶发长时间不退出。
+  exe 内真实上游验收需要可访问 duck.ai 的网络（本当前环境为 `451 ERR_COUNTRY_NOT_SUPPORTED`，BLOCKED）。
+- **node 模式**（`--node`）用于脚本自测；在受限当前环境里它比 exe 模式慢，偶发长时间不退出。
   自测时建议外层加超时（PowerShell `Start-Job` + `Wait-Job -Timeout`，或 `timeout 90 node …`），
   验证产物请优先用默认 exe 模式。
 - **端口占用**：`EADDRINUSE` 时换 `--port`，或先结束占用 18000–18999 的进程

@@ -1,7 +1,7 @@
 # DuckAI CPA · 对外 API 文档
 
 > DuckAI CPA v2 把 **duck.ai** 的网页对话能力包装成 **OpenAI 兼容 API**。
-> 面向调用方（Agent / SDK / 客户端）的稳定接口说明；管理后台与内部管理接口见
+> 面向调用方（SDK / 客户端）的稳定接口说明；管理后台与内部管理接口见
 > [`ADMIN_API_V2.md`](./ADMIN_API_V2.md)（v2 唯一契约，v1 的 `ADMIN_API.md` 已废弃），
 > 上游协议与反爬挑战细节见 [`PROTOCOL.md`](./PROTOCOL.md)。
 
@@ -300,7 +300,7 @@ curl http://127.0.0.1:8787/v1/chat/completions \
     "model": "gpt-6-luna",
     "messages": [
       {"role": "system", "content": "你是一个严谨的中文技术助手。"},
-      {"role": "user", "content": "用三句话解释什么是 MCP。"}
+      {"role": "user", "content": "用三句话解释什么是 SSE。"}
     ],
     "reasoning_effort": "low"
   }'
@@ -319,7 +319,7 @@ curl http://127.0.0.1:8787/v1/chat/completions \
       "index": 0,
       "message": {
         "role": "assistant",
-        "content": "MCP 是……",
+        "content": "SSE 是……",
         "refusal": null,
         "reasoning_content": "（模型支持且返回推理时的思考摘要）"
       },
@@ -724,7 +724,7 @@ client = OpenAI(base_url="http://127.0.0.1:8787/v1", api_key="sk-duck-REPLACE_ME
 # 非流式
 resp = client.chat.completions.create(
     model="gpt-6-luna",
-    messages=[{"role": "user", "content": "用三句话解释什么是 MCP"}],
+    messages=[{"role": "user", "content": "用三句话解释什么是 SSE"}],
     extra_body={"reasoning_effort": "low"},
 )
 print(resp.choices[0].message.content)
@@ -767,7 +767,7 @@ const client = new OpenAI({
 
 const completion = await client.chat.completions.create({
   model: "gpt-6-luna",
-  messages: [{ role: "user", content: "用三句话解释什么是 MCP" }],
+  messages: [{ role: "user", content: "用三句话解释什么是 SSE" }],
   reasoning_effort: "low"
 });
 console.log(completion.choices[0].message.content);
@@ -964,9 +964,9 @@ v2 有三类 429，处理方式不同：
 
 ### 支持 function calling / 自定义工具吗？
 
-支持 **client 模式**（v2.44）：客户端（Codex/DSH）传 OpenAI `tools[].function`，网关解析模型输出并返回
+支持 **client 模式**（v2.44）：客户端（客户端）传 OpenAI `tools[].function`，网关解析模型输出并返回
 `tool_calls`（chat）或 `function_call`（responses），工具由客户端本地执行；下一轮用 `role:"tool"` /
-`function_call_output` 回传结果。**网关不执行工具、不接 MCP**。Completions 与 Responses 两种 tools 形状自动归一化。
+`function_call_output` 回传结果。**网关不执行工具、不接入外部工具**。Completions 与 Responses 两种 tools 形状自动归一化。
 仍保留内置 `web_search` / `image_generation` / `location`。
 
 ### 模型别名与 `duck-` 前缀
@@ -1101,7 +1101,7 @@ Chat Completions 没有官方的 assistant 图片字段，采用主流 OpenAI �
 - `/v1/chat/completions`：`tools:[{type:"function",function:{name,description,parameters}}]`；返回 `message.tool_calls` + `finish_reason:"tool_calls"`；下一轮 `assistant.tool_calls` + `role:"tool"`。
 - `/v1/responses`：`tools:[{type:"function",name,description,parameters}]`；返回 `output` 里的 `function_call` item；下一轮 `function_call` + `function_call_output`。
 - 两种形状可混用（网关自动归一化）；流式返回 `delta.tool_calls` / `response.function_call_arguments.*`。
-- 仅 client 模式：工具由 Codex/DSH 本地执行；网关不执行、不接 MCP。
+- 仅 client 模式：工具由客户端本地执行；网关不执行、不接入外部工具。
 - **稳定前缀（v2.45）**：工具协议固定在第一条 user 消息里；历史消息逐字节不变。这样 duck.ai 的
   prompt/prefix cache 在后续轮次可以命中（工具列表不变时）。不要改回“只注入最后一条 user”：下一轮
   该消息变成历史时协议会消失，历史文本变化会导致 cache miss。

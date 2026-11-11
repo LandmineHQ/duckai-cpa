@@ -128,7 +128,7 @@ bundle 约 1,954,600 起可见 `gpt-5.6-terra`、`claude-haiku-5-5` 等完整定
 | voice-mode / DuckAssist | general | [] / Internal | — | 0 / 16000 | — | — | ❌（不对外 chat） |
 
 > 注：`availableTo` 中的 Free/Plus/Pro/Internal 是内部枚举；网关用 `tier` 字段近似，
-> 真正的可见性应以 `/capabilities` 的 tier/实验 + 该数组为准（本任务不改代码）。
+> 真正的可见性应以 `/capabilities` 的 tier/实验 + 该数组为准（本次验证不改代码）。
 > 上表「未确认」项表示当前 bundle 静态扫描未定位到明确值，不应臆造。
 
 ## 2. 我们网关当前的实现与差距
