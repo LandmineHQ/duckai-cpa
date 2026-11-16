@@ -1,4 +1,4 @@
-﻿# 验收实测记录（v2 / v2.1 / v2.2 / v2.3 / v2.4 · 验收执行者 独立执行）
+# 验收实测记录（v2 / v2.1 / v2.2 / v2.3 / v2.4 · 验收执行者 独立执行）
 
 > 版本：v2（React + shadcn 控制台；BREAKING：强制 API Key / RPS 队列 / 日志拆分 / 付费模型 / 会话式连接测试 / 严格中断）
 > v2.1：会话「重新生成/重试」+ 推理（reasoning）展示与 `reasoningEncrypted` 标记。
@@ -1274,3 +1274,77 @@ gh release view "$VERSION" --json url,tagName,isLatest,isPrerelease,isDraft,asse
   ```
   仅替换当前文件不会清除历史 blob；若担心被检索，可同时更换代理节点/轮换出口 IP。
 - 以后新增展示 IP/密钥的 UI，默认应使用 `MaskedIp`（或类似脱敏组件），不要直接渲染明文。
+
+## 2.65 v2.65 生成图回放保真 + 图片入参解析（2026-11-16）
+
+> 用户反馈：① API 请求里携带图片时，会话历史看不到图片附件；② 生图返回的高清图，继续对话后变糊
+> （duck.ai 浏览器本身不变糊）。要求按 duck.ai 源码的行为排查修复。
+
+### 2.65.1 抓包（chrome-devtools，真实 duck.ai 页面）
+
+在真实 Chrome 里新开会话 → 生成一张图 → 追问一轮，抓第二次 `POST /duckchat/v1/chat` 请求体：
+
+```json
+{"model":"gpt-6-luna","messages":[
+  {"role":"user","content":[{"type":"text","text":"画一只戴墨镜的卡通鸭子…"}]},
+  {"role":"assistant","content":"","parts":[
+    {"type":"generated-image","id":"<uuid>","result":"<原始 JPEG base64，125396 字符>","width":1024,"height":1024,"format":"jpeg","moderationToken":"<57 字符>"},
+    {"type":"tool-invocation","state":"call","toolCallId":"call_…","toolName":"GenerateImage","toolArguments":"{…}"},
+    {"type":"tool-invocation","state":"result","toolCallId":"call_…","result":"…"}]},
+  {"role":"user","content":[{"type":"text","text":"这张图里鸭子戴的墨镜是什么颜色的？"}]}]}
+```
+
+关键点：生成图是 **assistant 的 `generated-image` part，原样 base64 不转码**，并**配套 tool-invocation 的
+call/result**；`assistant.content` 为空串。请求头含 `x-duckai-continuation: resubmit-context`、
+`x-duckai-consent-purposes`、`durableStream`。
+
+### 2.65.2 根因
+
+1. 网关旧实现（v2.44）把生成图当**用户新上传图**：JPEG→PNG（体积膨胀 8 倍）+ 缩 512px + 挂到 user 消息。
+   上游按新图重新审核/重编码 → 续聊明显变糊；体积超过约 1MB base64 时直接
+   **503 `ERR_MODERATION_UNAVAILABLE`**（实测 1.17MB / 1.01MB 失败、0.91MB 通过）。
+2. **字段硬约束**（直连上游 A/B 实测）：
+   - 只有 `result`+`format` → 400 `ERR_BAD_REQUEST`；
+   - 补 `width`/`height` → 200（`moderationToken` 可选）；
+   - 只发 `generated-image` 无 tool-invocation → 200 但模型回答「无法判断/看不到图」；
+   - 补齐 call+result（toolCallId 一致）→ 模型正确答出颜色。
+3. **身份池漏传 durableStream**：`identity-pool.js` 用 `...this.duckConfig` 构造 DuckClient，
+   没有 `identity`/`durableStream`，导致所有走身份池的请求都不带 durableStream → 生成图回放 400。
+   且该 400 被误判成「durableStream 被拒」→ 进程级降级，进一步放大故障。
+4. 图片入参解析只认 `image_url`/`image`/`url` 里直接是 data URL 的形状；
+   Anthropic/LiteLLM `{type:'image',source:{type:'base64',…}}`、`{type:'image',data,mime_type}`、
+   `input_file`(image/*) 全部被**静默丢弃**（既不进上游也不进历史）。
+
+### 2.65.3 修复
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/duck/index.js` | `buildUpstreamMessages` 生成图改回 assistant `parts`：`generated-image`（原样 base64 + width/height/format/moderationToken）+ `tool-invocation` call/result；`id`/`toolCallId` 用 base64 哈希保证跨轮稳定；空的 text part 不再发送；带生成图的请求不参与 durableStream 降级；新增 `generatedImageFallback` 兜底（400 → 512 PNG 通道重试一次，`_stats.imageReplayFallbacks`） |
+| `src/duck/image-convert.js` | 新增 `imagePixelSize()`（解码取真实像素，带 64 条缓存），尺寸缺失时兜底 1024 |
+| `src/duck/identity-pool.js` | 池内 DuckClient 补传 `identity` / `durableStream` |
+| `src/openai/chat.js` / `responses.js` | `normalizeImage` / `image_generation_call` item 透传 `kind/id/width/height/moderationToken`；`normalizeImagePart` 支持 Anthropic/LiteLLM base64 形状、`input_file`(image/*)；远程 URL 改为 400 `image_url_remote_unsupported` |
+| `src/openai/image-context.js` / `src/history.js` | 持久化/回放保留生成图元数据 |
+
+### 2.65.4 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| 真实上游端到端（`X-Session-Id` 固定会话：生图 → 回放追问颜色） | **step1 200 / step2 200，模型答「红色」**（旧实现 502 `bad_request`） |
+| 真实上游**跨会话/跨身份**回放（session A 生图、session B 回放） | **200，模型答「纯绿色」** → 上游不要求同一 conversationId，之前 400 全是 part 形状问题 |
+| 真实上游**无任何会话标识**（池路由 least-loaded）两轮 | **200，模型答「纯蓝色」**（不再出现 502） |
+| 真实上游直连 A/B（generated-image 字段组合） | 无 width/height → 400；有 → 200；无 tool-invocation → 200 但看不到图；有 → 正确识别颜色 |
+| `node --test tests/image-only-context-v258.test.js` | 通过（含 width/height、tool-invocation 断言） |
+| `node --test tests/responses-chain-v246.test.js` | 通过（previous_response_id 生图续编） |
+| `node --test tests/image-input-shapes-v265.test.js` | 13/13 通过（形状 E/F/input_file/远程 URL 400） |
+| `node --test tests/image-replay-fallback-v265.test.js` | 4/4 通过（400 → 512 PNG 通道重试；只重试一次；再失败仍上报；无图请求不重试） |
+| 全量 `npm test` | 见 2.65.5 |
+
+### 2.65.5 剩余风险 / 未覆盖
+
+- **跨会话/跨身份不是问题**（2026-11-16 真机实测）：session A 生图、session B（不同身份）回放 **200 且答对颜色**；
+  真正导致 400 的是 part 形状（缺 `width`/`height`、缺 tool-invocation）。
+- 防御性兜底已实现：带生成图的请求若被上游 400，`chat()` 自动改用 PNG ≤512 的「用户上传图」通道**重试一次**
+  （`_stats.imageReplayFallbacks` + warn 日志）；客户端最坏看到「略糊」，不会看到失败。
+- `toolArguments` 用触发轮的用户文本合成（上游实测不校验内容）。
+- 上游对图片体积仍有限制（约 1MB base64 量级）；用户上传图继续走 512 PNG 通道。
+- 跨会话回放时若会话状态里没有图片尺寸，用 `imagePixelSize()` 解码真实像素兜底。

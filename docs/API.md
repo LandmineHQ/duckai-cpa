@@ -284,7 +284,15 @@ POST /v1/chat/completions
 - `role`：`system` / `developer` / `user` / `assistant`；
 - `content`：字符串，或 `[{ "type": "text", "text": "..." }]` 形式的 parts 数组；
 - `system` / `developer` 消息会与网关默认提示词合并（见 [FAQ](#system-prompt-为什么默认走-inline-模式)）；
-- 图片（`image_url`）、文件等非文本 part **会被忽略**（不报错）；
+- **图片输入（v2.65）**：`image_url` / `input_image` / `image` 等 part 会被解析并转发给上游，支持：
+  - data URL：`{type:"image_url",image_url:{url:"data:image/png;base64,..."}}`（也可 `image_url` 直接是字符串）；
+  - 内联 base64（Anthropic / LiteLLM 形状）：`{type:"image",source:{type:"base64",media_type:"image/png",data:"..."}}`、
+    `{type:"image",data:"...",mime_type:"image/png"}`、`{type:"image",b64:"...",format:"png"}`；
+  - 文件形式：`input_file` 的 mimeType 为 `image/*` 时按图片处理；
+  - **远程 http(s) URL 不支持**（避免 SSRF，网关不下载）：返回 400 `image_url_remote_unsupported`，
+    请客户端先下载再以 data URL / base64 传入。
+  用户上传的图片会被转成上游可接受的 PNG 并缩到长边 ≤512px（上游只接受 PNG/WebP，JPEG 会 400 sc22）。
+  图片会写入会话历史（`history.messages[].images`）。
 - 多轮对话直接把历史 `user` / `assistant` 消息按顺序传入即可。
 
 > OpenAI 的 `temperature` / `max_tokens` / `top_p` / `stop` 等采样参数**当前不支持**（上游为网页会话协议），
@@ -1109,8 +1117,14 @@ Chat Completions 没有官方的 assistant 图片字段，采用主流 OpenAI �
 ### 图片输入 / 生图上下文
 
 - `/v1/chat/completions`：user content 支持 `{type:"image_url",image_url:{url:"data:image/png;base64,..."}}`。
-- `/v1/responses`：支持 `input_image`；上一轮 `image_generation_call` item 原样回传时，网关保留真实图片并挂到下一轮 user 消息（不再变文本）。
-- 上游图像输入只接受 PNG/WebP（JPEG 返回 400 sc22）：网关用 `jpeg-js` + `pngjs` 统一转 PNG 并缩到 **512px**；超过限制的图片会被压缩。
+- `/v1/responses`：支持 `input_image`；上一轮 `image_generation_call` item 原样回传时，网关保留真实图片。
+- **用户上传图**：上游图像输入只接受 PNG/WebP（JPEG 返回 400 sc22）：网关用 `jpeg-js` + `pngjs`
+  统一转 PNG 并缩到 **512px**。
+- **生成图回放（v2.65，保真）**：续聊时生成图**不再**降级成用户上传图（那会被上游重编码、明显变糊，
+  且大图触发 503 `ERR_MODERATION_UNAVAILABLE`）。网关按 duck.ai 浏览器的真实请求形态，把它作为
+  **assistant** 的 `parts` 回放：`{type:'generated-image', id, result:<原始 base64>, width, height, format, moderationToken?}`
+  \+ 配套 `{type:'tool-invocation', state:'call'|'result', toolCallId, toolName:'GenerateImage'}`。
+  因此续聊时模型看到的是**原始分辨率**的生成图。
 - 仅图片的响应仍补 `message` + `output_text` 兜底，避免客户端显示空消息。
 
 ## v2.58：图片-only 跨轮上下文持久化

@@ -167,19 +167,61 @@ export function createCitationFilter() {
 /* ------------------------------------------------------------------ */
 
 const TEXT_PART_TYPES = new Set(['text', 'input_text', 'output_text']);
+/** v2.65：会走图片归一化的 part 类型（input_file 只有 image/* 才生效）。 */
+const IMAGE_PART_TYPES = new Set(['image_url', 'input_image', 'image', 'input_file']);
+
+/** MIME 别名字段：Anthropic(media_type) / OpenAI(mime_type) / LiteLLM(format) 都见过。 */
+const IMAGE_MIME_KEYS = [
+  'mime_type',
+  'mimeType',
+  'media_type',
+  'mediaType',
+  'content_type',
+  'contentType',
+  'mime',
+  'format',
+  'image_format',
+  'imageFormat'
+];
+const IMAGE_FILENAME_KEYS = ['filename', 'file_name', 'fileName', 'name'];
+/** 内联 base64 字段别名。 */
+const IMAGE_B64_KEYS = ['data', 'b64', 'base64', 'image_base64', 'base64_data', 'file_data'];
+/** data URL / 图片地址字段别名。 */
+const IMAGE_URL_KEYS = ['url', 'dataUrl', 'data_url', 'image_url', 'imageUrl'];
+
+/** 远程 URL 一律不下载（SSRF 策略），命中即显式 400，不静默丢图。 */
+const REMOTE_IMAGE_URL_RE = /^(?:https?|ftp|file|blob|s3|gs|gcs|azure):|^\/\//i;
+
+const MIME_BY_IMAGE_EXTENSION = {
+  png: 'image/png',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  heic: 'image/heic',
+  heif: 'image/heif'
+};
 
 /**
  * Normalize message content to plain text.
- * Accepts a string or an array of parts; non-text parts (images/files) are
- * ignored because the duck.ai text chat is the only upstream capability.
+ * Accepts a string or an array of parts; image parts are ignored here (see
+ * `normalizeContentParts`), because this helper only needs the text.
  */
 export function normalizeContent(content) {
   return normalizeContentParts(content).text;
 }
 
 /**
- * v2.44：文本 + 图片 part 一起归一化（图片用于上游多模态输入 / 生图回放）。
- * 仅接受 data:image/*；远程 URL 不在这里下载（避免 SSRF/额外网络）。
+ * v2.44 / v2.65：文本 + 图片 part 一起归一化（图片用于上游多模态输入 / 生图回放）。
+ * 支持 OpenAI（image_url/input_image）、Anthropic/LiteLLM（image+source.base64）、
+ * 平铺 base64（image+data/b64 + mime_type/media_type/format）以及 input_file（image/*）。
+ * 仅接受 data URL / 内联 base64；远程 URL 不在这里下载（避免 SSRF/额外网络），
+ * 命中远程 http(s) URL 时抛 400 `image_url_remote_unsupported`（不再静默丢图）。
  * @returns {{ text: string, images: Array<{mimeType:string,dataUrl:string}> }}
  */
 export function normalizeContentParts(content) {
@@ -201,7 +243,7 @@ export function normalizeContentParts(content) {
       if (text) parts.push(text);
       continue;
     }
-    if (type === 'image_url' || type === 'input_image' || type === 'image') {
+    if (IMAGE_PART_TYPES.has(type)) {
       const image = normalizeImagePart(part);
       if (image) images.push(image);
     }
@@ -209,19 +251,143 @@ export function normalizeContentParts(content) {
   return { text: parts.join('\n'), images };
 }
 
-/** @returns {{mimeType:string,dataUrl:string}|null} */
+function asNonEmptyString(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+/** 按别名列表从对象上读取第一个非空字符串。 */
+function readStringField(source, keys) {
+  if (!source || typeof source !== 'object') return '';
+  for (const key of keys) {
+    const value = asNonEmptyString(source[key]);
+    if (value) return value;
+  }
+  return '';
+}
+
+/** MIME 值（`image/png` / `png` / `jpg`）→ 规范化 `image/*`；非图片返回 ''。 */
+function normalizeImageMimeValue(value) {
+  const raw = asNonEmptyString(value).toLowerCase();
+  if (!raw) return '';
+  const mime = raw.includes('/') ? raw : `image/${raw}`;
+  if (!mime.startsWith('image/')) return '';
+  if (mime === 'image/jpg') return 'image/jpeg';
+  if (mime === 'image/svg') return 'image/svg+xml';
+  return mime;
+}
+
+/** 从 part/source 的 MIME 别名里取 image/*（裸格式串也认）。 */
+function readImageMimeHint(source) {
+  if (!source || typeof source !== 'object') return '';
+  for (const key of IMAGE_MIME_KEYS) {
+    const mime = normalizeImageMimeValue(source[key]);
+    if (mime) return mime;
+  }
+  return '';
+}
+
+function imageMimeFromFilename(filename) {
+  const name = asNonEmptyString(filename);
+  if (!name) return '';
+  const match = /\.([a-z0-9]+)$/i.exec(name);
+  if (!match) return '';
+  return MIME_BY_IMAGE_EXTENSION[match[1].toLowerCase()] || '';
+}
+
+/**
+ * `data:image/png;base64,<b64>` → `{mimeType,dataUrl}`。
+ * base64 去掉空白后重新拼 data URL，保证「上游收到的」与「历史保存的」完全一致。
+ */
+function imagePartFromDataUrl(value) {
+  const raw = asNonEmptyString(value);
+  if (!raw || !/^data:/i.test(raw)) return null;
+  const comma = raw.indexOf(',');
+  if (comma <= 5) return null;
+  const header = raw.slice(5, comma);
+  const match = /^(image\/[a-zA-Z0-9.+-]+)((?:;[^,]*)?)$/i.exec(header);
+  if (!match) return null;
+  if (!/;base64(?:;|$)/i.test(match[2] || '')) return null;
+  const b64 = raw.slice(comma + 1).replace(/\s+/g, '');
+  if (!b64) return null;
+  const mime = normalizeImageMimeValue(match[1]);
+  if (!mime) return null;
+  return { mimeType: mime, dataUrl: `data:${mime};base64,${b64}` };
+}
+
+/**
+ * 内联 base64 → data URL。MIME 依次取：显式别名 → base64 魔数探测。
+ * 既没有 MIME 提示、魔数也认不出时不当作图片（避免把普通文本当 base64 图片）。
+ */
+function imagePartFromBase64(value, mimeHint) {
+  const raw = asNonEmptyString(value);
+  if (!raw) return null;
+  // source.type 标错（把 data URL 放在 base64 字段）时也能救回来
+  const asDataUrl = imagePartFromDataUrl(raw);
+  if (asDataUrl) return asDataUrl;
+  const b64 = raw.replace(/\s+/g, '');
+  if (!b64) return null;
+  const hint = normalizeImageMimeValue(mimeHint);
+  const detected = detectImageFormat(b64, 'unknown');
+  if (!hint && detected === 'unknown') return null;
+  const mime = hint || imageMimeType(detected);
+  return { mimeType: mime, dataUrl: `data:${mime};base64,${b64}` };
+}
+
+/**
+ * v2.65：图片 part → `{ mimeType, dataUrl }`；不认识的 part 返回 null。
+ * 兼容形状：
+ *   - OpenAI：`{type:'image_url'|'input_image', image_url:'data:...' | {url:'data:...'}}`
+ *   - Anthropic / LiteLLM：`{type:'image', source:{type:'base64', media_type, data}}`
+ *   - 平铺 base64：`{type:'image', data|b64|base64, mime_type|media_type|format}`
+ *   - 文件：`{type:'input_file', file_data|file_url, mime_type|mimeType|filename}`
+ * SSRF 策略不变：只接受 data URL / 内联 base64，不下载远程 URL；
+ * 远程 http(s) URL 抛 400 `image_url_remote_unsupported`，避免再次「静默丢图」。
+ * @returns {{mimeType:string,dataUrl:string}|null}
+ */
 export function normalizeImagePart(part) {
   if (!part || typeof part !== 'object') return null;
-  let raw = '';
-  if (typeof part.image_url === 'string') raw = part.image_url;
-  else if (part.image_url && typeof part.image_url === 'object' && typeof part.image_url.url === 'string') raw = part.image_url.url;
-  else if (typeof part.image === 'string') raw = part.image;
-  else if (typeof part.url === 'string') raw = part.url;
-  raw = raw.trim();
-  if (!raw.startsWith('data:image/')) return null;
-  const match = raw.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/);
-  if (!match) return null;
-  return { mimeType: match[1], dataUrl: raw };
+  const type = typeof part.type === 'string' ? part.type.toLowerCase() : '';
+  const source = part.source && typeof part.source === 'object' && !Array.isArray(part.source) ? part.source : null;
+
+  // input_file：只有 MIME（或扩展名）判定为 image/* 才按图片处理，其余附件走文件流程
+  let fileMime = '';
+  if (type === 'input_file') {
+    fileMime = readImageMimeHint(part) || imageMimeFromFilename(readStringField(part, IMAGE_FILENAME_KEYS));
+    if (!fileMime) return null;
+  }
+
+  // 1) data URL（字符串字段或 {url:'data:...'} 对象）
+  const candidates = [];
+  if (typeof part.image_url === 'string') candidates.push(part.image_url);
+  else if (part.image_url && typeof part.image_url === 'object') candidates.push(readStringField(part.image_url, IMAGE_URL_KEYS));
+  if (typeof part.image === 'string') candidates.push(part.image);
+  else if (part.image && typeof part.image === 'object') candidates.push(readStringField(part.image, IMAGE_URL_KEYS));
+  candidates.push(readStringField(part, [...IMAGE_URL_KEYS, 'file_url', 'file_data']));
+  if (source) candidates.push(readStringField(source, IMAGE_URL_KEYS));
+  for (const candidate of candidates) {
+    const image = imagePartFromDataUrl(candidate);
+    if (image) return image;
+  }
+
+  // 2) 内联 base64（Anthropic source.data / 平铺 data・b64 / input_file.file_data）
+  const inlineB64 = readStringField(part, IMAGE_B64_KEYS) || (source ? readStringField(source, IMAGE_B64_KEYS) : '');
+  if (inlineB64) {
+    const mimeHint = fileMime || readImageMimeHint(part) || (source ? readImageMimeHint(source) : '');
+    const image = imagePartFromBase64(inlineB64, mimeHint);
+    if (image) return image;
+  }
+
+  // 3) 远程 URL：不下载（SSRF 策略）也不静默丢弃 → 明确 400
+  const remote = candidates.find((candidate) => REMOTE_IMAGE_URL_RE.test(asNonEmptyString(candidate)));
+  if (remote) {
+    throw badRequest(
+      '不支持远程图片 URL：网关只接受 data URL（data:image/...;base64,...）或内联 base64 图片，' +
+        '不会代为下载 http(s) 图片。请由客户端下载后以内联 base64 重新发送。',
+      'image_url',
+      'image_url_remote_unsupported'
+    );
+  }
+  return null;
 }
 
 /**
@@ -511,7 +677,17 @@ export function recordHistoryOnLog(
         assistant.images = images
           .filter((image) => image && typeof image.b64 === 'string' && image.b64)
           .slice(0, 4)
-          .map((image) => ({ b64: image.b64, format: image.format || 'png', model: image.model || null }));
+          .map((image) => ({
+            b64: image.b64,
+            format: image.format || 'png',
+            model: image.model || null,
+            // v2.65：生成图回放元数据（duck.ai generated-image part 需要 id/moderationToken/宽高）
+            ...(image.kind ? { kind: image.kind } : {}),
+            ...(image.id ? { id: image.id } : {}),
+            ...(image.moderationToken ? { moderationToken: image.moderationToken } : {}),
+            ...(Number.isFinite(image.width) ? { width: image.width } : {}),
+            ...(Number.isFinite(image.height) ? { height: image.height } : {})
+          }));
       }
       if (Array.isArray(toolCalls) && toolCalls.length) {
         assistant.toolCalls = toolCalls.slice(0, 20).map((call) => ({
@@ -685,6 +861,12 @@ export function normalizeImage(raw) {
   return {
     b64,
     format,
+    // v2.65：保留生成图回放需要的元数据（duck.ai 用 generated-image part + moderationToken 原样回放）。
+    ...(raw.kind === 'generated' || raw.generated === true ? { kind: 'generated' } : {}),
+    ...(typeof raw.id === 'string' || typeof raw.id === 'number' ? { id: String(raw.id) } : {}),
+    ...(typeof raw.moderationToken === 'string' && raw.moderationToken
+      ? { moderationToken: raw.moderationToken }
+      : {}),
     ...(Number.isFinite(raw.width) ? { width: raw.width } : {}),
     ...(Number.isFinite(raw.height) ? { height: raw.height } : {}),
     ...(typeof raw.modelDisplayName === 'string' && raw.modelDisplayName

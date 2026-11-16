@@ -171,7 +171,12 @@ export async function createHistoryStore({ dataDir = 'data', config = null, logg
             .map((image) => ({
               b64: image.b64.slice(0, MAX_IMAGE_BASE64_CHARS),
               format: typeof image.format === 'string' && image.format ? image.format : 'png',
-              ...(typeof image.model === 'string' && image.model ? { model: image.model } : {})
+              ...(typeof image.model === 'string' && image.model ? { model: image.model } : {}),
+              // v2.65：保留生成图回放/展示元数据
+              ...(image.kind ? { kind: image.kind } : {}),
+              ...(image.id ? { id: image.id } : {}),
+              ...(Number.isFinite(Number(image.width)) ? { width: Number(image.width) } : {}),
+              ...(Number.isFinite(Number(image.height)) ? { height: Number(image.height) } : {})
             }));
           if (images.length) entry.images = images;
         }

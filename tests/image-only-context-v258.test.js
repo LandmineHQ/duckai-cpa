@@ -56,6 +56,25 @@ function imageParts(messages) {
     .filter((part) => part && part.type === 'image');
 }
 
+/**
+ * v2.65：生成图按 duck.ai 语义回放为 assistant 的 `generated-image` part
+ * （原样 base64/format，不再转 PNG、不再缩到 512）。
+ */
+function generatedImageParts(messages) {
+  return buildUpstreamMessages(messages || [])
+    .filter((message) => message && message.role === 'assistant')
+    .flatMap((message) => (Array.isArray(message.parts) ? message.parts : []))
+    .filter((part) => part && part.type === 'generated-image');
+}
+
+/** 用户上传图仍然走 user content 的 `image` part（JPEG→PNG，≤512px）。 */
+function userImageParts(messages) {
+  return buildUpstreamMessages(messages || [])
+    .filter((message) => message && message.role === 'user')
+    .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+    .filter((part) => part && part.type === 'image');
+}
+
 function imagesInMessages(messages) {
   return (Array.isArray(messages) ? messages : []).flatMap((message) =>
     Array.isArray(message?.images) ? message.images : []
@@ -207,9 +226,15 @@ test('responses 跨轮：客户端只回占位文本，上游仍带真实 image 
     });
     assert.equal(second.status, 200, second.text);
     const messages = env.duck.calls.chat.at(-1)?.params?.messages || [];
-    const parts = imageParts(messages);
-    assert.ok(parts.length >= 1, '上游应恢复真实 image part');
-    assert.match(String(parts[0].image || ''), /^data:image\/png;base64,/);
+    const parts = generatedImageParts(messages);
+    assert.ok(parts.length >= 1, '上游应把生成图作为 assistant 的 generated-image part 回放');
+    assert.equal(parts[0].result, PNG_1X1_B64, '生成图必须原样 base64 回放，不能重新编码');
+    assert.equal(parts[0].format, 'png');
+    assert.ok(
+      Number.isFinite(parts[0].width) && parts[0].width > 0 && Number.isFinite(parts[0].height) && parts[0].height > 0,
+      'generated-image 必须带 width/height（实测缺失会被上游 400 拒绝）'
+    );
+    assert.equal(userImageParts(messages).length, 0, '生成图不应退化成用户新上传的 image part');
     const flatText = JSON.stringify(messages);
     assert.ok(flatText.includes('（上一轮生成的图片）'), '占位文本应被替换为图片标记');
     assert.ok(!flatText.includes(PLACEHOLDER), '不应把占位文本作为普通 user 文本发送');
@@ -249,9 +274,19 @@ test('chat 跨轮：同 session 占位文本回放时上游仍带真实 image pa
     });
     assert.equal(second.status, 200, second.text);
     const messages = env.duck.calls.chat.at(-1)?.params?.messages || [];
-    const parts = imageParts(messages);
-    assert.ok(parts.length >= 1, 'chat 上游应恢复真实 image part');
-    assert.match(String(parts[0].image || ''), /^data:image\/png;base64,/);
+    const parts = generatedImageParts(messages);
+    assert.ok(parts.length >= 1, 'chat 上游应以 assistant generated-image part 恢复生成图');
+    assert.equal(parts[0].result, PNG_1X1_B64, '生成图必须原样 base64 回放');
+    assert.equal(userImageParts(messages).length, 0, '生成图不应作为用户上传图重编码');
+    // v2.65：模型真正“看到”图还需要配套的 tool-invocation call/result（实测缺了模型答“看不到图”）
+    const assistantParts = buildUpstreamMessages(messages)
+      .filter((message) => message.role === 'assistant')
+      .flatMap((message) => (Array.isArray(message.parts) ? message.parts : []));
+    const callPart = assistantParts.find((part) => part.type === 'tool-invocation' && part.state === 'call');
+    const resultPart = assistantParts.find((part) => part.type === 'tool-invocation' && part.state === 'result');
+    assert.ok(callPart && resultPart, 'generated-image 必须配套 tool-invocation call/result');
+    assert.equal(callPart.toolName, 'GenerateImage');
+    assert.equal(callPart.toolCallId, resultPart.toolCallId);
     assert.ok(!JSON.stringify(messages).includes(PLACEHOLDER), '不应回放占位文本');
 
     const history = await historyEntry(env, sessionKey);
@@ -287,19 +322,24 @@ test('chat 生图后直接继续回复：图片挂到新 user，不拼接到生�
     assert.equal(second.status, 200, second.text);
 
     const upstream = buildUpstreamMessages(env.duck.calls.chat.at(-1)?.params?.messages || []);
+    const generated = upstream
+      .filter((message) => message.role === 'assistant')
+      .flatMap((message) => (Array.isArray(message.parts) ? message.parts : []))
+      .filter((part) => part && part.type === 'generated-image');
+    assert.equal(generated.length, 1, '生成图应作为 assistant 的 generated-image part 回放');
+    assert.equal(generated[0].result, PNG_1X1_B64, '生成图必须原样 base64 回放，不能重编码/缩放');
     const imageUsers = upstream.filter(
       (message) =>
         message.role === 'user' &&
         Array.isArray(message.content) &&
         message.content.some((part) => part && part.type === 'image')
     );
-    assert.equal(imageUsers.length, 1, '图片应只挂到新 user 上');
-    const imageUserText = imageUsers[0].content
-      .filter((part) => part && part.type === 'text')
-      .map((part) => part.text)
-      .join('');
-    assert.equal(imageUserText, '继续描述这张图', '图片应与新 user 文本同一条消息，而不是拼到生图请求');
-    assert.ok(!imageUsers[0].content.some((part) => part.type === 'text' && String(part.text).includes('画一只橘猫')));
+    assert.equal(imageUsers.length, 0, '生成图不应再挂到 user 消息上（会被当作新上传图片重编码）');
+    const lastUser = [...upstream].reverse().find((message) => message.role === 'user');
+    assert.ok(
+      lastUser.content.some((part) => part && part.type === 'text' && part.text === '继续描述这张图'),
+      '新 user 文本仍需单独发送'
+    );
 
     const firstUser = upstream.find(
       (message) => message.role === 'user' && Array.isArray(message.content) && message.content.some((part) => part?.type === 'text')
@@ -355,13 +395,10 @@ test('连续两轮图片：第二轮再生成后，第三轮上游同时保留 A
       body: { model: 'gpt-6-luna', input: `${PLACEHOLDER} 描述这两张图` }
     });
     assert.equal(third.status, 200, third.text);
-    const parts = imageParts(env.duck.calls.chat.at(-1)?.params?.messages || []);
-    assert.ok(parts.length >= 2, `上游应保留两张图片（实际 ${parts.length}）`);
+    const parts = generatedImageParts(env.duck.calls.chat.at(-1)?.params?.messages || []);
+    assert.ok(parts.length >= 2, `上游应保留两张生成图（实际 ${parts.length}）`);
     const { PNG: PngReader } = await import('pngjs');
-    const decoded = parts.map((part) => {
-      const b64 = String(part.image || '').split(',')[1] || '';
-      return PngReader.sync.read(Buffer.from(b64, 'base64'));
-    });
+    const decoded = parts.map((part) => PngReader.sync.read(Buffer.from(String(part.result || ''), 'base64')));
     const dims = decoded.map((png) => `${png.width}x${png.height}`);
     assert.ok(dims.includes('1x1'), `应包含第一张 1x1 图（实际 ${dims.join(',')}）`);
     assert.ok(dims.includes('2x2'), `应包含第二张 2x2 图（实际 ${dims.join(',')}）`);

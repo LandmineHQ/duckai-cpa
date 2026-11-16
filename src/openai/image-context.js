@@ -23,7 +23,15 @@ export function normalizeStoredImage(image) {
     b64,
     format,
     mimeType: typeof image.mimeType === 'string' && image.mimeType ? image.mimeType : format === 'jpg' ? 'image/jpeg' : `image/${format}`,
-    ...(typeof image.model === 'string' && image.model ? { model: image.model } : {})
+    ...(typeof image.model === 'string' && image.model ? { model: image.model } : {}),
+    // v2.65：生成图回放依赖这些元数据（duck.ai 的 generated-image part 需要 id/moderationToken/宽高）。
+    ...(image.kind === 'generated' || image.generated === true ? { kind: 'generated' } : {}),
+    ...(typeof image.id === 'string' || typeof image.id === 'number' ? { id: String(image.id) } : {}),
+    ...(typeof image.moderationToken === 'string' && image.moderationToken
+      ? { moderationToken: image.moderationToken }
+      : {}),
+    ...(Number.isFinite(Number(image.width)) ? { width: Number(image.width) } : {}),
+    ...(Number.isFinite(Number(image.height)) ? { height: Number(image.height) } : {})
   };
 }
 

@@ -136,13 +136,20 @@ function pushContentItem(item, systemParts, conversation, state = { pendingImage
     conversation.push({ role: 'user', content: normalized.text });
     return 'user';
   }
-  if (type === 'input_image') {
-    // v2.44：图像输入 → 真实 image part（data URL），交给上游多模态
+  if (type === 'input_image' || type === 'image_url' || type === 'image') {
+    // v2.44：图像输入 → 真实 image part（data URL），交给上游多模态。
+    // v2.65：同时接受 Anthropic/LiteLLM 的 base64 形状（source.base64 / data+mime_type）。
     const image = normalizeImagePart(item);
     if (image) state.pendingImages.push(image);
     return null;
   }
-  if (type === 'input_file') return null;
+  if (type === 'input_file') {
+    // v2.65：mimeType 为 image/* 的附件按图片处理（复用同一归一化）；
+    // 非图片附件仍不进入上游 messages（PDF/文本附件走各自流程）。
+    const image = normalizeImagePart(item);
+    if (image) state.pendingImages.push(image);
+    return null;
+  }
   // v2.44：上一轮 image_generation_call → 保留真实图片，挂到下一轮 user 消息上。
   if (type === 'image_generation_call') {
     const format = typeof item.output_format === 'string' && item.output_format ? item.output_format : 'png';
@@ -269,7 +276,11 @@ function buildImageItem(id, image, status = 'completed') {
     output_format: image.format || 'png',
     ...(Number.isFinite(image.width) ? { width: image.width } : {}),
     ...(Number.isFinite(image.height) ? { height: image.height } : {}),
-    ...(image.model ? { model: image.model } : {})
+    ...(image.model ? { model: image.model } : {}),
+    // v2.65：生成图回放元数据（duck.ai 需要 generated-image part 的 id/moderationToken）
+    ...(image.kind ? { kind: image.kind } : {}),
+    ...(image.upstreamImageId || image.id ? { upstream_image_id: image.upstreamImageId || image.id } : {}),
+    ...(image.moderationToken ? { moderation_token: image.moderationToken } : {})
   };
 }
 
@@ -315,7 +326,19 @@ export function outputItemsToConversation(outputItems) {
       const b64 = typeof item.result === 'string' ? item.result : '';
       if (b64) {
         const mime = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : `image/${format.replace(/^image\//, '')}`;
-        pendingImages.push({ mimeType: mime, dataUrl: `data:${mime};base64,${b64}` });
+        pendingImages.push({
+          mimeType: mime,
+          dataUrl: `data:${mime};base64,${b64}`,
+          b64,
+          format,
+          // v2.65：保留生成图回放元数据，避免下一轮被当作「用户新上传图片」重编码/重审核
+          kind: 'generated',
+          ...(item.upstream_image_id ? { id: String(item.upstream_image_id) } : {}),
+          ...(item.moderation_token ? { moderationToken: String(item.moderation_token) } : {}),
+          ...(Number.isFinite(item.width) ? { width: item.width } : {}),
+          ...(Number.isFinite(item.height) ? { height: item.height } : {}),
+          ...(item.model ? { model: item.model } : {})
+        });
       }
       continue;
     }
@@ -709,7 +732,13 @@ export async function handleResponses(req, res, ctx) {
           .map((item) => ({
             b64: item.result,
             format: item.output_format || 'png',
-            ...(item.model ? { model: item.model } : {})
+            ...(item.model ? { model: item.model } : {}),
+            // v2.65：生成图回放元数据（duck.ai generated-image part 需要 id/moderationToken）
+            kind: 'generated',
+            ...(item.upstream_image_id ? { id: String(item.upstream_image_id) } : {}),
+            ...(item.moderation_token ? { moderationToken: String(item.moderation_token) } : {}),
+            ...(Number.isFinite(item.width) ? { width: item.width } : {}),
+            ...(Number.isFinite(item.height) ? { height: item.height } : {})
           }));
         // v2.58：图片-only 的占位 fallback 只用于响应 message，不写入 canonical/upstream 文本。
         const assistantCanonical = outputItemsToConversation(payload.output).map((message) =>

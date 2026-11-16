@@ -1787,15 +1787,18 @@ export class IdentityPool {
         if (!client) throw new Error('createRuntime did not return a DuckClient-like object');
       } else {
         store = new MemoryIdentityStore(record, { source: 'pool' });
+        // v2.65：生成图回放（assistant `generated-image` part）必须与 durableStream 一起发，
+        // 否则上游返回 400 ERR_BAD_REQUEST。池内客户端原先只传 config.duck，漏了 durableStream/identity，
+        // 导致所有走身份池的请求都不带 durableStream。
+        const identityConfig = (this.config && this.config.identity) || {};
         client = new DuckClient({
           ...this.duckConfig,
           identityStore: store,
+          identity: identityConfig,
+          durableStream: identityConfig.durableStream || this.duckConfig.durableStream,
           proxyManager: this.proxyManager,
           logger: this.logger
         });
-        if (this.duckConfig.durableStream && this.duckConfig.durableStream.enabled) {
-          // identityRecord path: durableStream opt-in stays as configured
-        }
       }
       if (client && typeof client.init === 'function') await client.init();
     } catch (error) {

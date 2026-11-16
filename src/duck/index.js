@@ -25,7 +25,7 @@ import { DUCK_MODELS, DEFAULT_MODEL, MODEL_ALIASES, findModel, getApiModelCatalo
 import { IdentityStore, IdentityError, MemoryIdentityStore, createIdentityStore } from './identity.js';
 import { ProxyManager, ProxyError, createProxyManager } from './proxy.js';
 import { detectImageFormat, normalizeFormat } from './image-format.js';
-import { toUpstreamPngDataUrl } from './image-convert.js';
+import { toUpstreamPngDataUrl, imagePixelSize } from './image-convert.js';
 
 /** Reasoning effort ordering used for clamping unsupported tiers. */
 export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high'];
@@ -297,6 +297,12 @@ function sleep(ms) {
 
 /**
  * Build the upstream `messages` array from OpenAI-normalized messages.
+ *
+ * v2.65：生成图（image generation 结果）按 duck.ai 自己的形态回放 ——
+ * 作为 **assistant** 消息的 `parts:[{type:'generated-image', result, format, id, width, height, moderationToken}]`，
+ * 原样 base64、不转 PNG、不缩到 512。旧实现把它降级成「用户新上传的 image part」（JPEG→PNG + 512px），
+ * 上游会重新审核/重编码：大图直接 503 ERR_MODERATION_UNAVAILABLE，且续聊时图片明显变糊。
+ *
  * @param {Array<{ role: string, content: string }>} messages
  * @param {{ systemMode?: 'system' | 'developer' | 'prefix', systemPrompt?: string }} [options]
  */
@@ -305,20 +311,37 @@ export function buildUpstreamMessages(messages, options = {}) {
   /** @type {Array<Record<string, any>>} */
   const out = [];
   const systemTexts = [];
-  /** @type {Array<{ role: 'system'|'user'|'assistant', text: string, images: Array<Record<string, any>> }>} */
+  /** @type {Array<{ role: 'system'|'user'|'assistant', text: string, images: Array<Record<string, any>>, files: Array<Record<string, any>> }>} */
   const normalized = [];
 
   for (const message of Array.isArray(messages) ? messages : []) {
     if (!message) continue;
     const role = message.role === 'developer' ? 'developer' : message.role === 'system' ? 'system' : message.role === 'assistant' ? 'assistant' : 'user';
     const messageText = extractMessageText(message.content);
-    const images = extractMessageImages(message);
+    // v2.65：先保留原始图片对象（b64/format/id/moderationToken/width/height），
+    // 由下面按角色决定「生成图原样回放」还是「用户上传图转 PNG」。
+    const images = collectMessageImages(message);
     const files = extractMessageFiles(message);
     if (role === 'system' || role === 'developer') {
       if (messageText) systemTexts.push(messageText);
       continue;
     }
     normalized.push({ role, text: messageText, images, files });
+  }
+
+  // v2.65：客户端把生成图回放到 user 消息上（v2.44 的占位文本约定）时，搬回前一条 assistant 消息，
+  // 与 duck.ai 的 assistant `generated-image` part 语义对齐；找不到 assistant 则保持原样（走旧的 PNG 路径）。
+  for (let index = 0; index < normalized.length; index += 1) {
+    const item = normalized[index];
+    if (item.role !== 'user' || !item.images.length) continue;
+    const generated = item.images.filter(isGeneratedImage);
+    if (!generated.length) continue;
+    for (let back = index - 1; back >= 0; back -= 1) {
+      if (normalized[back].role !== 'assistant') continue;
+      normalized[back].images = [...normalized[back].images, ...generated];
+      item.images = item.images.filter((image) => !generated.includes(image));
+      break;
+    }
   }
 
   const injectedSystem = options.systemPrompt ? String(options.systemPrompt).trim() : '';
@@ -328,21 +351,43 @@ export function buildUpstreamMessages(messages, options = {}) {
     out.push({ role: systemMode, content: [{ type: 'text', text: systemTexts.join('\n\n') }] });
   }
 
-  // v2.44：assistant 历史里的图片（上一轮生成图）挂到紧随其后的 user 消息，
-  // 这样模型在“继续修改这张图”时能真正看到图片而不是文本占位。
+  // assistant 历史里的生成图 → 原样 generated-image part；用户上传图 → 紧随其后的 user image part。
   let pendingImages = [];
+  let lastUserText = '';
+  const generatedImageFallback = options.generatedImageFallback === true;
   for (const item of normalized) {
     if (item.role === 'assistant') {
-      out.push({ role: 'assistant', content: '', parts: [{ type: 'text', text: item.text }] });
-      if (item.images.length) pendingImages.push(...item.images);
+      // v2.65：assistant 回放 parts = 文本（非空才发）+ 每个生成图一组
+      // [generated-image, tool-invocation(call), tool-invocation(result)]，与 duck.ai 浏览器请求逐字段一致。
+      const parts = [];
+      if (item.text) parts.push({ type: 'text', text: item.text });
+      for (const image of item.images) {
+        if (generatedImageFallback) {
+          // 兜底路径：按旧的「用户上传图」处理（PNG ≤512），挂到下一条 user 消息。
+          const fallback = toUpstreamImagePart(image);
+          if (fallback) pendingImages.push(fallback);
+          continue;
+        }
+        const generatedParts = toUpstreamGeneratedImageParts(image, { prompt: lastUserText });
+        if (generatedParts) {
+          parts.push(...generatedParts);
+          continue;
+        }
+        // 兜底（缺 b64 等）：退回旧行为，挂到下一条 user 消息并转 PNG。
+        const fallback = toUpstreamImagePart(image);
+        if (fallback) pendingImages.push(fallback);
+      }
+      out.push(parts.length ? { role: 'assistant', content: '', parts } : { role: 'assistant', content: '' });
     } else {
       const content = [{ type: 'text', text: item.text }];
       if (item.files && item.files.length) content.push(...item.files);
-      if (item.images.length || pendingImages.length) {
-        content.push(...pendingImages, ...item.images);
+      const userImageParts = item.images.map((image) => toUpstreamImagePart(image)).filter(Boolean);
+      if (userImageParts.length || pendingImages.length) {
+        content.push(...pendingImages, ...userImageParts);
         pendingImages = [];
       }
       out.push({ role: 'user', content });
+      lastUserText = item.text || lastUserText;
     }
   }
   if (pendingImages.length) {
@@ -393,10 +438,106 @@ function toUpstreamImagePart(image) {
   return { type: 'image', mimeType, image: dataUrl };
 }
 
-/** 读取 conversation message 上携带的图片（OpenAI 层已归一化为 {mimeType,dataUrl}）。 */
-function extractMessageImages(message) {
+/** 读取 conversation message 上携带的原始图片对象（保留 id/宽高/moderationToken 等元数据）。 */
+function collectMessageImages(message) {
   const images = Array.isArray(message?.images) ? message.images : [];
-  return images.map(toUpstreamImagePart).filter(Boolean);
+  return images.filter((image) => image && typeof image === 'object');
+}
+
+/** 读取 conversation message 上携带的图片并转成上游 user image part（用户上传图路径）。 */
+function extractMessageImages(message) {
+  return collectMessageImages(message).map(toUpstreamImagePart).filter(Boolean);
+}
+
+/** 取图片的 base64（支持 {b64} / {dataUrl} / 已归一化的上游 image part）。 */
+function imageBase64Of(image) {
+  if (!image || typeof image !== 'object') return '';
+  if (typeof image.b64 === 'string' && image.b64) return image.b64;
+  const candidate =
+    typeof image.dataUrl === 'string'
+      ? image.dataUrl
+      : typeof image.image === 'string'
+        ? image.image
+        : image.image_url && typeof image.image_url === 'object' && typeof image.image_url.url === 'string'
+          ? image.image_url.url
+          : typeof image.image_url === 'string'
+            ? image.image_url
+            : '';
+  const match = String(candidate || '').match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/);
+  return match ? match[1] : '';
+}
+
+/**
+ * 是否「上游生成的图片」（而不是用户上传）。
+ * v2.65：生成图带 kind='generated'（DuckClient 标记），历史/会话状态里也保留 id/moderationToken/model。
+ */
+function isGeneratedImage(image) {
+  if (!image || typeof image !== 'object') return false;
+  if (image.kind === 'generated' || image.generated === true) return true;
+  return Boolean(image.id) || Boolean(image.moderationToken) || Boolean(image.model);
+}
+
+/**
+ * v2.65：生成图 → duck.ai assistant parts 里的 `generated-image` **+ 配套 tool-invocation**。
+ *
+ * 真实抓包（2026-11-16 chrome-devtools，duck.ai 第二轮请求）确认：
+ *   parts: [
+ *     {type:'generated-image', id:<uuid>, result:<原始 base64>, width, height, format, moderationToken?},
+ *     {type:'tool-invocation', state:'call',   toolCallId, toolName:'GenerateImage', toolArguments},
+ *     {type:'tool-invocation', state:'result', toolCallId, result:'Image generated successfully.'}
+ *   ]
+ * 只有 generated-image 而没有 call/result 时上游仍返回 200，但**模型看不到图**（实测回答「无法判断」）；
+ * 补上 call+result 后模型能正确读到图（实测「橙色」）。因此三者必须一起发，且 toolCallId 一致。
+ *
+ * 原样 base64 / 原始 format，**不转 PNG、不缩放**（旧实现转 PNG 512px 会被上游重新处理、变糊）。
+ * id / toolCallId 用内容哈希保证跨轮稳定（上游 prefix 复用的前提）。
+ *
+ * @returns {Array<Record<string, any>>|null} null 表示无法构造（缺 b64），由调用方回退旧行为
+ */
+function toUpstreamGeneratedImageParts(image, context = {}) {
+  const b64 = imageBase64Of(image);
+  if (!b64) return null;
+  const format = normalizeFormat(image.format) || detectImageFormat(b64, 'png');
+  const digest = crypto.createHash('sha256').update(b64).digest('hex');
+  const imageId = typeof image.id === 'string' && image.id ? image.id : `img_${digest.slice(0, 32)}`;
+  const toolCallId = `call_${digest.slice(0, 24)}`;
+  const prompt = typeof context.prompt === 'string' ? context.prompt.slice(0, 2000) : '';
+  // v2.65：generated-image 必须带 width/height，缺失时上游直接 400 ERR_BAD_REQUEST
+  //（实测：只用 result+format 必失败，补上 width/height 即 200 且模型能看到图）。
+  // 优先用生成时记录的尺寸，其次解码真实像素，最后按 duck.ai 前端口径回落 1024。
+  let width = Number(image.width);
+  let height = Number(image.height);
+  if (!(Number.isFinite(width) && width > 0) || !(Number.isFinite(height) && height > 0)) {
+    const size = imagePixelSize(b64);
+    width = size ? size.width : 1024;
+    height = size ? size.height : 1024;
+  }
+  return [
+    {
+      type: 'generated-image',
+      id: imageId,
+      result: b64,
+      width,
+      height,
+      format,
+      ...(typeof image.moderationToken === 'string' && image.moderationToken
+        ? { moderationToken: image.moderationToken }
+        : {})
+    },
+    {
+      type: 'tool-invocation',
+      state: 'call',
+      toolCallId,
+      toolName: 'GenerateImage',
+      toolArguments: JSON.stringify({ imageGenPrompt: prompt, imageToUse: 'none' })
+    },
+    {
+      type: 'tool-invocation',
+      state: 'result',
+      toolCallId,
+      result: 'Image generated successfully.'
+    }
+  ];
 }
 
 function extractMessageFiles(message) {
@@ -607,6 +748,8 @@ export class DuckClient {
       overrideCodes: {},
       durableStreamRequests: 0,
       durableStreamRejected: 0,
+      // v2.65：生成图回放被上游 400 后回退到 512 PNG 通道的计数（跨身份/跨会话时的兜底）
+      imageReplayFallbacks: 0,
       authRequests: 0,
       authExpired: 0,
       consecutiveFailures: 0,
@@ -890,10 +1033,15 @@ export class DuckClient {
     // 图片生成仍保留 GenerateImage（这是图片接口的显式意图）。
     if (params.imageGeneration) toolChoice.GenerateImage = true;
 
-    const buildBody = (systemMode) => {
+    const buildBody = (systemMode, buildOptions = {}) => {
       const body = {
         model,
-        messages: buildUpstreamMessages(messages, { systemMode, systemPrompt: params.systemPrompt }),
+        messages: buildUpstreamMessages(messages, {
+          systemMode,
+          systemPrompt: params.systemPrompt,
+          // v2.65：兜底路径 —— 生成图回放被上游拒绝时，退回「PNG ≤512 当用户上传图」的旧行为。
+          generatedImageFallback: buildOptions.generatedImageFallback === true
+        }),
         canUseTools: true,
         reasoningEffort,
         // 浏览器始终发送这三个能力位（未授权时为 null），缺字段会被后续 continuation 判为 incompatible。
@@ -931,7 +1079,12 @@ export class DuckClient {
 
     // v2.2: the anonymous/public upstream tier rejects `durableStream` with 400 ERR_BAD_REQUEST.
     // Remember that once, disable durableStream for this process, and retry exactly once without it.
-    if (result.error && body.durableStream && this._isDurableStreamRejection(result.error)) {
+    // v2.65：带 generated-image part 的请求（生成图回放）必须保留 durableStream ——
+    // 上游对这类 part 的 400 不是 durableStream 问题，不能据此把整个进程降级。
+    const bodyHasGeneratedImages = (body.messages || []).some(
+      (message) => Array.isArray(message?.parts) && message.parts.some((part) => part && part.type === 'generated-image')
+    );
+    if (!bodyHasGeneratedImages && result.error && body.durableStream && this._isDurableStreamRejection(result.error)) {
       this._durableStreamDegraded = true;
       this._stats.durableStreamRejected += 1;
       this.logger?.warn?.('[duck] upstream rejected durableStream (anonymous tier?); disabling durableStream for this process and retrying once', {
@@ -958,6 +1111,25 @@ export class DuckClient {
         conversationId: params.conversationId,
         expectImage: params.imageGeneration === true
       });
+    }
+
+    // v2.65：生成图回放被上游 400（跨身份/跨会话、身份池改绑、额度冷却换身份、换模型换池等）时，
+    // 自动回退到旧的「生成图转 PNG ≤512 当用户上传图」路径重试一次 —— 用户最多看到略糊的图，
+    // 而不是整条请求失败。
+    if (
+      result.error &&
+      bodyHasGeneratedImages &&
+      (result.error.status === 400 ||
+        result.error.type === 'bad_request' ||
+        result.error.upstreamType === 'ERR_BAD_REQUEST')
+    ) {
+      this._stats.imageReplayFallbacks = (this._stats.imageReplayFallbacks || 0) + 1;
+      this.logger?.warn?.('[duck] generated-image replay rejected upstream; falling back to 512 PNG image part', {
+        status: result.error.status,
+        upstreamType: result.error.upstreamType || result.error.type || null
+      });
+      body = buildBody(mode, { generatedImageFallback: true });
+      result = await this._executeChat(body, chatContext());
     }
 
     if (result.error) {
@@ -1206,7 +1378,17 @@ export class DuckClient {
     return {
       images: result.images.map((image) => ({
         b64: image.b64,
-        format: detectImageFormat(image.b64, normalizeFormat(image.format) || 'png')
+        format: detectImageFormat(image.b64, normalizeFormat(image.format) || 'png'),
+        kind: 'generated',
+        // v2.65：后续轮次按 duck.ai 的 assistant `generated-image` part 原样回放，
+        // 缺少 id/moderationToken/宽高会被上游当作新图重新审核（400/503）。
+        ...(image.id ? { id: image.id } : {}),
+        ...(image.moderationToken ? { moderationToken: image.moderationToken } : {}),
+        ...(Number.isFinite(image.width) ? { width: image.width } : {}),
+        ...(Number.isFinite(image.height) ? { height: image.height } : {}),
+        ...(typeof image.modelDisplayName === 'string' && image.modelDisplayName
+          ? { modelDisplayName: image.modelDisplayName }
+          : {})
       })),
       modelDisplayName: result.images[0]?.modelDisplayName,
       rawEvents: result.rawEvents
@@ -2202,7 +2384,9 @@ export class DuckClient {
         snippet: 'missing b64Image'
       });
     }
-    collected.images.push(image);
+    // v2.65：标记来源并保留 id/宽高/moderationToken —— 后续轮次必须按 duck.ai 的
+    // `generated-image` part 原样回放（转 PNG/缩放会让上游重新审核并明显变糊）。
+    collected.images.push({ ...image, kind: 'generated' });
     handlers.onImage?.({ b64: image.b64, format: image.format, modelDisplayName: image.modelDisplayName });
   }
 
@@ -2240,7 +2424,11 @@ export class DuckClient {
         format: data.format || 'jpeg',
         modelDisplayName: data.imageModelDisplayName,
         width: data.width,
-        height: data.height
+        height: data.height,
+        // v2.65：duck.ai 在后续轮次回放生成图时会带上 id/moderationToken，
+        // 缺这两项会被上游当作「新上传图片」重新审核（大图直接 503）。
+        id: data.id,
+        moderationToken: data.moderationToken
       });
       return;
     }

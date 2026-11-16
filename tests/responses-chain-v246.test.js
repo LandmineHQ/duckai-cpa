@@ -109,13 +109,26 @@ test('previous_response_id：生图后继续编辑（图片上下文仍保留）
     const messages = duck.calls.chat.at(-1).params.messages;
     const userWithImage = messages.find((message) => Array.isArray(message.images) && message.images.length);
     assert.ok(userWithImage, '链式回放应包含图片');
+    // v2.65：生成图按 duck.ai 语义回放为 assistant 的 generated-image + tool-invocation(call/result)，
+    // 原样 base64/format，不再降级成用户上传的 PNG image part。
     const { buildUpstreamMessages } = await import('../src/duck/index.js');
     const upstream = buildUpstreamMessages(messages);
-    const imagePart = upstream
+    const assistantParts = upstream
+      .filter((message) => message.role === 'assistant')
+      .flatMap((message) => (Array.isArray(message.parts) ? message.parts : []));
+    const generatedImage = assistantParts.find((part) => part.type === 'generated-image');
+    assert.ok(generatedImage, '应以 generated-image part 回放生成图');
+    assert.equal(generatedImage.result, PNG);
+    assert.equal(generatedImage.format, 'jpeg');
+    const toolCall = assistantParts.find((part) => part.type === 'tool-invocation' && part.state === 'call');
+    const toolResult = assistantParts.find((part) => part.type === 'tool-invocation' && part.state === 'result');
+    assert.ok(toolCall && toolResult, '必须同时带 tool-invocation call/result（否则上游 200 但模型看不到图）');
+    assert.equal(toolCall.toolName, 'GenerateImage');
+    assert.equal(toolCall.toolCallId, toolResult.toolCallId);
+    const userImagePart = upstream
       .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
       .find((part) => part.type === 'image');
-    assert.ok(imagePart);
-    assert.equal(imagePart.mimeType, 'image/png');
+    assert.ok(!userImagePart, '生成图不应降级为用户上传 image part');
   });
 });
 

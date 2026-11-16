@@ -1,4 +1,4 @@
-﻿# AGENTS.md — duckai-cpa 项目指南（面向后续开发者与协作者）
+# AGENTS.md — duckai-cpa 项目指南（面向后续开发者与协作者）
 
 > 本文件是 **项目级** 约定。优先级：用户即时指令 > 本文件。
 > 最后更新：2026-11-06（v2.63）。改代码前先读本文件相应章节。
@@ -159,9 +159,26 @@ data/                运行时数据（不入库；含敏感文件）
     `config.conversations.mode='server'` 或请求头 `X-Conversation-Mode: server`，并带 `X-Session-Id`；
     只发新消息用 `X-Conversation-Delta: true`；历史前缀不匹配返回 409 `conversation_session_conflict`。
   - 精确前缀复用保证图片压缩只发生一次；图片链/工具链/文本链均真实验证通过。
-- **图片上下文（v2.44）**：`image_generation_call` 回放不能退化成文本占位；必须转成真实 image part（挂到下一轮 user 消息）。
-  上游图像输入只接受 PNG/WebP（JPEG 实测 400 sc22），`src/duck/image-convert.js`（jpeg-js + pngjs，纯 JS）统一转 PNG 并缩到 **512px**；
-  `/v1/chat/completions` 的 `image_url` data URL、`/v1/responses` 的 `input_image` 同样支持。
+- **图片上下文（v2.44 → v2.65 重写）**：
+  - **用户上传图**：上游只接受 PNG/WebP（JPEG 实测 400 sc22），`src/duck/image-convert.js`（jpeg-js + pngjs，纯 JS）
+    统一转 PNG 并缩到 **512px**，作为 **user** content 的 `{type:'image', mimeType, image}` part；
+    `/v1/chat/completions` 的 `image_url` data URL、`/v1/responses` 的 `input_image` 都走这里。
+  - **生成图回放（v2.65，重要）**：**不能**再降级成用户上传图（会被上游重编码 + 缩 512 → 续聊变糊，
+    大图还会 503 `ERR_MODERATION_UNAVAILABLE`）。必须按 duck.ai 浏览器真实请求（chrome-devtools 抓包 2026-11-16）回放成
+    **assistant** 的 `parts`：
+    ```
+    [{type:'generated-image', id, result:<原始 base64，不转码>, width, height, format, moderationToken?},
+     {type:'tool-invocation', state:'call',   toolCallId, toolName:'GenerateImage', toolArguments},
+     {type:'tool-invocation', state:'result', toolCallId, result:'Image generated successfully.'}]
+    ```
+    `assistant.content` 为 `''`（不要塞空 text part）。**三个 part 缺一不可**：实测只发 `generated-image` 时上游 200
+    但模型「看不到图」；`result`/`format` 之外**必须带 `width`/`height`**（缺失直接 400）；`moderationToken` 可选。
+    `id`/`toolCallId` 用内容哈希保证跨轮稳定（prefix 复用前提）。
+  - **durableStream 必须跟着身份池走**：`identity-pool.js` 创建 DuckClient 时必须传 `identity`/`durableStream`
+    （只传 `config.duck` 会漏）。`generated-image` 回放请求若没有 durableStream 会被上游 400；且 400 不得再被
+    误判为「durableStream 不兼容」而降级整个进程。
+  - **兜底（v2.65）**：带生成图的请求若被上游 400，自动改用 PNG ≤512 的用户上传图通道重试一次
+    （`_stats.imageReplayFallbacks`），客户端只会看到「略糊」而不会看到失败。
 
 - **消息组件统一（v2.37）**：「连接测试」与「会话历史」共用 `webapp/src/app/components/chat-message.tsx` 的
   `ChatMessageBubble`（+`ToolCallList`）：助手气泡/思考折叠/来源/图片/工具调用徽章一致；会话历史只读（不传 onRetry）。
@@ -408,6 +425,36 @@ data/                运行时数据（不入库；含敏感文件）
   （stderr 有一条 Fastify `disableRequestLogging` 弃用警告，不影响功能）。
 - **控制台**：Windows 二进制是控制台程序，双击后窗口常驻（关窗即停止）；首次启动的 adminToken/API Key
   打印在这个窗口。用脚本启动时重定向 stdout/stderr 即可静默。
+
+## 9.4 v2.65（2026-11-16）生成图回放保真 + 图片入参解析
+
+- **用户症状**：① API 请求带图片时，会话历史里看不到图片附件；② 生图返回的高清图，续聊一轮后明显变糊
+  （duck.ai 浏览器本身不变糊）。
+- **生成图回放根因（chrome-devtools 真实抓包确认）**：网关把生成图降级成「用户新上传图」——
+  JPEG→PNG + 缩 512 + 当 user image part 发；上游会把这种 part 当新上传图重新审核/重编码：
+  续聊变糊；大图直接 503 `ERR_MODERATION_UNAVAILABLE`（实测 1MB base64 左右即触发）。
+  duck.ai 真实第二轮请求是 assistant `parts` =
+  `[generated-image(id,result,width,height,format,moderationToken?)]` + `tool-invocation(call)` + `tool-invocation(result)`，
+  `assistant.content=''`，`result` 是**原始 JPEG base64（不转码）**。
+- **实测出的硬要求**（写代码时别再踩）：
+  1. `generated-image` 必须带 `width`/`height`（缺 → 400 `ERR_BAD_REQUEST`；`moderationToken` 可选）；
+  2. 必须同时带 `tool-invocation` 的 `call` + `result`（缺 → 上游 200 但模型「看不到图」，回答「无法判断/看不到图」）；
+  3. 这类请求必须带 `durableStream`；身份池创建 DuckClient 时漏传 `identity`/`durableStream` 会导致全部池内请求不带它；
+  4. 不能把这类 400 当成「durableStream 被拒」去进程级降级（会连带废掉后续请求）。
+- **实现**：`src/duck/index.js` 的 `buildUpstreamMessages` 以 assistant `parts` 回放生成图
+  （`toUpstreamGeneratedImageParts`，`id`/`toolCallId` 用 base64 哈希保证跨轮稳定；尺寸缺失时
+  `image-convert.js#imagePixelSize` 解码取真实像素，兜底 1024）；`chat.js`/`responses.js`/`image-context.js`/`history.js`
+  透传 `kind/id/width/height/moderationToken`；`identity-pool.js` 补传 `identity`/`durableStream`。
+- **图片入参解析**：`normalizeImagePart` 支持 Anthropic/LiteLLM `{type:'image', source:{type:'base64',media_type,data}}`、
+  平铺 `{type:'image', data, mime_type}`、`b64`+`format` 等形状；`input_file` 的 image/* 按图片处理；
+  远程 http(s) URL 不再静默丢图，返回 400 `image_url_remote_unsupported`（不下载，避免 SSRF）。
+- **验证**：真实上游端到端（生成 → 回放 → 模型答「红色」）200；离线回归见 `tests/image-only-context-v258.test.js`、
+  `tests/responses-chain-v246.test.js`、`tests/image-input-shapes-v265.test.js`；详见 `docs/ACCEPTANCE.md` §2.65。
+- **已知边界**（2026-11-16 真机实测）：
+  - 跨会话/跨身份回放**并不会**被上游拒绝：用 session A 生图、session B（不同身份）回放，实测 200 且模型答对颜色；
+  - 真正的 400 全来自 part 形状（缺 `width`/`height`、缺 tool-invocation）；
+  - 仍保留防御性兜底：带生成图的请求若被上游 400，`chat()` 会自动改用 PNG ≤512 的「用户上传图」通道重试一次
+    （`_stats.imageReplayFallbacks` 计数 + warn 日志），保证客户端不会因图片回放拿到硬失败。
 
 ## 10. 文档索引
 

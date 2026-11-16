@@ -210,7 +210,7 @@ test('chat 图片输入：image_url data URL → 上游 images（供“修改上
   });
 });
 
-test('非 data URL 图片被忽略（不发起额外网络请求）', async () => {
+test('远程 URL 图片明确报错（v2.65：不再静默丢图，也不发起额外网络请求）', async () => {
   const duck = newDuck();
   await withServer({ duck }, async ({ baseUrl }) => {
     const res = await v1Request(baseUrl, '/v1/chat/completions', {
@@ -228,10 +228,10 @@ test('非 data URL 图片被忽略（不发起额外网络请求）', async () =
         ]
       }
     });
-    assert.equal(res.status, 200, res.text);
-    const messages = duck.calls.chat[0].params.messages;
-    const user = messages.find((message) => message.role === 'user');
-    assert.equal(user.images, undefined);
+    assert.equal(res.status, 400, res.text);
+    const payload = JSON.parse(res.text);
+    assert.equal(payload.error.code, 'image_url_remote_unsupported');
+    assert.equal(duck.calls.chat.length, 0, '不应转发上游，也不应尝试下载远程图片');
   });
 });
 

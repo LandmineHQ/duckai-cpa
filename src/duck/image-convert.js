@@ -7,6 +7,7 @@
  *
  * 使用纯 JS 编解码（jpeg-js / pngjs），不引入原生依赖，Windows/Docker alpine 均可运行。
  */
+import { createHash } from 'node:crypto';
 import jpeg from 'jpeg-js';
 import { PNG } from 'pngjs';
 
@@ -38,6 +39,41 @@ function decodeToRgba(buffer) {
     return { width: decoded.width, height: decoded.height, data: decoded.data };
   }
   return null;
+}
+
+/** 图片尺寸缓存（按 base64 哈希），避免每轮回放都解码。 */
+const SIZE_CACHE = new Map();
+const SIZE_CACHE_LIMIT = 64;
+
+/**
+ * v2.65：读取图片像素尺寸（只用于生成图回放的 width/height 字段）。
+ * duck.ai 的 `generated-image` part 必须带 width/height（实测缺失则上游 400 ERR_BAD_REQUEST）。
+ * @param {string} base64
+ * @returns {{ width: number, height: number } | null}
+ */
+export function imagePixelSize(base64) {
+  const b64 = typeof base64 === 'string' ? base64 : '';
+  if (!b64) return null;
+  const cacheKey = cryptoHash(b64);
+  if (SIZE_CACHE.has(cacheKey)) return SIZE_CACHE.get(cacheKey);
+  let size = null;
+  try {
+    const decoded = decodeToRgba(base64ToBuffer(b64));
+    if (decoded && decoded.width > 0 && decoded.height > 0) {
+      size = { width: decoded.width, height: decoded.height };
+    }
+  } catch {
+    size = null;
+  }
+  if (size) {
+    if (SIZE_CACHE.size >= SIZE_CACHE_LIMIT) SIZE_CACHE.delete(SIZE_CACHE.keys().next().value);
+    SIZE_CACHE.set(cacheKey, size);
+  }
+  return size;
+}
+
+function cryptoHash(text) {
+  return createHash('sha256').update(text).digest('hex').slice(0, 32);
 }
 
 function resizeRgba(image, maxDimension) {
