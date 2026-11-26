@@ -26,6 +26,7 @@ import { IdentityStore, IdentityError, MemoryIdentityStore, createIdentityStore 
 import { ProxyManager, ProxyError, createProxyManager } from './proxy.js';
 import { detectImageFormat, normalizeFormat } from './image-format.js';
 import { toUpstreamPngDataUrl, imagePixelSize } from './image-convert.js';
+import { assertDuckChatRequest } from './contract.js';
 
 /** Reasoning effort ordering used for clamping unsupported tiers. */
 export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high'];
@@ -42,6 +43,7 @@ const CONSENT_PURPOSES = 'user-location,image-generation,web-search';
  */
 export const NON_RETRIABLE_CODES = new Set([
   'upstream_protocol_mismatch',
+  'upstream_request_contract_violation',
   'upstream_no_image',
   'upstream_anomaly_check',
   'content_filter',
@@ -1352,7 +1354,7 @@ export class DuckClient {
    * @param {{ prompt: string, model?: string, signal?: AbortSignal, extraHeaders?: Record<string, string> }} params
    * @returns {Promise<{ images: Array<{ b64: string, format: string }>, modelDisplayName?: string }>}
    */
-  async imageGeneration(params = {}) {
+  async imageGeneration(params = {}, handlers = {}) {
     const prompt = String(params.prompt || '').trim();
     if (!prompt) throw new DuckError('prompt is required for imageGeneration', { status: 400, type: 'invalid_request', retriable: false });
     const result = await this.chat(
@@ -1365,7 +1367,7 @@ export class DuckClient {
         signal: params.signal,
         extraHeaders: params.extraHeaders
       },
-      {}
+      handlers || {}
     );
     if (!result.images.length) {
       throw new DuckError('upstream finished without returning an image', {
@@ -1579,6 +1581,16 @@ export class DuckClient {
       if (process.env.DUCKAI_DEBUG_INITIAL === '1') {
         this.logger?.warn?.('[duck] initial request body', { body: JSON.stringify(body).slice(0, 1200), durableStream: Boolean(body.durableStream), model: body.model, reasoningEffort: body.reasoningEffort });
       }
+      if (this.strictProtocol) {
+        const allowSystemMessages = Boolean(this._systemModeResolved && this._systemModeResolved !== 'prefix') || this.systemPromptMode !== 'prefix';
+        const extraHeaderKeys = context.extraHeaders ? Object.keys(context.extraHeaders) : [];
+        assertDuckChatRequest(body, headers, {
+          isContinuation: Boolean(body.continuation),
+          allowSystemMessages,
+          extraHeaderKeys,
+          ErrorCtor: DuckError
+        });
+      }
       const signal = this._composeSignal(context.signal, controller.signal);
       attemptContext.signal = signal;
       try {
@@ -1643,6 +1655,16 @@ export class DuckClient {
 
       if (this.strictProtocol) {
         this._assertStrictChatResponse(response, attemptContext);
+      }
+
+      try {
+        attemptContext.handlers?.onUpstreamAccepted?.({
+          status: response.status,
+          responseId: attemptContext.responseId,
+          continuationDepth: attemptContext.continuationDepth || 0
+        });
+      } catch {
+        /* ignore handler hook errors */
       }
 
       return await this._consumeChatResponse(response, attemptContext);

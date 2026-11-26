@@ -31,7 +31,7 @@ export function formatTime(ts: number | null | undefined): string {
   return value === null ? '—' : timeFormatter.format(new Date(value));
 }
 
-export function formatDateTime(ts: number | null | undefined): string {
+export function formatDateTime(ts: number | string | null | undefined): string {
   const value = normalizeTs(ts);
   return value === null ? '—' : dateTimeFormatter.format(new Date(value));
 }
@@ -109,9 +109,10 @@ export function topEntries(map: Record<string, number> | undefined, limit = 5): 
     .map(([key, count]) => [key, Number(count)]);
 }
 
-export function dataUrlForImage(image: { b64: string; format?: string }): string {
+export function dataUrlForImage(image: { b64?: string; dataUrl?: string; format?: string }): string {
+  if (image.dataUrl && image.dataUrl.startsWith('data:image/')) return image.dataUrl;
   const format = image.format && /^[a-z0-9.+-]{1,16}$/i.test(image.format) ? image.format.toLowerCase() : 'png';
-  return `data:image/${format};base64,${image.b64}`;
+  return `data:image/${format};base64,${image.b64 || ''}`;
 }
 
 /** 页面 URL 同源地址（示例代码用）。 */

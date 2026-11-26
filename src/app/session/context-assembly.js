@@ -1,12 +1,14 @@
 /**
- * Phase 3A：chat/responses 共用的「context PDF 装配 + client-tools.pdf + 历史展示 + injection」。
+ * Phase 3A / v3：chat/responses 共用的「context PDF 装配 + client-tools.pdf + 历史展示 + injection」。
  *
- * 只消费调用方已算好的会话状态；不做 session resolve / diff / epoch / 压缩决策，
- * 不改 PDF 生成器、scope/hash/gating。逐行搬移 chat/responses 的重复块，保持 I1–I10。
+ * 改进点（v3）：
+ *  - 使用带 SHA1 缓存的 getOrCreateToolsPdf（默认 toolsMaxPages = 4，不再因 1 页限制轻易溢出）；
+ *  - 若工具 PDF 生成失败或超页，安全回退为将工具协议文本内联注入首条 user 消息，绝不静默丢工具；
+ *  - 保证先挂载 client-tools.pdf 再挂载 conversation-context.pdf，跨轮顺序固定以利前缀复用。
  */
 import {
   attachPdfFile,
-  createToolsPdf,
+  getOrCreateToolsPdf,
   pdfFileFromState,
   sanitizeFileMetadata,
   spillMessagesToPdf,
@@ -21,6 +23,30 @@ const CAPACITY_MESSAGE = '上下文超过 PDF 容量（15 页），请调用 /v1
 const TOOLS_PDF_INSTRUCTION =
   '\n\n[系统提示] 附件 client-tools.pdf 是本次会话的客户端工具说明，请先阅读再按需调用工具。';
 
+function appendTextToFirstUser(messages, suffix) {
+  if (!suffix) return messages;
+  const idx = messages.findIndex((m) => m && m.role === 'user');
+  if (idx < 0) return messages;
+  return messages.map((m, i) => {
+    if (i !== idx) return m;
+    if (typeof m.content === 'string') return { ...m, content: `${m.content}${suffix}` };
+    if (Array.isArray(m.content)) return { ...m, content: [...m.content, { type: 'text', text: suffix }] };
+    return { ...m, content: String(m.content || '') + suffix };
+  });
+}
+
+function makeToolsFileEntry(toolsPdf) {
+  return {
+    mimeType: 'application/pdf',
+    filename: 'client-tools.pdf',
+    b64: toolsPdf.b64 || toolsPdf.buffer.toString('base64'),
+    pages: toolsPdf.pages,
+    bytes: toolsPdf.bytes || toolsPdf.buffer.length,
+    textChars: toolsPdf.textChars,
+    text: toolsPdf.text
+  };
+}
+
 /**
  * @param {{
  *   kind: 'chat'|'responses',
@@ -28,23 +54,17 @@ const TOOLS_PDF_INSTRUCTION =
  *   conversation: Array<object>,
  *   historyMessages: Array<object>,
  *   clientTools: Array<{name:string}>,
- *   pdfSpillConfig: { enabled?: boolean, inputCharLimit?: number, maxPages?: number },
+ *   pdfSpillConfig: { enabled?: boolean, inputCharLimit?: number, maxPages?: number, toolsMaxPages?: number },
  *   inputCharLimit: number,
  *   scopeKey: string|null,
  *   responseStore: object|null,
  *   storedPdf: object|null,
  *   reuseStoredPdf: boolean,
+ *   useClientToolsPdf?: boolean,
  *   conversationChain: string|null,
  *   compression: object|null,
  *   logger: object
  * }} input
- * @returns {Promise<{
- *   duckMessages: Array<object>,
- *   displayMessages: Array<object>,
- *   injection: object,
- *   logPatch: object,
- *   savedContextPdf: boolean
- * }>}
  */
 export async function assembleContextMessages(input) {
   const {
@@ -53,7 +73,7 @@ export async function assembleContextMessages(input) {
     conversation,
     historyMessages,
     clientTools,
-    pdfSpillConfig,
+    pdfSpillConfig = {},
     inputCharLimit,
     scopeKey,
     responseStore,
@@ -64,33 +84,38 @@ export async function assembleContextMessages(input) {
     logger
   } = input;
 
+  const toolsMaxPages = Number(pdfSpillConfig.toolsMaxPages) || 4;
+  const protocolText = clientTools.length ? buildToolProtocol(clientTools) : '';
+  const toolNames = clientTools.map((tool) => tool.name);
+
   let duckMessages = initialDuckMessages;
   let spillDisplay = null;
+  let fellBackToInlineTools = false;
   const logPatch = {};
 
   if (reuseStoredPdf && storedPdf) {
-    const storedFile = pdfFileFromState(storedPdf);
-    if (storedFile) duckMessages = attachPdfFile(duckMessages, storedFile);
     if (clientTools.length) {
       try {
-        const toolsPdf = await createToolsPdf({
-          toolProtocol: buildToolProtocol(clientTools),
-          toolNames: clientTools.map((tool) => tool.name),
-          maxPages: 1
+        const toolsPdf = await getOrCreateToolsPdf({
+          toolProtocol: protocolText,
+          toolNames,
+          maxPages: toolsMaxPages,
+          includeContext: true
         });
-        duckMessages = attachPdfFile(duckMessages, {
-          mimeType: 'application/pdf',
-          filename: 'client-tools.pdf',
-          b64: toolsPdf.buffer.toString('base64'),
-          pages: toolsPdf.pages,
-          bytes: toolsPdf.buffer.length,
-          textChars: toolsPdf.textChars,
-          text: toolsPdf.text
-        });
+        duckMessages = attachPdfFile(duckMessages, makeToolsFileEntry(toolsPdf));
+        logPatch.toolsPdf = { pages: toolsPdf.pages, bytes: toolsPdf.bytes, cached: toolsPdf.cached };
       } catch (error) {
-        logger?.warn?.('client tools PDF generation failed', { error: error.message });
+        logger?.warn?.('client tools PDF generation failed during context reuse; falling back to inline protocol', {
+          error: error.message
+        });
+        if (protocolText) {
+          duckMessages = appendTextToFirstUser(duckMessages, `\n\n${protocolText}`);
+          fellBackToInlineTools = true;
+        }
       }
     }
+    const storedFile = pdfFileFromState(storedPdf);
+    if (storedFile) duckMessages = attachPdfFile(duckMessages, storedFile);
     spillDisplay = duckMessages;
     logPatch.contextPdfReused = true;
     logPatch.contextPdf = { pages: storedPdf.pages, bytes: storedPdf.bytes, reused: true };
@@ -99,13 +124,17 @@ export async function assembleContextMessages(input) {
       const spill = await spillMessagesToPdf(duckMessages, {
         inputCharLimit,
         maxPages: Number(pdfSpillConfig.maxPages) || 15,
-        toolProtocol: clientTools.length ? buildToolProtocol(clientTools) : '',
-        toolNames: clientTools.map((tool) => tool.name)
+        toolsMaxPages,
+        toolProtocol: protocolText,
+        toolNames
       });
       if (spill) {
         duckMessages = spill.messages;
         spillDisplay = spill.messages;
         logPatch.contextPdf = spill.pdf;
+        if (spill.toolsFile) {
+          logPatch.toolsPdf = { pages: spill.toolsFile.pages, bytes: spill.toolsFile.bytes };
+        }
         logPatch.contextPdfMoved = spill.movedMessages;
         if (responseStore?.enabled && scopeKey && spill.file) {
           let coveredCount = conversation.length;
@@ -143,42 +172,34 @@ export async function assembleContextMessages(input) {
     }
   }
 
-  if (input.useClientToolsPdf && !logPatch.contextPdf && !logPatch.contextPdfReused) {
+  if (input.useClientToolsPdf && !logPatch.contextPdf && !logPatch.contextPdfReused && !fellBackToInlineTools) {
     const already = duckMessages.some(
       (message) => Array.isArray(message.files) && message.files.some((file) => file.filename === 'client-tools.pdf')
     );
-    if (!already) {
+    if (!already && clientTools.length) {
       try {
-        const toolsPdf = await createToolsPdf({
-          toolProtocol: buildToolProtocol(clientTools),
-          toolNames: clientTools.map((tool) => tool.name),
-          maxPages: 1,
+        const toolsPdf = await getOrCreateToolsPdf({
+          toolProtocol: protocolText,
+          toolNames,
+          maxPages: toolsMaxPages,
           includeContext: false
         });
-        duckMessages = attachPdfFile(duckMessages, {
-          mimeType: 'application/pdf',
-          filename: 'client-tools.pdf',
-          b64: toolsPdf.buffer.toString('base64'),
-          pages: toolsPdf.pages,
-          bytes: toolsPdf.buffer.length,
-          textChars: toolsPdf.textChars,
-          text: toolsPdf.text
-        });
-        const firstUser = duckMessages.find((message) => message.role === 'user');
-        if (firstUser) {
-          duckMessages = duckMessages.map((message) =>
-            message === firstUser ? { ...message, content: String(message.content || '') + TOOLS_PDF_INSTRUCTION } : message
-          );
-        }
+        duckMessages = attachPdfFile(duckMessages, makeToolsFileEntry(toolsPdf));
+        duckMessages = appendTextToFirstUser(duckMessages, TOOLS_PDF_INSTRUCTION);
         spillDisplay = duckMessages;
-        logPatch.toolsPdf = { pages: toolsPdf.pages, bytes: toolsPdf.buffer.length };
+        logPatch.toolsPdf = { pages: toolsPdf.pages, bytes: toolsPdf.bytes, cached: toolsPdf.cached };
       } catch (error) {
-        logger?.warn?.('client tools PDF generation failed', { error: error.message });
+        logger?.warn?.('client tools PDF generation failed; falling back to inline protocol', {
+          error: error.message
+        });
+        if (protocolText) {
+          duckMessages = appendTextToFirstUser(duckMessages, `\n\n${protocolText}`);
+          fellBackToInlineTools = true;
+        }
       }
     }
   }
 
-  const protocolText = clientTools.length ? buildToolProtocol(clientTools) : '';
   const displayMessages = spillDisplay
     ? spillDisplay.map((message) => ({
         ...message,
@@ -189,13 +210,13 @@ export async function assembleContextMessages(input) {
   const firstInjectedUser = duckMessages.find((message) => message && message.role === 'user');
   const hasContextPdf = Boolean(logPatch.contextPdf);
   const hasToolsPdf = Boolean(logPatch.toolsPdf);
-  const hasPdfMode = hasContextPdf || hasToolsPdf;
-  const historyProtocolText = hasPdfMode ? PDF_PURPOSE_TEXT : protocolText;
+  const hasPdfMode = (hasContextPdf || hasToolsPdf) && !fellBackToInlineTools;
+  const historyProtocolText = fellBackToInlineTools ? protocolText : hasPdfMode ? PDF_PURPOSE_TEXT : protocolText;
   const injection = {
     injected: Boolean(historyProtocolText),
-    clientTools: clientTools.map((tool) => tool.name),
+    clientTools: toolNames,
     protocolText: historyProtocolText,
-    protocolKind: hasPdfMode ? 'client-tools-pdf' : 'text',
+    protocolKind: fellBackToInlineTools ? 'text-fallback' : hasPdfMode ? 'client-tools-pdf' : 'text',
     firstUserContent: firstInjectedUser && typeof firstInjectedUser.content === 'string' ? firstInjectedUser.content : '',
     upstreamMessageCount: duckMessages.length,
     chain: conversationChain || null,

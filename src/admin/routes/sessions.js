@@ -20,6 +20,7 @@ import {
   summarizeConversation
 } from '../../openai/compact.js';
 import { isPaidModel, resolveModel, resolveReasoningEffort } from '../../openai/models.js';
+import { normalizeMessageImages } from '../../openai/image-context.js';
 import { badRequest, conflict, normalizeFinishReason, notFound, toOpenAIError } from '../../openai/errors.js';
 import { methodNotAllowed, requireMethod } from './helpers.js';
 function sessionBusyError(sessionId) {
@@ -153,7 +154,7 @@ function validateSessionSettings(ctx, body, { isCreate = false } = {}) {
  * @param {{ appendUserContent?: string }} [options]
  * @returns {Array<{role: 'user'|'assistant', content: string}>}
  */
-function buildConversation(historyMessages, { appendUserContent } = {}) {
+function buildConversation(historyMessages, { appendUserContent, appendUserImages = [] } = {}) {
   /** @type {Array<{role: 'user'|'assistant', content: string, images?: Array<any>}>} */
   const conversation = [];
   const push = (role, text, images = []) => {
@@ -177,7 +178,9 @@ function buildConversation(historyMessages, { appendUserContent } = {}) {
     push(message.role, typeof message.content === 'string' ? message.content : '', message.images);
   }
   while (conversation.length > 0 && conversation[0].role === 'assistant') conversation.shift();
-  if (appendUserContent !== undefined) push('user', appendUserContent);
+  if (appendUserContent !== undefined || appendUserImages.length > 0) {
+    push('user', appendUserContent || '', appendUserImages);
+  }
   return conversation;
 }
 
@@ -586,7 +589,11 @@ async function generateAssistantReply(ctx, params) {
     onError() {}
   };
 
-  const wrappedHandlers = {};
+  const wrappedHandlers = {
+    onUpstreamAccepted() {
+      gate.notify();
+    }
+  };
   for (const [key, handler] of Object.entries(handlers)) {
     wrappedHandlers[key] = (...args) => {
       if (key !== 'onError' && key !== 'onToolCall' && key !== 'onToolResult') gate.notify();
@@ -928,7 +935,10 @@ async function handleSessionMessage(ctx, sessionId) {
   ctx.log.endpoint = `POST /admin/api/test/sessions/${sessionId}/messages`;
   const body = ctx.body && typeof ctx.body === 'object' && !Array.isArray(ctx.body) ? ctx.body : {};
   const content = typeof body.content === 'string' ? body.content.trim() : '';
-  if (!content) throw badRequest('"content" is required and must be a non-empty string', 'content', 'content_required');
+  const userImages = normalizeMessageImages(body.images);
+  if (!content && !userImages.length) {
+    throw badRequest('"content" is required and must be a non-empty string', 'content', 'content_required');
+  }
 
   const existing = await ctx.sessions.getSession(sessionId);
   if (!existing) throw notFound(`Session "${sessionId}" not found`, 'session_not_found');
@@ -946,11 +956,16 @@ async function handleSessionMessage(ctx, sessionId) {
     const imageGeneration =
       body.imageGeneration !== undefined ? body.imageGeneration === true : existing.imageGeneration === true;
 
-    const conversation = buildConversation(existing.messages, { appendUserContent: content });
+    const effectiveContent = content || '请查看我发送的图片。';
+    const conversation = buildConversation(existing.messages, {
+      appendUserContent: effectiveContent,
+      appendUserImages: userImages
+    });
     // Persist the user turn first (auto-title happens on the first user message).
     const userMessage = await ctx.sessions.appendMessage(sessionId, {
       role: 'user',
-      content,
+      content: effectiveContent,
+      ...(userImages.length ? { images: userImages } : {}),
       model: resolved.id,
       ts: Date.now()
     });

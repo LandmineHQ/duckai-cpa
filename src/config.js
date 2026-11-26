@@ -40,6 +40,7 @@ export const CONTEXT_LIMIT_MODES = Object.freeze(['trim', 'error']);
 /** Built-in defaults. Kept in sync with config/config.example.json. */
 export const DEFAULT_CONFIG = Object.freeze({
   server: { host: '127.0.0.1', port: 8787, cors: true },
+  http: { keepaliveIntervalMs: 15000 },
   auth: { apiKeys: [], adminToken: 'change-me-admin-token' },
   upstream: { rps: 1, maxConcurrent: 1, queueLimit: 50, queueTimeoutMs: 300000 },
   proxy: {
@@ -682,6 +683,9 @@ export function normalizeConfig(raw = {}) {
       host,
       port,
       cors: toBoolean(server.cors, true)
+    },
+    http: {
+      keepaliveIntervalMs: toInteger(source.http?.keepaliveIntervalMs, 15000, 10, 600000)
     },
     auth: {
       apiKeys,

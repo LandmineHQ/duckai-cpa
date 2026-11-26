@@ -2,11 +2,16 @@
 import { badRequest, errorPayload, toOpenAIError } from '../../openai/errors.js';
 
 export function sendError(ctx, error) {
+  ctx.jsonKeepalive?.stop?.();
   const normalized = toOpenAIError(error);
   ctx.log.error = normalized.message;
   if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
   const { res } = ctx;
   if (res.headersSent) {
+    if (ctx.jsonKeepalive?.started) {
+      ctx.jsonKeepalive.finishError(normalized);
+      return;
+    }
     if (ctx.streamWriter && !ctx.streamWriter.closed) {
       try {
         ctx.streamWriter.data(errorPayload(normalized));

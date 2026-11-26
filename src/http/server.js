@@ -14,6 +14,7 @@ import path from 'node:path';
 import { toOpenAIError } from '../openai/errors.js';
 import { createUpstreamQueue } from '../upstream/queue.js';
 import { createSessionsStore } from '../admin/sessions.js';
+import { createImageGalleryStore } from '../admin/image-gallery.js';
 import { PROJECT_ROOT } from '../config.js';
 import { createNullLogger } from '../logger.js';
 import { readJsonBody } from '../app/http/body.js';
@@ -98,6 +99,14 @@ export function createServer(options = {}) {
   const webDir = options.webDir || path.join(PROJECT_ROOT, 'web');
   const queue = options.queue || createUpstreamQueue({ config, logger });
   const sessions = options.sessions || createSessionsStore({ dataDir: store.dataDir, config, logger });
+  let imageGallery = options.imageGallery || null;
+  if (!imageGallery && store.dataDir) {
+    try {
+      imageGallery = createImageGalleryStore({ dataDir: store.dataDir, logger });
+    } catch {
+      imageGallery = null;
+    }
+  }
 
   /**
    * v2.32：额度耗尽时计算「何时恢复」。
@@ -268,6 +277,9 @@ export function createServer(options = {}) {
     duck,
     queue,
     sessions,
+    imageGallery,
+    reconFetch: options.reconFetch || null,
+    reconOutDir: options.reconOutDir || null,
     identity,
     proxy,
     identities,

@@ -7,15 +7,19 @@
  * - 超过页数上限抛 PdfCapacityError，由调用方决定回退策略。
  */
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 const A4 = [595.28, 841.89];
 const MARGIN = 32;
 const FONT_SIZE = 5;
-const LINE_HEIGHT = 3.2;
-const LINES_PER_PAGE = 250;
+const LINE_HEIGHT = 6;
+const LINES_PER_PAGE = 128;
 const MAX_PAGES_DEFAULT = 15;
+const TOOLS_PDF_MAX_PAGES_DEFAULT = 4;
+const TOOLS_PDF_CACHE_LIMIT = 64;
+const toolsPdfCache = new Map();
 
 const CJK_FONT_CANDIDATES = [
   process.env.DUCKAI_PDF_FONT,
@@ -266,22 +270,15 @@ export async function createContextPdf({ messages = [], maxPages = MAX_PAGES_DEF
   return { buffer, pages: pageCount, textChars: allText.length, imageCount: embedded };
 }
 
-export default { createContextPdf, PdfCapacityError };
-
-
-/** v2.50：独立的 client tools 说明 PDF（第一页工具说明，避免占用 context PDF 页数）。 */
-export async function createToolsPdf({ toolProtocol = '', toolNames = [], maxPages = 1, includeContext = true } = {}) {
+/** v2.50 / v3：独立的 client tools 说明 PDF（支持多页 + SHA1 LRU 缓存 + CJK 检查）。 */
+export async function createToolsPdf({ toolProtocol = '', toolNames = [], maxPages = TOOLS_PDF_MAX_PAGES_DEFAULT, includeContext = true } = {}) {
+  const effectiveMaxPages = Number.isFinite(Number(maxPages))
+    ? Math.max(1, Math.min(MAX_PAGES_DEFAULT, Math.trunc(Number(maxPages))))
+    : TOOLS_PDF_MAX_PAGES_DEFAULT;
   const doc = await PDFDocument.create();
   doc.setTitle('DuckAI client tools');
   doc.setCreationDate(new Date(0));
   doc.setModificationDate(new Date(0));
-  const fontInfo = readFont();
-  let font;
-  if (fontInfo) {
-    doc.registerFontkit(fontkit);
-    try { font = await doc.embedFont(fontInfo.bytes, { subset: true }); } catch { font = null; }
-  }
-  if (!font) font = await doc.embedFont(StandardFonts.Helvetica);
   const lines = [
     'CLIENT TOOLS / 客户端工具说明',
     '',
@@ -295,21 +292,87 @@ export async function createToolsPdf({ toolProtocol = '', toolNames = [], maxPag
   if (toolProtocol) {
     lines.push('', '工具调用协议：', ...String(toolProtocol).split('\n'));
   }
-  let page = doc.addPage(A4);
-  let y = A4[1] - MARGIN;
-  let pageCount = 1;
+  const text = lines.join('\n');
+  const fontInfo = readFont();
+  let font;
+  if (fontInfo) {
+    doc.registerFontkit(fontkit);
+    try { font = await doc.embedFont(fontInfo.bytes, { subset: true }); } catch { font = null; }
+  }
+  if (!font) {
+    if (hasNonAscii(text)) {
+      throw new PdfCapacityError('CJK font is required to render client tools PDF', { reason: 'font_missing' });
+    }
+    font = await doc.embedFont(StandardFonts.Helvetica);
+  }
+  let page = null;
+  let y = 0;
+  let pageCount = 0;
+  let linesOnPage = 0;
+  const addPage = () => {
+    if (pageCount >= effectiveMaxPages) {
+      throw new PdfCapacityError(`client tools PDF exceeds max pages (${effectiveMaxPages})`, { maxPages: effectiveMaxPages });
+    }
+    page = doc.addPage(A4);
+    pageCount += 1;
+    linesOnPage = 0;
+    y = A4[1] - MARGIN;
+    page.drawText(`Client tools · page ${pageCount}`, {
+      x: MARGIN,
+      y: A4[1] - MARGIN + 6,
+      size: 7,
+      font,
+      color: rgb(0.45, 0.45, 0.45)
+    });
+  };
+  addPage();
   const maxWidth = A4[0] - MARGIN * 2;
   for (const line of lines) {
     const wrapped = wrapText(line, font, FONT_SIZE, maxWidth);
+    if (!wrapped.length) {
+      if (linesOnPage >= LINES_PER_PAGE || y - LINE_HEIGHT < MARGIN) addPage();
+      else y -= LINE_HEIGHT;
+      linesOnPage += 1;
+      continue;
+    }
     for (const part of wrapped) {
-      if (y - LINE_HEIGHT < MARGIN) {
-        if (pageCount >= maxPages) throw new PdfCapacityError('client tools PDF exceeds max pages', { maxPages });
-        page = doc.addPage(A4); pageCount += 1; y = A4[1] - MARGIN;
-      }
+      if (linesOnPage >= LINES_PER_PAGE || y - LINE_HEIGHT < MARGIN) addPage();
       if (part) page.drawText(part, { x: MARGIN, y, size: FONT_SIZE, font, color: rgb(0.05, 0.05, 0.05) });
       y -= LINE_HEIGHT;
+      linesOnPage += 1;
     }
   }
-  const text = lines.join('\n');
-  return { buffer: Buffer.from(await doc.save()), pages: pageCount, textChars: text.length, text };
+  const buffer = Buffer.from(await doc.save());
+  return { buffer, pages: pageCount, textChars: text.length, text };
+}
+
+/**
+ * 确定性缓存版 client-tools.pdf 生成器：避免同一 tools 定义跨轮次重复跑 fontkit 子集化。
+ * @returns {Promise<{buffer: Buffer, b64: string, bytes: number, pages: number, textChars: number, text: string, cached: boolean}>}
+ */
+export async function getOrCreateToolsPdf({ toolProtocol = '', toolNames = [], maxPages = TOOLS_PDF_MAX_PAGES_DEFAULT, includeContext = true } = {}) {
+  const key = crypto
+    .createHash('sha1')
+    .update(JSON.stringify({ toolProtocol: String(toolProtocol), toolNames: Array.isArray(toolNames) ? toolNames : [], maxPages, includeContext: Boolean(includeContext) }))
+    .digest('hex');
+  if (toolsPdfCache.has(key)) {
+    const hit = toolsPdfCache.get(key);
+    // LRU touch
+    toolsPdfCache.delete(key);
+    toolsPdfCache.set(key, hit);
+    return { ...hit, cached: true };
+  }
+  const created = await createToolsPdf({ toolProtocol, toolNames, maxPages, includeContext });
+  const entry = {
+    ...created,
+    b64: created.buffer.toString('base64'),
+    bytes: created.buffer.length
+  };
+  toolsPdfCache.set(key, entry);
+  while (toolsPdfCache.size > TOOLS_PDF_CACHE_LIMIT) {
+    const oldestKey = toolsPdfCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    toolsPdfCache.delete(oldestKey);
+  }
+  return { ...entry, cached: false };
 }

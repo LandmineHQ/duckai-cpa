@@ -15,9 +15,9 @@ web/
 
 # Screenshots / captures / recon artifacts (never commit)
 docs/screenshots/
-recon/
+/recon/
 # duck.ai web source snapshots (npm run recon:pull)
-recon/duckai-web/
+/recon/duckai-web/
 recon-tmp/
 solvetest/
 coverage/

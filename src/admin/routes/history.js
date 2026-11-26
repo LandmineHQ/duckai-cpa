@@ -1,4 +1,4 @@
-import { notFound } from '../../openai/errors.js';
+import { notFound, OpenAIError } from '../../openai/errors.js';
 import { requireMethod } from './helpers.js';
 
 export async function handleHistory(ctx, parts, method, route) {

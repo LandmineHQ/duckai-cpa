@@ -43,6 +43,7 @@ import {
 } from './tool-protocol.js';
 import { resolveModel, resolveReasoningEffort } from './models.js';
 import { guardConversation } from './context-guard.js';
+import { executeUpstreamChatTurn } from './gateway.js';
 import { normalizeToolCalls, recordHistoryOnLog } from './chat.js';
 import {
   buildCompressionRecord,
@@ -62,6 +63,7 @@ import {
 } from './authoritative-session.js';
 import {
   badRequest,
+  notFound,
   OpenAIError,
   buildEstimatedUsage,
   genId,
@@ -778,7 +780,7 @@ export async function handleResponses(req, res, ctx) {
   }
 }
 
-async function collectResponse(ctx, params) {
+async function collectResponse(ctx, params, { enableNonStreamKeepalive = false, onUpstreamAccepted = null } = {}) {
   const collected = {
     content: '',
     reasoning: '',
@@ -813,35 +815,29 @@ async function collectResponse(ctx, params) {
   };
 
   const model = params.resolved.id;
-  const taskFor = (messagesForCall) => (runtime) =>
-    (runtime?.client || ctx.duck).chat(
-      {
-        model,
-        messages: messagesForCall,
-        reasoningEffort: params.reasoning.effort,
-        webSearch: params.flags.webSearch,
-        imageGeneration: params.flags.imageGeneration,
-        approxLocation: ctx.config?.tools?.location === true,
-        signal: ctx.signal
-      },
-      handlers
-    );
-  const result = await ctx.callUpstream(taskFor(params.duckMessages), {
+  const { result, duckMessages: finalDuckMessages } = await executeUpstreamChatTurn(ctx, {
     model,
-    onContextLimitRetry: () => {
-      const guarded = guardConversation(params.conversation, params.systemPrompt, {
-        ...(ctx.config?.context || {}),
-        aggressive: true
-      });
-      params.duckMessages = buildDuckMessages({
+    duckMessages: params.duckMessages,
+    conversation: params.conversation,
+    systemPrompt: params.systemPrompt,
+    reasoningEffort: params.reasoning.effort,
+    webSearch: params.flags.webSearch,
+    imageGeneration: params.flags.imageGeneration,
+    approxLocation: ctx.config?.tools?.location === true,
+    handlers,
+    enableNonStreamKeepalive,
+    onUpstreamAccepted,
+    buildRetryDuckMessages: (guardedMessages) => {
+      const built = buildDuckMessages({
         systemPrompt: params.systemPrompt,
-        conversation: guarded.messages,
+        conversation: guardedMessages,
         promptMode: ctx.config?.prompts?.mode
       });
-      ctx.log.contextTrimmed = true;
-      return taskFor(params.duckMessages);
+      params.duckMessages = built;
+      return built;
     }
   });
+  if (finalDuckMessages) params.duckMessages = finalDuckMessages;
 
   if (collected.error && !collected.content && !result) throw collected.error;
 
@@ -868,7 +864,11 @@ async function collectResponse(ctx, params) {
 }
 
 async function completeResponse(ctx, params) {
-  const { content, reasoningText, sources, images, usage: upstreamUsage, toolCalls } = await collectResponse(ctx, params);
+  const { content, reasoningText, sources, images, usage: upstreamUsage, toolCalls } = await collectResponse(
+    ctx,
+    params,
+    { enableNonStreamKeepalive: true }
+  );
   const annotations = buildAnnotations(sources);
   const output = [];
   // v2.40：只有图片时补一条文字说明（Codex 等只渲染 message 的客户端不会显示空消息）
@@ -942,16 +942,54 @@ async function completeResponse(ctx, params) {
  * 工具调用需要完整 JSON，所以先收集再按官方事件序列回放（文本/工具/图片）。
  */
 async function streamResponseWithTools(ctx, params) {
-  const collected = await collectResponse(ctx, params);
   const responseId = genId('resp_');
   const createdAt = nowSec();
-  const writer = ctx.openSSE();
+  let writer = null;
   let sequence = 0;
   const emit = (type, data = {}) => {
     const event = { type, sequence_number: sequence, ...data };
     sequence += 1;
-    if (!writer.closed) writer.event(type, event);
+    if (writer && !writer.closed) writer.event(type, event);
   };
+  let collected;
+  try {
+    collected = await collectResponse(ctx, params, {
+      onUpstreamAccepted: () => {
+        if (!writer) writer = ctx.openSSE();
+      }
+    });
+  } catch (error) {
+    if (!writer) throw error;
+    const normalized = toOpenAIError(error);
+    ctx.log.error = normalized.message;
+    try {
+      const failed = makeResponseObject({
+        id: responseId,
+        createdAt,
+        model: params.resolved.id,
+        status: 'failed',
+        output: [],
+        outputText: '',
+        usage: null,
+        annotations: [],
+        body: params.body,
+        reasoningEffort: params.reasoning.effort,
+        reasoningText: '',
+        error: { code: normalized.code || normalized.type, message: normalized.message }
+      });
+      emit('response.failed', { response: failed });
+      emit('error', {
+        code: normalized.code || normalized.type,
+        message: normalized.message,
+        param: normalized.param ?? null
+      });
+    } catch {
+      // client disconnected
+    }
+    writer.end();
+    return;
+  }
+  if (!writer) writer = ctx.openSSE();
 
   const { content, reasoningText, sources, images, toolCalls, usage: upstreamUsage } = collected;
   const annotations = buildAnnotations(sources);
@@ -1348,8 +1386,12 @@ async function streamResponse(ctx, params) {
     }
   };
 
-  // Any non-error upstream callback means the stream is alive → safe to send SSE.
-  const wrappedHandlers = {};
+  // Any non-error upstream callback (or 200 acceptance) means the stream is alive → safe to send SSE.
+  const wrappedHandlers = {
+    onUpstreamAccepted() {
+      gate.notify();
+    }
+  };
   for (const [key, handler] of Object.entries(handlers)) {
     wrappedHandlers[key] = (...args) => {
       if (key !== 'onError' && key !== 'onToolCall' && key !== 'onToolResult') gate.notify();
@@ -1654,4 +1696,90 @@ async function streamResponse(ctx, params) {
     void isAbortError(error);
     writer.end();
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Response retrieval / delete / input_items (OpenAI Responses parity) */
+/* ------------------------------------------------------------------ */
+
+function ensureResponsesStoreEnabled(ctx) {
+  const store = ctx.responsesStore;
+  if (!store || store.enabled === false) {
+    throw badRequest('Responses storage is disabled', 'responses', 'responses_store_disabled');
+  }
+  return store;
+}
+
+function recordToResponseObject(record) {
+  const output = Array.isArray(record.output) ? record.output : [];
+  const textParts = [];
+  const annotations = [];
+  for (const item of output) {
+    if (!item || item.type !== 'message' || !Array.isArray(item.content)) continue;
+    for (const part of item.content) {
+      if (part && typeof part.text === 'string') textParts.push(part.text);
+      if (part && Array.isArray(part.annotations)) annotations.push(...part.annotations);
+    }
+  }
+  const createdAt = Number.isFinite(Number(record.createdAt)) ? Math.floor(Number(record.createdAt) / 1000) : nowSec();
+  return makeResponseObject({
+    id: record.id,
+    createdAt,
+    model: record.model || 'gpt-6-luna',
+    status: 'completed',
+    output,
+    outputText: textParts.join(''),
+    usage: null,
+    annotations,
+    body: {
+      instructions: record.systemPrompt || null,
+      previous_response_id: record.previousId || null,
+      store: true
+    },
+    reasoningEffort: 'none',
+    reasoningText: ''
+  });
+}
+
+export async function handleGetResponse(ctx, responseId) {
+  ctx.log.endpoint = `GET /v1/responses/${responseId}`;
+  const store = ensureResponsesStoreEnabled(ctx);
+  const record = await store.get(responseId);
+  if (!record) throw notFound(`Response "${responseId}" not found`, 'response_not_found');
+  ctx.json(200, recordToResponseObject(record));
+}
+
+export async function handleDeleteResponse(ctx, responseId) {
+  ctx.log.endpoint = `DELETE /v1/responses/${responseId}`;
+  const store = ensureResponsesStoreEnabled(ctx);
+  const deleted = await store.delete(responseId);
+  if (!deleted) throw notFound(`Response "${responseId}" not found`, 'response_not_found');
+  ctx.json(200, { id: responseId, object: 'response.deleted', deleted: true });
+}
+
+export async function handleListResponseInputItems(ctx, responseId) {
+  ctx.log.endpoint = `GET /v1/responses/${responseId}/input_items`;
+  const store = ensureResponsesStoreEnabled(ctx);
+  const record = await store.get(responseId);
+  if (!record) throw notFound(`Response "${responseId}" not found`, 'response_not_found');
+  const conversation = Array.isArray(record.conversation) ? record.conversation : [];
+  const data = conversation.map((msg, index) => {
+    const id = `msg_${record.id}_${index}`;
+    const role = msg?.role === 'assistant' ? 'assistant' : 'user';
+    const partType = role === 'assistant' ? 'output_text' : 'input_text';
+    const text = typeof msg?.content === 'string' ? msg.content : '';
+    return {
+      id,
+      type: 'message',
+      role,
+      content: [{ type: partType, text }]
+    };
+  });
+  ctx.json(200, {
+    object: 'list',
+    data,
+    first_id: data[0]?.id || null,
+    last_id: data.at(-1)?.id || null,
+    has_more: false
+  });
 }

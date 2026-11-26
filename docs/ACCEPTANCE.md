@@ -1348,3 +1348,30 @@ call/result**；`assistant.content` 为空串。请求头含 `x-duckai-continuat
 - `toolArguments` 用触发轮的用户文本合成（上游实测不校验内容）。
 - 上游对图片体积仍有限制（约 1MB base64 量级）；用户上传图继续走 512 PNG 通道。
 - 跨会话回放时若会话状态里没有图片尺寸，用 `imagePixelSize()` 解码真实像素兜底。
+
+## 2.66 v3.0 整体重构验收（2026-11-26）
+
+> 参照 `bohrium-club-auto` 工程思路对后端防超时保活、Recon 引擎、严格协议校验、PDF 上下文/工具桥、OpenAI 网关统一层及管理台视觉/工作流进行整体重构；保留现有 Node 24 + Vite/React/shadcn 栈与暖橙配色方案。
+
+### 2.66.1 自动化检查（全部在最终代码修改后通过）
+
+| 检查项 | 命令 | 结果 |
+| --- | --- | --- |
+| 全量离线测试套件 | `npm test` | **561 / 561 PASS**（exit 0；含 CDN 保活、严格协议契约与 PDF、Recon、图片画廊、jsdom 前端并发等用例） |
+| 前端构建 | `npm run build:web` | 通过（`2.82s`；生成 `web/index.html`、`web/assets/index-ZpXUFaQJ.js`、`web/assets/index-CsMwIk7p.css`） |
+| 构建完整性校验 | `node scripts/build-check.mjs` | **16 / 16 PASS**（exit 0） |
+| TypeScript 检查 | `.\node_modules\.bin\tsc.cmd -p webapp/tsconfig.json --noEmit` | 本次新增与修改前端文件 **0 报错**（仅仓库既有未改动文件存在历史严格类型错误） |
+
+### 2.66.2 真实本地浏览器验收（隔离数据目录 `127.0.0.1:8799/admin/`）
+
+| 路由 / 场景 | 结果 | 观察要点 |
+| --- | --- | --- |
+| `#/overview` | ✅ | 分组编号侧栏（`01/02/03`）、顶部状态芯片（执行中/排队/RPS/均等）及边框化概览卡片布局清晰，0 console 报错 |
+| `#/chat`（ChatGPT 风格对话台） | ✅ | 全高工作区、可折叠左侧会话栏、顶部模型/推理切换、空态建议卡片、底部胶囊输入框与切换开关正常，0 console 报错 |
+| `#/images`（独立图片创作工坊） | ✅ | 12 种风格预设 + `auto`、8 种可视化画幅、光影氛围、高级引导、参考图与画廊展示均正常；复检已修复的 `SelectTrigger` 文本，0 重复/截断、0 console 报错 |
+| `#/recon` | ✅ | 基线快照、合约标记与对比操作卡片渲染正常，0 console 报错 |
+| 深色模式切换 | ✅ | 切换为「深色」后暖橙主色与深色表面对比度清晰可读，0 console 报错 |
+
+### 2.66.3 范围与未覆盖说明
+
+- 本轮离线全量测试与浏览器实测均在隔离目录完成，**未**向真实 `duck.ai` 上游发送在线请求或触发实时画图/联网生图（严格协议、CDN 保活与 Recon diff 逻辑均已通过离线单测与 mock 集成覆盖）。

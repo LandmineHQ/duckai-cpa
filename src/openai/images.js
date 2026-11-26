@@ -121,7 +121,12 @@ export async function handleImagesGenerations(req, res, ctx) {
   const images = [];
   for (let index = 0; index < n; index += 1) {
     const result = await ctx.callUpstream(
-      (runtime) => (runtime?.client || ctx.duck).imageGeneration(params),
+      (runtime) =>
+        (runtime?.client || ctx.duck).imageGeneration(params, {
+          onUpstreamAccepted: () => {
+            ctx.beginJsonKeepalive?.();
+          }
+        }),
       { model: resolved.id }
     );
     images.push(...normalizeImages(result));

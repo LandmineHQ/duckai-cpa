@@ -216,11 +216,158 @@ export interface SearchSource {
 }
 
 export interface ImageAttachment {
-  b64: string;
+  b64?: string;
+  dataUrl?: string;
   format?: string;
+  mimeType?: string;
   width?: number;
   height?: number;
   model?: string;
+}
+
+export interface ImageStylePreset {
+  id: string;
+  label: string;
+  description: string;
+  directive: string;
+  gradient: string;
+}
+
+export interface ImageAspectRatioPreset {
+  id: string;
+  label: string;
+  short: string;
+  hint: string;
+  width: number;
+  height: number;
+  directive: string;
+}
+
+export interface ImageMoodPreset {
+  id: string;
+  label: string;
+  directive: string;
+}
+
+export interface ImagePresetsResponse {
+  ok: boolean;
+  styles: ImageStylePreset[];
+  aspectRatios: ImageAspectRatioPreset[];
+  moods: ImageMoodPreset[];
+  inspirations: string[];
+  models: Array<{
+    id: string;
+    name: string;
+    paid: boolean;
+    tier: string;
+    available: boolean;
+    default?: boolean;
+  }>;
+}
+
+export interface GalleryImageItem {
+  id: string;
+  prompt: string;
+  composedPrompt: string;
+  style: string;
+  aspectRatio: string;
+  mood: string;
+  negativePrompt: string;
+  model: string;
+  modelDisplayName?: string | null;
+  identityId?: string | null;
+  identityLabel?: string | null;
+  format: string;
+  mimeType: string;
+  width?: number | null;
+  height?: number | null;
+  b64: string;
+  dataUrl: string;
+  upstreamImageId?: string | null;
+  moderationToken?: string | null;
+  parentId?: string | null;
+  latencyMs?: number | null;
+  createdAt: number;
+}
+
+export interface ReconContractMarkers {
+  versionTag?: string | null;
+  versionSha?: string | null;
+  beVersion?: string | null;
+  feChatHash?: string | null;
+  entryBundleUrls?: string[];
+  chatEndpoint?: boolean;
+  statusEndpoint?: boolean;
+  capabilitiesEndpoint?: boolean;
+  summarizeEndpoint?: boolean;
+  authTokenEndpoint?: boolean;
+  vqdChallengeHeader?: boolean;
+  feVersionHeader?: boolean;
+  feSignalsHeader?: boolean;
+  continuationHeader?: boolean;
+  consentPurposesHeader?: boolean;
+  durableStream?: boolean;
+  generatedImagePart?: boolean;
+  generateImageTool?: boolean;
+  webSearchTool?: boolean;
+  readDocumentTool?: boolean;
+  locationPromptTool?: boolean;
+  catalogCount?: number;
+  detectedModels?: string[];
+  unknownModels?: string[];
+  missingCatalogModels?: string[];
+}
+
+export interface ReconStatusResponse {
+  ok: boolean;
+  baselineExists: boolean;
+  outDir: string;
+  capturedAt?: string | null;
+  entryUrl: string;
+  version?: string | null;
+  targets?: {
+    entryUrl?: string;
+    finalUrl?: string | null;
+    status?: number;
+    htmlSha256?: string | null;
+    versionTag?: string | null;
+    versionSha?: string | null;
+  } | null;
+  markers?: ReconContractMarkers | null;
+  assetCount: number;
+  totalBytes: number;
+  catalogCount: number;
+}
+
+export interface ReconAssetItem {
+  url: string;
+  sha256?: string | null;
+  size?: number;
+  status?: number;
+  previous?: { sha256?: string | null; size?: number; status?: number };
+}
+
+export interface ReconDiffResponse {
+  ok: boolean;
+  baselineExists: boolean;
+  same: boolean;
+  versionChanged: boolean;
+  targetsChanged: boolean;
+  baselineVersion?: string | null;
+  currentVersion?: string | null;
+  baselineFetchedAt?: string | null;
+  currentFetchedAt?: string | null;
+  markerChanges: Array<{ key: string; before: unknown; after: unknown }>;
+  modelChanges: {
+    added: string[];
+    removed: string[];
+    unknownLive: string[];
+  };
+  added: ReconAssetItem[];
+  removed: ReconAssetItem[];
+  changed: ReconAssetItem[];
+  summary: string;
+  currentMarkers?: ReconContractMarkers | null;
 }
 
 export interface ToolCallInfo {

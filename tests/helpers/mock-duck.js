@@ -202,6 +202,9 @@ export class MockDuckClient {
 
       if (behavior.error) throw behavior.error;
 
+      handlers.onUpstreamAccepted?.({ status: 200, responseId: 'mock-resp', continuationDepth: 0 });
+      if (behavior.streamDelayMs > 0) await sleep(behavior.streamDelayMs);
+
       for (const text of behavior.textDeltas || []) {
         await emit(() => handlers.onTextDelta?.(text));
       }
@@ -244,13 +247,16 @@ export class MockDuckClient {
     }
   }
 
-  async imageGeneration(params = {}) {
+  async imageGeneration(params = {}, handlers = {}) {
     const startedAt = Date.now();
     this.imageStarts.push(startedAt);
     this._enter(startedAt);
     try {
       this.calls.imageGeneration.push({ params, startedAt });
+      if (this.imageBehavior.delayMs > 0) await sleep(this.imageBehavior.delayMs);
       if (this.imageBehavior.error) throw this.imageBehavior.error;
+      handlers.onUpstreamAccepted?.({ status: 200, responseId: 'mock-img-resp', continuationDepth: 0 });
+      if (this.imageBehavior.streamDelayMs > 0) await sleep(this.imageBehavior.streamDelayMs);
       return this.imageBehavior;
     } finally {
       this._exit();

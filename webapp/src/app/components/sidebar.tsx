@@ -1,16 +1,33 @@
 import {
-  History, Activity, Check, ChevronDown, Code2, CreditCard, Fingerprint, KeyRound, LayoutDashboard, LogOut, MessagesSquare, Monitor, Moon, Network, ScrollText, Settings, SlidersHorizontal, Sun, Users, X } from 'lucide-react';
+  Activity,
+  Check,
+  ChevronDown,
+  Code2,
+  CreditCard,
+  Fingerprint,
+  History,
+  ImagePlus,
+  KeyRound,
+  LayoutDashboard,
+  LogOut,
+  MessagesSquare,
+  Monitor,
+  Moon,
+  Network,
+  Radar,
+  ScrollText,
+  Settings,
+  SlidersHorizontal,
+  Sun,
+  Users,
+  X
+} from 'lucide-react';
 import type { Route } from '@/app/lib/hash-route';
-import {
-  ROUTE_META } from '@/app/lib/hash-route';
-import {
-  useOverview } from '@/app/lib/overview-context';
-import {
-  useTheme, type ThemeMode } from '@/app/lib/theme';
-import {
-  cn } from '@/lib/utils';
-import {
-  Button } from '@/components/ui/button';
+import { ROUTE_META } from '@/app/lib/hash-route';
+import { useOverview } from '@/app/lib/overview-context';
+import { useTheme, type ThemeMode } from '@/app/lib/theme';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,23 +36,50 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
-import {
-  Brand } from './brand';
+import { Brand } from './brand';
 
-const NAV_ITEMS: Array<{ route: Route; label: string; icon: typeof LayoutDashboard }> = [
-  { route: 'overview', label: '概览', icon: LayoutDashboard },
-  { route: 'chat', label: '连接测试', icon: MessagesSquare },
-  { route: 'identity', label: '默认身份', icon: Fingerprint },
-  { route: 'identities', label: '身份池', icon: Users },
-  { route: 'subscriptions', label: '订阅', icon: CreditCard },
-  { route: 'history', label: '会话历史', icon: History },
-  { route: 'proxy', label: '代理', icon: Network },
-  { route: 'settings', label: '设置', icon: Settings },
-  { route: 'model-config', label: '模型配置', icon: SlidersHorizontal },
-  { route: 'keys', label: 'API Key', icon: KeyRound },
-  { route: 'logs', label: '日志', icon: ScrollText },
-  { route: 'examples', label: '示例', icon: Code2 }
+export interface NavItem {
+  route: Route;
+  label: string;
+  icon: typeof LayoutDashboard;
+}
+
+export const NAV_GROUPS: Array<{ code: string; label: string; items: NavItem[] }> = [
+  {
+    code: '01',
+    label: '工作台',
+    items: [
+      { route: 'overview', label: '概览', icon: LayoutDashboard },
+      { route: 'chat', label: '连接测试', icon: MessagesSquare },
+      { route: 'images', label: '图片工坊', icon: ImagePlus },
+      { route: 'history', label: '会话历史', icon: History }
+    ]
+  },
+  {
+    code: '02',
+    label: '身份与网络',
+    items: [
+      { route: 'identity', label: '默认身份', icon: Fingerprint },
+      { route: 'identities', label: '身份池', icon: Users },
+      { route: 'subscriptions', label: '订阅', icon: CreditCard },
+      { route: 'proxy', label: '代理', icon: Network }
+    ]
+  },
+  {
+    code: '03',
+    label: '运维与配置',
+    items: [
+      { route: 'recon', label: '前端 Recon', icon: Radar },
+      { route: 'model-config', label: '模型配置', icon: SlidersHorizontal },
+      { route: 'keys', label: 'API Key', icon: KeyRound },
+      { route: 'logs', label: '日志', icon: ScrollText },
+      { route: 'settings', label: '设置', icon: Settings },
+      { route: 'examples', label: '示例', icon: Code2 }
+    ]
+  }
 ];
+
+export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
 
 const THEME_OPTIONS: Array<{ value: ThemeMode; label: string; icon: typeof Sun }> = [
   { value: 'light', label: '浅色', icon: Sun },
@@ -84,11 +128,11 @@ export function Sidebar({
       ) : null}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r bg-card transition-transform duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-border/80 bg-card transition-transform duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:translate-x-0',
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         )}
       >
-        <div className="flex items-center justify-between gap-2 border-b px-4 py-4">
+        <div className="flex h-14 items-center justify-between gap-2 border-b border-border/70 px-4">
           <a href="#/overview" className="rounded-md" onClick={onCloseMobile}>
             <Brand />
           </a>
@@ -97,90 +141,102 @@ export function Sidebar({
           </Button>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto p-3" aria-label="主导航">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const active = route === item.route;
-            return (
-              <a
-                key={item.route}
-                href={`#/${item.route}`}
-                onClick={onCloseMobile}
-                aria-current={active ? 'page' : undefined}
-                className={cn(
-                  'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                  active
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                )}
-              >
-                <Icon className={cn('h-4 w-4', active ? 'text-primary' : '')} />
-                {item.label}
-              </a>
-            );
-          })}
+        <nav className="scrollbar-thin flex-1 space-y-4 overflow-y-auto px-2.5 py-3" aria-label="主导航">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.code} className="space-y-1">
+              <div className="flex items-center gap-1.5 px-2.5 pb-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                <span className="font-mono text-primary/70">{group.code}</span>
+                <span>{group.label}</span>
+              </div>
+              <div className="space-y-0.5">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const active = route === item.route;
+                  return (
+                    <a
+                      key={item.route}
+                      href={`#/${item.route}`}
+                      onClick={onCloseMobile}
+                      aria-current={active ? 'page' : undefined}
+                      className={cn(
+                        'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors',
+                        active
+                          ? 'bg-primary/12 text-primary shadow-[inset_2px_0_0_0_hsl(var(--primary))]'
+                          : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'
+                      )}
+                    >
+                      <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} />
+                      <span className="truncate">{item.label}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
-        <div className="space-y-2 border-t p-3">
-          <div className="rounded-lg bg-muted/50 px-3 py-2">
+        <div className="space-y-1.5 border-t border-border/70 p-2.5">
+          <div className="rounded-lg border border-border/60 bg-muted/45 px-2.5 py-2">
             <div className="flex items-center gap-2 text-xs font-medium">
               <span className={cn('h-2 w-2 shrink-0 rounded-full', status.dot)} aria-hidden="true" />
               <span className={cn('truncate', status.tone)}>{status.label}</span>
-              <span className="ml-auto truncate text-[10px] text-muted-foreground">
+              <span className="ml-auto truncate font-mono text-[10px] text-muted-foreground tabular-nums">
                 v{data?.service?.version ?? '—'}
               </span>
             </div>
-            <div className="mt-1 flex items-center gap-1 text-[10.5px] text-muted-foreground">
-              <Activity className="h-3 w-3" />
+            <div className="mt-1 flex items-center gap-1 text-[10.5px] text-muted-foreground tabular-nums">
+              <Activity className="h-3 w-3 shrink-0" />
               执行 {queue?.inFlight ?? 0} · 排队 {queue?.waiting ?? 0} · RPS {queue?.rps ?? 1}
             </div>
-            <div className="mt-0.5 truncate text-[10.5px] text-muted-foreground" title={ROUTE_META[route].description}>
+            <div className="mt-0.5 truncate text-[10.5px] text-muted-foreground" title={ROUTE_META[route]?.description}>
               {data?.upstream?.challengeOk === true ? 'x-vqd-hash-1 已就绪' : '挑战状态未知'}
             </div>
           </div>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="w-full justify-between px-2 text-xs text-muted-foreground">
-                <span className="flex items-center gap-2">
-                  <ThemeIcon className="h-3.5 w-3.5" />
-                  主题：{currentTheme.label}
-                </span>
-                <ChevronDown className="h-3.5 w-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-52">
-              <DropdownMenuLabel>界面主题</DropdownMenuLabel>
-              {THEME_OPTIONS.map((option) => {
-                const Icon = option.icon;
-                return (
-                  <DropdownMenuItem key={option.value} onSelect={() => setTheme(option.value)}>
-                    <Icon className="h-3.5 w-3.5" />
-                    {option.label}
-                    {theme === option.value ? <Check className="ml-auto h-3.5 w-3.5" /> : null}
-                  </DropdownMenuItem>
-                );
-              })}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={onLogout}>
-                <LogOut className="h-3.5 w-3.5" />
-                退出登录
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex items-center gap-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 flex-1 justify-between px-2 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5 truncate">
+                    <ThemeIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{currentTheme.label}</span>
+                  </span>
+                  <ChevronDown className="h-3 w-3 shrink-0" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-48">
+                <DropdownMenuLabel>界面主题</DropdownMenuLabel>
+                {THEME_OPTIONS.map((option) => {
+                  const Icon = option.icon;
+                  return (
+                    <DropdownMenuItem key={option.value} onSelect={() => setTheme(option.value)}>
+                      <Icon className="h-3.5 w-3.5" />
+                      {option.label}
+                      {theme === option.value ? <Check className="ml-auto h-3.5 w-3.5" /> : null}
+                    </DropdownMenuItem>
+                  );
+                })}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={onLogout}>
+                  <LogOut className="h-3.5 w-3.5" />
+                  退出登录
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-          <Button
-            variant="ghost"
-            className="w-full justify-start px-2 text-xs text-muted-foreground"
-            onClick={onLogout}
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            退出登录
-          </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+              onClick={onLogout}
+              aria-label="退出登录"
+              title="退出登录"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
       </aside>
     </>
   );
 }
-
-export { NAV_ITEMS };

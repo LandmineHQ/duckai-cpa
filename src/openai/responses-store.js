@@ -180,6 +180,17 @@ export async function createResponseStore({ dataDir, config = {}, logger = null 
       return this.get(row.id);
     },
 
+    async delete(id) {
+      if (!enabled || !db || typeof id !== 'string' || !id.trim()) return false;
+      try {
+        const result = db.db.prepare('DELETE FROM responses WHERE id = ?').run(id.trim());
+        return (result.changes || 0) > 0;
+      } catch (error) {
+        logger?.warn?.('responses store: delete failed', { error: error.message, id });
+        return false;
+      }
+    },
+
     async getContextPdf(scopeKey) {
       if (!enabled || !db || typeof scopeKey !== 'string' || !scopeKey) return null;
       let row;

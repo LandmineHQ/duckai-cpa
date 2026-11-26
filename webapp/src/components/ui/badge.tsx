@@ -11,11 +11,12 @@ const badgeVariants = cva(
         secondary: 'border-transparent bg-secondary text-secondary-foreground',
         destructive: 'border-transparent bg-destructive text-destructive-foreground',
         outline: 'text-foreground',
-        success: 'border-transparent bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
-        warning: 'border-transparent bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
-        info: 'border-transparent bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300',
+        success: 'border-emerald-200/70 bg-emerald-100/80 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/15 dark:text-emerald-300',
+        warning: 'border-amber-200/70 bg-amber-100/80 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300',
+        info: 'border-sky-200/70 bg-sky-100/80 text-sky-700 dark:border-sky-500/20 dark:bg-sky-500/15 dark:text-sky-300',
         muted: 'border-transparent bg-muted text-muted-foreground',
-        accent: 'border-transparent bg-accent text-accent-foreground'
+        accent: 'border-transparent bg-accent text-accent-foreground',
+        mono: 'border-border/80 bg-muted/60 font-mono text-[11px] text-foreground'
       }
     },
     defaultVariants: { variant: 'default' }

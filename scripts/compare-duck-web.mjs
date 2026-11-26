@@ -38,9 +38,19 @@ if (options.help) {
         console.log(`baseline: ${baselinePath} (${diff.baselineFetchedAt || 'unknown'})`);
         console.log(`live:     ${diff.currentFetchedAt}`);
         console.log(`version:  ${diff.baselineVersion || '(none)'} -> ${diff.currentVersion || '(none)'}${diff.versionChanged ? '  CHANGED' : ''}`);
-        console.log(`status:   ${diff.same ? 'SAME' : 'DIFFERENT'}`);
+        console.log(`status:   ${diff.same ? 'SAME' : 'DIFFERENT'} (${diff.summary || ''})`);
 
         if (!diff.same) {
+          if (diff.markerChanges?.length) {
+            console.log('');
+            console.log(`markerChanges: ${diff.markerChanges.length}`);
+            for (const m of diff.markerChanges) {
+              console.log(`  * ${m.key}: ${String(m.before)} -> ${String(m.after)}`);
+            }
+          }
+          if (diff.modelChanges?.unknownLive?.length) {
+            console.log(`unknownModels: ${diff.modelChanges.unknownLive.join(', ')}`);
+          }
           console.log('');
           console.log(`changed: ${diff.changed.length}`);
           for (const item of diff.changed.slice(0, 30)) {

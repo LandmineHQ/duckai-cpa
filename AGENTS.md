@@ -456,6 +456,23 @@ data/                运行时数据（不入库；含敏感文件）
   - 仍保留防御性兜底：带生成图的请求若被上游 400，`chat()` 会自动改用 PNG ≤512 的「用户上传图」通道重试一次
     （`_stats.imageReplayFallbacks` 计数 + warn 日志），保证客户端不会因图片回放拿到硬失败。
 
+## 9.5 v3.0（2026-11-26）整体重构：CDN 保活、Recon、严格协议网关、ChatGPT 对话台与图片工坊
+
+- **CDN 防超时保活**：
+  - `src/app/http/keepalive.js`：SSE 空闲感知 `: keepalive\n\n` 与非流式 JSON **延迟提交**前导空白 `' '` 保活（只在空闲达到 `http.keepaliveIntervalMs` 默认 `15000` ms 时才提交 200 并写空白，避免 4xx/5xx 前置错误被吞成 200；已提交后再出错时写出完整 OpenAI error JSON 并附 `X-Accel-Buffering: no` / `Cache-Control: no-cache|no-store, no-transform`）；
+  - `src/app/http/sse.js` / `context.js` / `errors.js` / `src/config.js`：`ctx.jsonKeepalive` / `ctx.beginJsonKeepalive()` 统一接管保活；工具模式流式（`streamChatCompletionWithTools` / `streamResponseWithTools`）在 `onUpstreamAccepted` 后立即打开 SSE 通道发出心跳。
+- **上游前端 Recon 引擎**：
+  - `src/recon/snapshot.js` + `scripts/duck-web-snapshot.mjs` + `scripts/compare-duck-web.mjs`：HTML 动态噪声（`nonce`/`requestId` 等）归一化、仅抓取代码资源（跳过图片/字体/source map）、扫描 `duck.ai` 协议标记与未知模型漂移、输出结构化 diff（`same` / `targetsChanged` / `markerChanges` / `modelChanges` / `summary`）；
+  - `src/admin/routes/recon.js` + `#/recon`：提供 `GET /admin/api/recon/status`、`POST /admin/api/recon/pull`、`POST /admin/api/recon/diff` 与前端控制台页面。
+- **严格 `duck.ai` 协议校验与 PDF 上下文 / OpenAI 网关统一**：
+  - `src/duck/contract.js` + `src/duck/index.js`：通过 `validateDuckChatBody` / `validateDuckChatHeaders` / `assertDuckChatRequest` 对每条 `POST /duckchat/v1/chat` 请求头与请求体执行白名单字段严格校验（防缺漏与多余字段），缺漏/越界在 `strictProtocol` 下抛 `upstream_request_contract_violation`；
+  - `src/openai/gateway.js`：抽取共享 `executeUpstreamChatTurn` 统一 `/v1/chat/completions`、`/v1/responses`、`/v1/images/generations` 上游调度、`onContextLimitRetry` 与 `onUpstreamAccepted`；补齐 `GET/DELETE /v1/responses/:id` 与 `GET /v1/responses/:id/input_items`（`responsesStore.delete`）；
+  - `src/openai/context-pdf.js` / `context-spill.js` / `src/app/session/context-assembly.js`：修正 `LINE_HEIGHT = 6`（`FONT_SIZE = 5`）、`LINES_PER_PAGE = 128` 消除 PDF 行重叠；`client-tools.pdf` 允许 `toolsMaxPages = 4` 并带 SHA-1 LRU 缓存 `getOrCreateToolsPdf`；`attachPdfFile` 防止同名附件重复；tools PDF 超限/失败时显式降级为内联文本协议（`text-fallback`），不再静默丢弃工具。
+- **前端视觉统一、ChatGPT 式对话台（`#/chat`）与独立图片工坊（`#/images`）**：
+  - 保留 `webapp/src/index.css` 暖橙主题变量；`sidebar.tsx`（分组编号导航 `01/02/03` + 连接状态卡）、`page-header.tsx`（粘性顶栏 `WorkspaceHeader`）、`card.tsx` / `badge.tsx` 统一细节风格；
+  - `#/chat`（`webapp/src/app/pages/playground.tsx`）重构为全高 ChatGPT 风格工作区：可折叠左侧会话栏、顶部模型/推理切换、空态快捷建议卡片、支持拖拽/粘贴图片与联网/生图开关的底部胶囊输入框（保留 `data-testid` 与内联摘要折叠卡）；
+  - `#/images`（`webapp/src/app/pages/images.tsx`）独立成图片创作工坊：12 种预设风格 + `auto`、8 种可视化比例卡片、光影氛围、`Negative Guidance`、参考图上传、基于画廊作品继续微调（`parentId` 回放完整 `generated-image` 3-part 元组），由 SQLite `image_gallery` 表与 `/admin/api/images/{presets,generate,gallery,gallery/:id,gallery/bulk-delete}` 支撑。
+
 ## 10. 文档索引
 
 | 文档 | 内容 |

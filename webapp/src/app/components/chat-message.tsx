@@ -1,5 +1,16 @@
 import { useState } from 'react';
-import { AlertTriangle, Bot, ExternalLink, FileText, Loader2, RefreshCw, User, Wrench } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bot,
+  Check,
+  Copy,
+  Download,
+  ExternalLink,
+  FileText,
+  Loader2,
+  RefreshCw,
+  Wrench
+} from 'lucide-react';
 import type { SessionMessage, ToolCallInfo } from '@/app/lib/types';
 import { dataUrlForImage, formatDateTime, formatDuration, formatQueueWait } from '@/app/lib/format';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +30,6 @@ function safeHttpUrl(value: string | undefined | null): string | null {
   return null;
 }
 
-/** v2.37：工具调用 → 中文标签（位置调用 / 图片生成 / 联网搜索）。 */
 const TOOL_LABELS: Record<string, string> = {
   LocationPrompt: '位置调用',
   user_location: '位置调用',
@@ -35,9 +45,20 @@ const TOOL_LABELS: Record<string, string> = {
   ReadDocumentSelection: '文档片段读取'
 };
 
-/** v2.49：PDF/文件附件 chip（会话历史只存元数据）。 */
-function FileAttachmentList({ files, onPrimary = false }: { files?: Array<{ filename: string; mimeType: string; pages?: number; bytes?: number; text?: string }>; onPrimary?: boolean }) {
-  const [selected, setSelected] = useState<{ filename: string; mimeType: string; pages?: number; bytes?: number; text?: string } | null>(null);
+function FileAttachmentList({
+  files,
+  onPrimary = false
+}: {
+  files?: Array<{ filename: string; mimeType: string; pages?: number; bytes?: number; text?: string }>;
+  onPrimary?: boolean;
+}) {
+  const [selected, setSelected] = useState<{
+    filename: string;
+    mimeType: string;
+    pages?: number;
+    bytes?: number;
+    text?: string;
+  } | null>(null);
   if (!files || files.length === 0) return null;
   return (
     <>
@@ -52,12 +73,16 @@ function FileAttachmentList({ files, onPrimary = false }: { files?: Array<{ file
                 event.stopPropagation();
                 setSelected(file);
               }}
-              className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors ${onPrimary ? 'border-primary-foreground/20 bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25' : 'bg-muted/40 text-muted-foreground hover:bg-muted'}`}
+              className={`inline-flex max-w-full items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
+                onPrimary
+                  ? 'border-primary-foreground/20 bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25'
+                  : 'border-border/80 bg-background/80 text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
               title={`${file.filename} · ${file.mimeType}${file.pages ? ` · ${file.pages} 页` : ''}（点击查看 PDF 文本）`}
               data-testid="message-file-chip"
             >
-              <FileText className="h-3 w-3 shrink-0" />
-              <span className="truncate">{file.filename}</span>
+              <FileText className="h-3 w-3 shrink-0 text-primary" />
+              <span className="truncate font-medium">{file.filename}</span>
               {file.pages ? <span className="shrink-0">· {file.pages} 页</span> : null}
               {kb ? <span className="shrink-0">· {kb} KB</span> : null}
             </button>
@@ -68,7 +93,7 @@ function FileAttachmentList({ files, onPrimary = false }: { files?: Array<{ file
         <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
+              <FileText className="h-4 w-4 text-primary" />
               {selected?.filename || 'PDF'}
             </DialogTitle>
             <DialogDescription>
@@ -78,9 +103,14 @@ function FileAttachmentList({ files, onPrimary = false }: { files?: Array<{ file
             </DialogDescription>
           </DialogHeader>
           {selected?.text ? (
-            <pre className="max-h-[62vh] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 text-xs leading-relaxed" data-testid="message-file-text">{selected.text}</pre>
+            <pre
+              className="scrollbar-thin max-h-[62vh] overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/30 p-3 text-xs leading-relaxed"
+              data-testid="message-file-text"
+            >
+              {selected.text}
+            </pre>
           ) : (
-            <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+            <p className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
               该历史记录没有保存 PDF 文本内容（v2.50 之前的记录）；新记录会显示完整文本。
             </p>
           )}
@@ -96,22 +126,21 @@ function toolLabel(name: string): string {
   return TOOL_LABELS[name] || name || '工具调用';
 }
 
-/** 工具调用列表（连接测试 + 会话历史共用渲染）。 */
 export function ToolCallList({ toolCalls }: { toolCalls?: ToolCallInfo[] }) {
   if (!toolCalls || toolCalls.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5" data-testid="message-tools">
       {toolCalls.map((call, index) => (
-        <details key={`${call.name}-${index}`} className="rounded-md border bg-muted/20">
-          <summary className="flex cursor-pointer list-none items-center gap-1 px-2 py-0.5 text-[10px] font-medium">
-            <Wrench className="h-3 w-3 text-muted-foreground" />
-            {toolLabel(call.name)}
+        <details key={`${call.name}-${index}`} className="rounded-lg border border-border/70 bg-muted/25">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium">
+            <Wrench className="h-3 w-3 text-primary/80" />
+            <span>{toolLabel(call.name)}</span>
             {call.result ? <span className="text-muted-foreground">· {String(call.result).slice(0, 24)}</span> : null}
           </summary>
           {call.args || call.result ? (
-            <div className="space-y-1 border-t px-2 py-1 text-[10px] text-muted-foreground">
+            <div className="space-y-1 border-t px-2.5 py-1.5 text-[11px] text-muted-foreground">
               {call.args ? (
-                <p className="max-h-32 overflow-auto whitespace-pre-wrap break-words">参数：{call.args}</p>
+                <p className="max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono text-[10.5px]">参数：{call.args}</p>
               ) : null}
               {call.result ? (
                 <p className="max-h-32 overflow-auto whitespace-pre-wrap break-words">结果：{call.result}</p>
@@ -133,7 +162,14 @@ function MessageMeta({ message }: { message: SessionMessage }) {
   }
   if (message.ts) parts.push(formatDateTime(message.ts));
   if (parts.length === 0) return null;
-  return <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">{parts.join(' · ')}</div>;
+  return <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground tabular-nums">{parts.join(' · ')}</div>;
+}
+
+function downloadDataUrl(dataUrl: string, filename: string) {
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename;
+  a.click();
 }
 
 export function ChatMessageBubble({
@@ -145,16 +181,17 @@ export function ChatMessageBubble({
 }: {
   message: SessionMessage;
   streaming?: boolean;
-  /** 该消息正在被重新生成（一般会被截断替换，保留以支持原位 loading）。 */
   retrying?: boolean;
-  /** 有其它请求进行中时禁用重试。 */
   retryDisabled?: boolean;
   onRetry?: (message: SessionMessage) => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+
   if (message.role === 'system') {
     return (
-      <div className="flex justify-center" data-testid="compaction-notice">
-        <div className="max-w-[92%] rounded-full border border-primary/25 bg-primary/5 px-3 py-1.5 text-center text-[11px] leading-relaxed text-primary">
+      <div className="flex justify-center py-1" data-testid="compaction-notice">
+        <div className="max-w-[92%] rounded-full border border-primary/25 bg-primary/5 px-3.5 py-1 text-center text-[11px] leading-relaxed text-primary">
           {message.content}
         </div>
       </div>
@@ -164,7 +201,7 @@ export function ChatMessageBubble({
   if (message.role === 'user' && String(message.content || '').startsWith(COMPACTION_MARKER)) {
     const summary = String(message.content || '');
     return (
-      <div className="rounded-lg border border-primary/25 bg-primary/5 p-3" data-testid="compaction-notice">
+      <div className="rounded-xl border border-primary/25 bg-primary/5 p-3.5" data-testid="compaction-notice">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="success" className="px-1.5 py-0 text-[10px]">上下文已压缩</Badge>
           <span className="text-[11px] text-muted-foreground">以下是上一次会话的摘要，旧消息已写入 PDF</span>
@@ -172,29 +209,50 @@ export function ChatMessageBubble({
         {message.files && message.files.length ? <div className="mt-2"><FileAttachmentList files={message.files} /></div> : null}
         <details className="mt-2">
           <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">查看压缩摘要（{summary.length} 字符）</summary>
-          <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 text-[11px]">{summary}</pre>
+          <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-background p-2.5 text-[11px]">{summary}</pre>
         </details>
       </div>
     );
   }
 
   if (message.role === 'user') {
+    const userImages = message.images ?? [];
     return (
-      <div className="flex justify-end gap-2">
-        <div className="flex max-w-[85%] flex-col items-end gap-1">
-          <div className="whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-primary px-3.5 py-2.5 text-sm text-primary-foreground">
-            {message.content}
+      <div className="flex justify-end">
+        <div className="flex max-w-[82%] flex-col items-end gap-1.5">
+          {userImages.length > 0 ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              {userImages.map((image, idx) => {
+                const src = dataUrlForImage(image);
+                return (
+                  <img
+                    key={`user-img-${idx}`}
+                    src={src}
+                    alt={`上传图片 ${idx + 1}`}
+                    className="h-28 w-28 cursor-zoom-in rounded-2xl border border-border/80 object-cover shadow-xs"
+                    onClick={() => setPreviewSrc(src)}
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+          <div className="rounded-3xl bg-muted/85 px-4 py-2.5 text-[14.5px] leading-relaxed text-foreground shadow-2xs ring-1 ring-border/50">
+            <div className="whitespace-pre-wrap break-words">{message.content}</div>
             {message.files && message.files.length ? (
-              <div className="mt-1.5">
-                <FileAttachmentList files={message.files} onPrimary />
+              <div className="mt-2">
+                <FileAttachmentList files={message.files} />
               </div>
             ) : null}
           </div>
-          <span className="pr-1 text-[11px] text-muted-foreground">{formatDateTime(message.ts)}</span>
+          {message.ts ? (
+            <span className="pr-1 text-[10.5px] text-muted-foreground/75">{formatDateTime(message.ts)}</span>
+          ) : null}
         </div>
-        <div className="mt-0.5 hidden h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary sm:flex">
-          <User className="h-4 w-4" />
-        </div>
+        <Dialog open={Boolean(previewSrc)} onOpenChange={(open) => { if (!open) setPreviewSrc(null); }}>
+          <DialogContent className="max-w-3xl p-2">
+            {previewSrc ? <img src={previewSrc} alt="大图预览" className="max-h-[80vh] w-full rounded-lg object-contain" /> : null}
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -205,19 +263,28 @@ export function ChatMessageBubble({
   const retryBusy = retrying || streaming || retryDisabled;
   const canRetry = Boolean(onRetry) && !retryBusy;
 
+  const copyContent = () => {
+    if (!message.content) return;
+    navigator.clipboard?.writeText(message.content).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    }).catch(() => {});
+  };
+
   return (
-    <div className="flex gap-2">
-      <div className="mt-0.5 hidden h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary sm:flex">
+    <div className="group flex items-start gap-3.5 py-1">
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary shadow-2xs">
         <Bot className="h-4 w-4" />
       </div>
-      <div className="min-w-0 max-w-[95%] flex-1 space-y-2 rounded-2xl rounded-tl-sm border bg-card px-3.5 py-3 shadow-sm">
+      <div className="min-w-0 flex-1 space-y-2.5">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs font-medium text-muted-foreground">助手</span>
           {message.model ? (
-            <Badge variant="outline" className="font-mono text-[10px]">
+            <span className="font-mono text-[11px] font-medium text-muted-foreground">
               {message.model}
-            </Badge>
-          ) : null}
+            </span>
+          ) : (
+            <span className="text-xs font-medium text-muted-foreground">助手</span>
+          )}
           {message.finishReason && message.finishReason !== 'stop' ? (
             <Badge variant="warning" className="text-[10px]">
               {message.finishReason}
@@ -248,20 +315,20 @@ export function ChatMessageBubble({
 
         {waiting ? (
           <div className="flex items-center gap-2 py-1 text-sm text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {retrying ? '正在重新生成…' : '正在等待上游响应…'}
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <span>{retrying ? '正在重新生成…' : '正在思考并等待上游响应…'}</span>
           </div>
         ) : null}
 
         {message.content ? (
-          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+          <div className="whitespace-pre-wrap break-words text-[14.5px] leading-7 text-foreground/95">
             {message.content}
-            {streaming ? <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-primary align-middle" /> : null}
+            {streaming ? <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-xs bg-primary align-middle" /> : null}
           </div>
         ) : null}
 
         {message.error ? (
-          <div className="flex items-start gap-2 rounded-md bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+          <div className="flex items-start gap-2 rounded-xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1 break-words">{message.error}</span>
             {onRetry ? (
@@ -280,15 +347,49 @@ export function ChatMessageBubble({
           </div>
         ) : null}
 
+        {images.length > 0 ? (
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            {images.map((image, index) => {
+              const src = dataUrlForImage(image);
+              const fmt = (image.format ?? 'png').toLowerCase();
+              return (
+                <figure key={`${fmt}-${index}`} className="group/img relative overflow-hidden rounded-2xl border bg-muted/30">
+                  <img
+                    src={src}
+                    alt={`生成图片 ${index + 1}`}
+                    className="max-h-80 w-full cursor-zoom-in object-contain"
+                    loading="lazy"
+                    onClick={() => setPreviewSrc(src)}
+                  />
+                  <div className="flex items-center justify-between border-t bg-card/80 px-2.5 py-1 text-[10.5px] text-muted-foreground">
+                    <span>
+                      {fmt.toUpperCase()}
+                      {image.width && image.height ? ` · ${image.width}×${image.height}` : ''}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => downloadDataUrl(src, `duckai-image-${index + 1}.${fmt === 'jpeg' ? 'jpg' : fmt}`)}
+                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-accent hover:text-foreground"
+                    >
+                      <Download className="h-3 w-3" />
+                      下载
+                    </button>
+                  </div>
+                </figure>
+              );
+            })}
+          </div>
+        ) : null}
+
         {sources.length > 0 ? (
-          <div className="space-y-1">
-            <div className="text-[11px] font-medium text-muted-foreground">搜索来源</div>
-            <ol className="space-y-1">
+          <div className="rounded-xl border border-border/70 bg-muted/25 p-2.5">
+            <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">搜索来源（{sources.length}）</div>
+            <ol className="space-y-1.5">
               {sources.map((source, index) => {
                 const href = safeHttpUrl(source.url);
                 return (
                   <li key={`${source.url}-${index}`} className="text-xs">
-                    <span className="mr-1 text-muted-foreground">[{index + 1}]</span>
+                    <span className="mr-1.5 font-mono text-[10.5px] text-muted-foreground">[{index + 1}]</span>
                     {href ? (
                       <a
                         href={href}
@@ -312,32 +413,19 @@ export function ChatMessageBubble({
           </div>
         ) : null}
 
-        {images.length > 0 ? (
-          <div className="space-y-1">
-            <div className="text-[11px] font-medium text-muted-foreground">生成图片</div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {images.map((image, index) => (
-                <figure key={`${image.format ?? 'png'}-${index}`} className="overflow-hidden rounded-lg border bg-muted/30">
-                  <img
-                    src={dataUrlForImage(image)}
-                    alt={`生成图片 ${index + 1}`}
-                    className="max-h-64 w-full object-contain"
-                    loading="lazy"
-                  />
-                  <figcaption className="px-2 py-1 text-[10px] text-muted-foreground">
-                    {(image.format ?? 'png').toUpperCase()}
-                    {image.width && image.height ? ` · ${image.width}×${image.height}` : ''}
-                  </figcaption>
-                </figure>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="flex items-center gap-2 pt-0.5">
-          <div className="min-w-0 flex-1">
-            <MessageMeta message={message} />
-          </div>
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          {message.content ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={copyContent}
+            >
+              {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+              {copied ? '已复制' : '复制'}
+            </Button>
+          ) : null}
           {onRetry ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -359,8 +447,17 @@ export function ChatMessageBubble({
               </TooltipContent>
             </Tooltip>
           ) : null}
+          <div className="ml-auto">
+            <MessageMeta message={message} />
+          </div>
         </div>
       </div>
+
+      <Dialog open={Boolean(previewSrc)} onOpenChange={(open) => { if (!open) setPreviewSrc(null); }}>
+        <DialogContent className="max-w-4xl p-2">
+          {previewSrc ? <img src={previewSrc} alt="图片大图预览" className="max-h-[82vh] w-full rounded-lg object-contain" /> : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

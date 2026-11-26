@@ -32,6 +32,7 @@ import {
 } from './errors.js';
 
 import { guardConversation } from './context-guard.js';
+import { executeUpstreamChatTurn } from './gateway.js';
 import { detectImageFormat, normalizeFormat, imageDataUri, imageMimeType } from '../duck/image-format.js';
 import {
   buildToolProtocol,
@@ -1458,7 +1459,11 @@ export async function handleChatCompletions(req, res, ctx) {
  * @param {Record<string, any>} params
  * @param {{ conversation?: any[], systemPrompt?: string }} [options]
  */
-async function callChatUpstreamOnce(ctx, params, { conversation, systemPrompt } = {}) {
+async function callChatUpstreamOnce(
+  ctx,
+  params,
+  { conversation, systemPrompt, enableNonStreamKeepalive = false, onUpstreamAccepted = null } = {}
+) {
   const collected = {
     content: '',
     reasoning: '',
@@ -1494,19 +1499,6 @@ async function callChatUpstreamOnce(ctx, params, { conversation, systemPrompt } 
   const model = params.resolved.id;
   const upstreamConversation = conversation || params.guardedMessages || params.conversation;
   const prompt = typeof systemPrompt === 'string' ? systemPrompt : params.systemPrompt;
-  const taskFor = (messagesForCall) => (runtime) =>
-    (runtime?.client || ctx.duck).chat(
-      {
-        model,
-        messages: messagesForCall,
-        reasoningEffort: params.reasoning.effort,
-        webSearch: params.flags.webSearch,
-        imageGeneration: params.flags.imageGeneration,
-        approxLocation: ctx.config?.tools?.location === true,
-        signal: ctx.signal
-      },
-      handlers
-    );
   const initialMessages = conversation
     ? buildDuckMessages({
         systemPrompt: prompt,
@@ -1519,26 +1511,26 @@ async function callChatUpstreamOnce(ctx, params, { conversation, systemPrompt } 
         conversation: upstreamConversation,
         promptMode: ctx.config?.prompts?.mode
       });
-  const result = await ctx.callUpstream(
-    taskFor(initialMessages),
-    {
-      model,
-      onContextLimitRetry: () => {
-        const guarded = guardConversation(upstreamConversation, prompt, {
-          ...(ctx.config?.context || {}),
-          aggressive: true
-        });
-        ctx.log.contextTrimmed = true;
-        return taskFor(
-          buildDuckMessages({
-            systemPrompt: prompt,
-            conversation: guarded.messages,
-            promptMode: ctx.config?.prompts?.mode
-          })
-        );
-      }
-    }
-  );
+  const { result, duckMessages: finalDuckMessages } = await executeUpstreamChatTurn(ctx, {
+    model,
+    duckMessages: initialMessages,
+    conversation: upstreamConversation,
+    systemPrompt: prompt,
+    reasoningEffort: params.reasoning.effort,
+    webSearch: params.flags.webSearch,
+    imageGeneration: params.flags.imageGeneration,
+    approxLocation: ctx.config?.tools?.location === true,
+    handlers,
+    enableNonStreamKeepalive,
+    onUpstreamAccepted,
+    buildRetryDuckMessages: (guardedMessages) =>
+      buildDuckMessages({
+        systemPrompt: prompt,
+        conversation: guardedMessages,
+        promptMode: ctx.config?.prompts?.mode
+      })
+  });
+  if (finalDuckMessages && !conversation) params.duckMessages = finalDuckMessages;
   return { collected, result };
 }
 
@@ -1547,9 +1539,11 @@ async function callChatUpstreamOnce(ctx, params, { conversation, systemPrompt } 
  * @returns {Promise<{content:string, reasoningText:string, sources:any[], images:any[], usage:any,
  *   finishReason:string|null, collected:any, result:any}>}
  */
-async function resolveChatCompletion(ctx, params) {
+async function resolveChatCompletion(ctx, params, options = {}) {
   const outcome = await callChatUpstreamOnce(ctx, params, {
-    systemPrompt: params.systemPrompt
+    systemPrompt: params.systemPrompt,
+    enableNonStreamKeepalive: options.enableNonStreamKeepalive === true,
+    onUpstreamAccepted: options.onUpstreamAccepted || null
   });
   const { collected, result } = outcome;
   if (collected.error && !collected.content && !result) throw collected.error;
@@ -1592,7 +1586,7 @@ async function resolveChatCompletion(ctx, params) {
 }
 
 async function completeChatCompletion(ctx, params) {
-  const resolved = await resolveChatCompletion(ctx, params);
+  const resolved = await resolveChatCompletion(ctx, params, { enableNonStreamKeepalive: true });
   const { content, reasoningText, sources, images, finishReason, toolCalls } = resolved;
   const model = params.resolved.id;
 
@@ -1679,7 +1673,19 @@ function sendStreamError(ctx, writer, error) {
  * v2.44：带客户端工具的流式响应——先完整解析（需要工具 JSON），再按 OpenAI chunk 回放。
  */
 async function streamChatCompletionWithTools(ctx, params) {
-  const resolved = await resolveChatCompletion(ctx, params);
+  let writer = null;
+  let resolved;
+  try {
+    resolved = await resolveChatCompletion(ctx, params, {
+      onUpstreamAccepted: () => {
+        if (!writer) writer = ctx.openSSE();
+      }
+    });
+  } catch (error) {
+    if (!writer) throw error;
+    sendStreamError(ctx, writer, error);
+    return;
+  }
   const { content, reasoningText, sources, images, finishReason, toolCalls } = resolved;
   const base = {
     id: genId('chatcmpl-'),
@@ -1689,7 +1695,7 @@ async function streamChatCompletionWithTools(ctx, params) {
     system_fingerprint: null
   };
   ctx.chatFinal = { content, toolCalls, images };
-  const writer = ctx.openSSE();
+  if (!writer) writer = ctx.openSSE();
   const emit = (delta, finish = null) => {
     if (!writer.closed) writer.data({ ...base, choices: [{ index: 0, delta, logprobs: null, finish_reason: finish }] });
   };
@@ -1814,8 +1820,12 @@ async function streamChatCompletion(ctx, params) {
     }
   };
 
-  // Any non-error upstream callback means the stream is alive → safe to send SSE.
-  const wrappedHandlers = {};
+  // Any non-error upstream callback (or 200 acceptance) means the stream is alive → safe to send SSE.
+  const wrappedHandlers = {
+    onUpstreamAccepted() {
+      gate.notify();
+    }
+  };
   for (const [key, handler] of Object.entries(handlers)) {
     wrappedHandlers[key] = (...args) => {
       if (key !== 'onError' && key !== 'onToolCall' && key !== 'onToolResult') gate.notify();

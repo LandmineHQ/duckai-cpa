@@ -3,34 +3,38 @@ import { useCallback, useEffect, useState } from 'react';
 export const ROUTES = [
   'overview',
   'chat',
+  'images',
+  'history',
   'identity',
   'identities',
   'subscriptions',
-  'history',
   'proxy',
-  'settings',
+  'recon',
   'model-config',
   'keys',
   'logs',
+  'settings',
   'examples'
 ] as const;
 export type Route = (typeof ROUTES)[number];
 
 export const ROUTE_META: Record<Route, { title: string; description: string }> = {
-  overview: { title: '概览', description: '上游健康、RPS 队列与请求统计' },
-  chat: { title: '连接测试', description: '会话式连续对话，真实调用 duck.ai' },
+  overview: { title: '概览', description: '上游健康、RPS 队列、Token 用量与请求统计' },
+  chat: { title: '连接测试', description: 'ChatGPT 风格会话工作台，支持多轮上下文、视觉识图与压缩摘要' },
+  images: { title: '图片工坊', description: 'ChatGPT Images 风格创作工坊：提示词引导风格/画幅与持久画廊' },
+  history: { title: '会话历史', description: '按身份分组的只读会话记录（SQLite，默认保留 30 天）' },
   identity: { title: '默认身份', description: '默认匿名身份（journeyId/指纹）与 DuckDuckGo Sync & Backup' },
   identities: { title: '身份池', description: '匿名分身池、会话绑定、订阅绑定与路由策略' },
   subscriptions: { title: '订阅', description: 'DuckDuckGo Plus/Pro 订阅池：一个订阅可绑定多个身份' },
-  history: { title: '会话历史', description: '按身份分组的只读会话记录（SQLite，默认保留 30 天）' },
   proxy: { title: '代理', description: '网关出站代理（HTTP/HTTPS/SOCKS），含连通性测试' },
-  settings: { title: '设置', description: '队列、模型、提示词与日志配置' },
+  recon: { title: '前端 Recon', description: 'duck.ai 上游页面哈希、协议契约标记与模型目录漂移对比' },
   'model-config': {
     title: '模型配置',
     description: '按模型自定义上下文窗口 / 单条输入 / 输出上限（默认 duck.ai 实测值）'
   },
   keys: { title: 'API Key', description: '强制鉴权：所有 /v1/* 请求都需要 API Key' },
   logs: { title: '日志', description: '上游请求与后台 API 日志（分开存储）' },
+  settings: { title: '设置', description: '队列、模型、提示词、PDF 溢出与日志配置' },
   examples: { title: '调用示例', description: 'cURL / OpenAI SDK / Responses 示例' }
 };
 
@@ -58,7 +62,6 @@ export function useHashRoute(): [Route, (route: Route) => void] {
         `${window.location.pathname}${window.location.search}#/${parseHash()}`
       );
     }
-    // 只在首次挂载时归一化 hash
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

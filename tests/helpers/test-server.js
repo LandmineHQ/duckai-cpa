@@ -158,6 +158,8 @@ export async function startTestServer(options = {}) {
     ...(options.history ? { history: options.history } : {}),
     ...(responseStore ? { responsesStore: responseStore } : {}),
     ...(options.queue ? { queue: options.queue } : {}),
+    ...(options.reconFetch ? { reconFetch: options.reconFetch } : {}),
+    ...(options.reconOutDir ? { reconOutDir: options.reconOutDir } : {}),
     ...(options.mcp ? { mcp: options.mcp } : {})
   });
 

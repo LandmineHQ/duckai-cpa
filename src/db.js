@@ -190,6 +190,31 @@ CREATE TABLE IF NOT EXISTS context_pdfs (
   expires_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_context_pdfs_expires ON context_pdfs(expires_at);
+CREATE TABLE IF NOT EXISTS image_gallery (
+  id TEXT PRIMARY KEY,
+  prompt TEXT NOT NULL,
+  composed_prompt TEXT NOT NULL,
+  style TEXT,
+  aspect_ratio TEXT,
+  mood TEXT,
+  negative_prompt TEXT,
+  model TEXT NOT NULL,
+  model_display_name TEXT,
+  identity_id TEXT,
+  identity_label TEXT,
+  format TEXT NOT NULL DEFAULT 'jpeg',
+  mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+  width INTEGER,
+  height INTEGER,
+  b64 TEXT NOT NULL,
+  upstream_image_id TEXT,
+  moderation_token TEXT,
+  parent_id TEXT,
+  latency_ms INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_image_gallery_created ON image_gallery(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_image_gallery_style ON image_gallery(style);
 `;
 
 const connections = new Map();

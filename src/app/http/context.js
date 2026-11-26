@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { errorPayload, toOpenAIError } from '../../openai/errors.js';
 import { isContextLimitError } from '../../openai/context-guard.js';
 import { sendError } from './errors.js';
+import { createNonStreamJsonKeepalive } from './keepalive.js';
 import { openSSE } from './sse.js';
 
 /**
@@ -55,6 +56,7 @@ export function createRequestContextFactory(deps) {
       requestStartedAt: startedAt,
       sent: false,
       streamWriter: null,
+      jsonKeepalive: null,
       upstreamLogged: false,
       sessionKey: null,
       identityRoute: null,
@@ -216,7 +218,17 @@ export function createRequestContextFactory(deps) {
           logger.warn?.('failed to record admin-test upstream log', { error: error.message });
         }
       },
+      beginJsonKeepalive(headers = {}, options = {}) {
+        if (ctx.jsonKeepalive?.active) return true;
+        if (!ctx.jsonKeepalive) ctx.jsonKeepalive = createNonStreamJsonKeepalive(ctx, options);
+        return ctx.jsonKeepalive.start(headers);
+      },
       json(status, payload, headers = {}) {
+        ctx.jsonKeepalive?.stop?.();
+        if (ctx.jsonKeepalive?.started) {
+          ctx.jsonKeepalive.finishJson(payload);
+          return;
+        }
         if (ctx.sent || res.writableEnded) return;
         ctx.sent = true;
         let body;

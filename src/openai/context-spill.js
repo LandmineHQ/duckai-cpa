@@ -10,7 +10,7 @@
  * 注意：PDF 仍然消耗模型 token；这里只解决 duck.ai 的文本字符限制。
  */
 import crypto from 'node:crypto';
-import { createContextPdf, createToolsPdf, PdfCapacityError } from './context-pdf.js';
+import { createContextPdf, createToolsPdf, getOrCreateToolsPdf, PdfCapacityError } from './context-pdf.js';
 
 const DEFAULT_INPUT_CHAR_LIMIT = 20000;
 export const PDF_PURPOSE_TEXT = 'PDF 用途说明：附件包含 client-tools.pdf（客户端工具说明）和 conversation-context.pdf（会话历史上下文）。请先阅读工具说明，然后读取 conversation-context.pdf 的全部页面（不要只读第一页/摘要），结合当前问题继续回答。';
@@ -66,11 +66,14 @@ export function attachPdfFile(messages = [], file, position = 'first') {
     }
   }
   if (index < 0) return messages;
-  return messages.map((message, i) =>
-    i === index
-      ? { ...message, files: [...(Array.isArray(message.files) ? message.files : []), file] }
-      : message
-  );
+  return messages.map((message, i) => {
+    if (i !== index) return message;
+    const existing = Array.isArray(message.files) ? message.files : [];
+    if (file.filename && existing.some((f) => f && f.filename === file.filename)) {
+      return message;
+    }
+    return { ...message, files: [...existing, file] };
+  });
 }
 
 export function stripSpillInstruction(text) {
@@ -154,17 +157,18 @@ export async function spillMessagesToPdf(duckMessages, options = {}) {
   });
   let toolsFile = null;
   if (options.toolProtocol || (Array.isArray(options.toolNames) && options.toolNames.length)) {
-    const toolsPdf = await createToolsPdf({
+    const toolsPdf = await getOrCreateToolsPdf({
       toolProtocol: options.toolProtocol || '',
       toolNames: options.toolNames || [],
-      maxPages: 1
+      maxPages: Number(options.toolsMaxPages) || 4,
+      includeContext: true
     });
     toolsFile = {
       mimeType: 'application/pdf',
       filename: 'client-tools.pdf',
-      b64: toolsPdf.buffer.toString('base64'),
+      b64: toolsPdf.b64 || toolsPdf.buffer.toString('base64'),
       pages: toolsPdf.pages,
-      bytes: toolsPdf.buffer.length,
+      bytes: toolsPdf.bytes || toolsPdf.buffer.length,
       textChars: toolsPdf.textChars,
       text: toolsPdf.text
     };
@@ -204,5 +208,5 @@ export async function spillMessagesToPdf(duckMessages, options = {}) {
 }
 
 export { PdfCapacityError };
-export { createToolsPdf };
-export default { spillMessagesToPdf, messageTextChars, stripSpillInstruction, sanitizeFileMetadata, stableAutoSessionKey, pdfScopeKey, pdfFileFromState, attachPdfFile, createToolsPdf, PdfCapacityError };
+export { createToolsPdf, getOrCreateToolsPdf };
+export default { spillMessagesToPdf, messageTextChars, stripSpillInstruction, sanitizeFileMetadata, stableAutoSessionKey, pdfScopeKey, pdfFileFromState, attachPdfFile, createToolsPdf, getOrCreateToolsPdf, PdfCapacityError };

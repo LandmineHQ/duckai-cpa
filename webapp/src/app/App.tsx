@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiGet, setUnauthorizedHandler } from './lib/api';
 import { clearStoredToken, readStoredToken, readTokenFromUrl, storeToken, stripTokenFromUrl } from './lib/token';
-import { useHashRoute, type Route } from './lib/hash-route';
+import { ROUTE_META, useHashRoute, type Route } from './lib/hash-route';
 import { ThemeProvider, useTheme } from './lib/theme';
 import { OverviewProvider } from './lib/overview-context';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -13,6 +13,8 @@ import { ConsoleLayout } from './components/console-layout';
 import { LoginGate } from './components/login-gate';
 import { OverviewPage } from './pages/overview';
 import { PlaygroundPage } from './pages/playground';
+import { ImagesPage } from './pages/images';
+import { ReconPage } from './pages/recon';
 import { IdentityPage } from './pages/identity';
 import { IdentitiesPage } from './pages/identities';
 import { SubscriptionsPage } from './pages/subscriptions';
@@ -44,16 +46,20 @@ function PageFor({ route }: { route: Route }) {
       return <OverviewPage />;
     case 'chat':
       return <PlaygroundPage />;
+    case 'images':
+      return <ImagesPage />;
+    case 'history':
+      return <HistoryPage />;
     case 'identity':
       return <IdentityPage />;
     case 'identities':
       return <IdentitiesPage />;
     case 'subscriptions':
       return <SubscriptionsPage />;
-    case 'history':
-      return <HistoryPage />;
     case 'proxy':
       return <ProxyPage />;
+    case 'recon':
+      return <ReconPage />;
     case 'settings':
       return <SettingsPage />;
     case 'model-config':
@@ -69,25 +75,11 @@ function PageFor({ route }: { route: Route }) {
   }
 }
 
-const ROUTE_TITLES: Record<Route, string> = {
-  overview: '概览',
-  chat: '连接测试',
-  identity: '默认身份',
-  identities: '身份池',
-  subscriptions: '订阅',
-  proxy: '代理',
-  settings: '设置',
-  'model-config': '模型配置',
-  keys: 'API Key',
-  logs: '日志',
-  examples: '调用示例'
-};
-
 function AuthGate() {
   const [auth, setAuth] = useState<AuthState>('checking');
   const [loginBusy, setLoginBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [route, navigate] = useHashRoute();
+  const [route] = useHashRoute();
   const authRef = useRef<AuthState>('checking');
   const lastUnauthorizedToast = useRef(0);
 
@@ -157,7 +149,7 @@ function AuthGate() {
   }, []);
 
   useEffect(() => {
-    document.title = `${ROUTE_TITLES[route] ?? '管理控制台'} · DuckAI CPA`;
+    document.title = `${ROUTE_META[route]?.title ?? '管理控制台'} · DuckAI CPA`;
   }, [route]);
 
   if (auth === 'checking') return <BootSplash />;
@@ -187,7 +179,6 @@ function AppFrame() {
       toast.error(message, { duration: 6000 });
     };
     const onError = (event: ErrorEvent) => {
-      // 资源加载失败等无 error 对象的事件忽略
       if (event?.error || event?.message) report('页面出现异常，请刷新重试；若持续出现请查看浏览器控制台。');
     };
     const onRejection = (event: PromiseRejectionEvent) => {
