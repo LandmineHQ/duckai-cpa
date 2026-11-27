@@ -1,10 +1,12 @@
-/** Error envelope / SSE error handling (Phase 1 split; behavior unchanged). */
-import { badRequest, errorPayload, toOpenAIError } from '../../openai/errors.js';
+/** Error envelope / SSE error handling (Phase 1 split; supports pre-header committed streams). */
+import { badRequest, errorPayload, genId, nowSec, toOpenAIError } from '../../openai/errors.js';
 
 export function sendError(ctx, error) {
+  ctx.preHeaderKeepalive?.stop?.();
   ctx.jsonKeepalive?.stop?.();
   const normalized = toOpenAIError(error);
   ctx.log.error = normalized.message;
+  ctx.log.status = normalized.status;
   if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
   const { res } = ctx;
   if (res.headersSent) {
@@ -14,7 +16,45 @@ export function sendError(ctx, error) {
     }
     if (ctx.streamWriter && !ctx.streamWriter.closed) {
       try {
-        ctx.streamWriter.data(errorPayload(normalized));
+        if (ctx.streamMode === 'responses') {
+          const ts = nowSec();
+          const errDetail = {
+            code: normalized.code || normalized.type,
+            message: normalized.message
+          };
+          ctx.streamWriter.event('response.failed', {
+            type: 'response.failed',
+            sequence_number: 0,
+            response: {
+              id: genId('resp_'),
+              object: 'response',
+              created_at: ts,
+              status: 'failed',
+              error: errDetail,
+              incomplete_details: null,
+              output: [],
+              output_text: '',
+              model: ctx.log?.model || ''
+            }
+          });
+          ctx.streamWriter.event('error', {
+            type: 'error',
+            sequence_number: 1,
+            code: normalized.code || normalized.type,
+            message: normalized.message,
+            param: normalized.param ?? null
+          });
+        } else if (ctx.streamMode === 'admin-session') {
+          ctx.streamWriter.data({
+            type: 'error',
+            message: normalized.message,
+            code: normalized.code ?? null,
+            status: normalized.status
+          });
+        } else {
+          ctx.streamWriter.data(errorPayload(normalized));
+          ctx.streamWriter.data('[DONE]');
+        }
         ctx.streamWriter.end();
       } catch {
         // ignore

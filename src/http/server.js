@@ -357,8 +357,16 @@ export function createServer(options = {}) {
     const finalize = () => {
       if (finished) return;
       finished = true;
+      ctx.preHeaderKeepalive?.stop?.();
+      ctx.jsonKeepalive?.stop?.();
       if (!ctx.log.record) return;
-      const status = res.statusCode;
+      const status =
+        ctx.clientDisconnected && !res.writableEnded
+          ? 499
+          : Number.isInteger(ctx.log.status)
+            ? ctx.log.status
+            : res.statusCode;
+      if (status === 499 && !ctx.log.error) ctx.log.error = 'Request aborted by client';
       const latencyMs = Date.now() - ctx.requestStartedAt;
       try {
         if (ctx.log.kind === 'upstream') {
@@ -491,6 +499,9 @@ export function createServer(options = {}) {
     }
   };
 
+  // Keep Node HTTP idle connection window safely above common 60s CDN/reverse-proxy pools.
+  server.keepAliveTimeout = 65000;
+  server.headersTimeout = 66000;
   server.serviceInfo = { name: SERVICE_NAME, version, startedAt: serviceStartedAt };
   server.getUpstreamHealth = getUpstreamHealth;
   server.queue = queue;

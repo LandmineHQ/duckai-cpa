@@ -184,6 +184,7 @@ export async function handleImagesAdmin(ctx, parts, method, route) {
     }
 
     const startedAt = Date.now();
+    ctx.beginJsonKeepalive?.();
     const upstreamResult = await ctx.callUpstream(
       (runtime) =>
         (runtime?.client || ctx.duck).chat(
@@ -197,7 +198,7 @@ export async function handleImagesAdmin(ctx, parts, method, route) {
           },
           {
             onUpstreamAccepted: () => {
-              ctx.beginJsonKeepalive?.();
+              ctx.markJsonKeepaliveAccepted?.();
             }
           }
         ),

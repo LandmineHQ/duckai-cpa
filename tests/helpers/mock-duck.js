@@ -187,7 +187,8 @@ export class MockDuckClient {
       const record = {
         params,
         messages: Array.isArray(params.messages) ? params.messages.map((m) => ({ ...m })) : [],
-        startedAt
+        startedAt,
+        acceptedAt: null
       };
       this.calls.chat.push(record);
 
@@ -202,6 +203,7 @@ export class MockDuckClient {
 
       if (behavior.error) throw behavior.error;
 
+      record.acceptedAt = Date.now();
       handlers.onUpstreamAccepted?.({ status: 200, responseId: 'mock-resp', continuationDepth: 0 });
       if (behavior.streamDelayMs > 0) await sleep(behavior.streamDelayMs);
 
@@ -252,9 +254,11 @@ export class MockDuckClient {
     this.imageStarts.push(startedAt);
     this._enter(startedAt);
     try {
-      this.calls.imageGeneration.push({ params, startedAt });
+      const record = { params, startedAt, acceptedAt: null };
+      this.calls.imageGeneration.push(record);
       if (this.imageBehavior.delayMs > 0) await sleep(this.imageBehavior.delayMs);
       if (this.imageBehavior.error) throw this.imageBehavior.error;
+      record.acceptedAt = Date.now();
       handlers.onUpstreamAccepted?.({ status: 200, responseId: 'mock-img-resp', continuationDepth: 0 });
       if (this.imageBehavior.streamDelayMs > 0) await sleep(this.imageBehavior.streamDelayMs);
       return this.imageBehavior;

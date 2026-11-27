@@ -119,12 +119,13 @@ export async function handleImagesGenerations(req, res, ctx) {
     await ctx.selectIdentity({ paidModel });
   }
   const images = [];
+  ctx.beginJsonKeepalive?.();
   for (let index = 0; index < n; index += 1) {
     const result = await ctx.callUpstream(
       (runtime) =>
         (runtime?.client || ctx.duck).imageGeneration(params, {
           onUpstreamAccepted: () => {
-            ctx.beginJsonKeepalive?.();
+            ctx.markJsonKeepaliveAccepted?.();
           }
         }),
       { model: resolved.id }

@@ -35,9 +35,10 @@ export async function handleRecon(ctx, parts, method, route) {
 
   if (parts.length === 2 && parts[1] === 'pull') {
     requireMethod(ctx, ['POST']);
+    ctx.beginJsonKeepalive?.();
     try {
       const manifest = await takeSnapshot(
-        { ...options, onEntryAccepted: () => ctx.beginJsonKeepalive?.() },
+        { ...options, onEntryAccepted: () => ctx.markJsonKeepaliveAccepted?.() },
         { write: true }
       );
       const status = await getReconStatus(options);
@@ -54,10 +55,11 @@ export async function handleRecon(ctx, parts, method, route) {
 
   if (parts.length === 2 && parts[1] === 'diff') {
     requireMethod(ctx, ['POST']);
+    ctx.beginJsonKeepalive?.();
     try {
       const diff = await compareLive({
         ...options,
-        onEntryAccepted: () => ctx.beginJsonKeepalive?.()
+        onEntryAccepted: () => ctx.markJsonKeepaliveAccepted?.()
       });
       ctx.json(200, { ok: true, ...diff });
     } catch (error) {

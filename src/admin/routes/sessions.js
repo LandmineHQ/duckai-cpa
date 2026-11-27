@@ -601,6 +601,7 @@ async function generateAssistantReply(ctx, params) {
     };
   }
 
+  const preKA = ctx.beginPreHeaderSSEKeepalive?.({}, { streamMode: 'admin-session' });
   let chatPromise;
   try {
     const taskFor = (messagesForCall) => (runtime) =>
@@ -674,6 +675,7 @@ async function generateAssistantReply(ctx, params) {
       })
     );
   } catch (error) {
+    preKA?.stop?.();
     throw error;
   }
 
@@ -707,10 +709,12 @@ async function generateAssistantReply(ctx, params) {
       gate.promise.then(() => ({ kind: 'event' }))
     ]);
   } catch (error) {
-    // Failure before any upstream event: persist an error turn, then return a
-    // normal JSON error (429/502/403…) instead of HTTP 200 + SSE.
+    const preCommitted = preKA?.stop?.();
+    // Failure before any upstream event: persist an error turn; if pre-header SSE was already
+    // committed, send an SSE error frame + end instead of throwing for HTTP JSON status.
     const normalized = toOpenAIError(error);
     ctx.log.error = normalized.message;
+    ctx.log.status = normalized.status;
     if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
     await appendErrorAssistant({ error: normalized.message });
     ctx.recordUpstream({
@@ -721,10 +725,16 @@ async function generateAssistantReply(ctx, params) {
       latencyMs: Date.now() - startedAt,
       stream: true
     });
-    throw error;
+    if (!gate.fired && !preCommitted) throw error;
+    writer = ctx.openSSE({}, { streamMode: 'admin-session' });
+    ctx.log.stream = true;
+    dispatch({ type: 'error', message: normalized.message, code: normalized.code ?? null, status: normalized.status });
+    writer.end();
+    return;
   }
 
-  writer = ctx.openSSE();
+  preKA?.stop?.();
+  writer = ctx.openSSE({}, { streamMode: 'admin-session' });
   ctx.log.stream = true;
   dispatch({
     type: 'session',

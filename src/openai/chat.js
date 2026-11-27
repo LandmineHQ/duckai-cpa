@@ -1660,6 +1660,8 @@ export function createFirstEventGate() {
 function sendStreamError(ctx, writer, error) {
   const normalized = toOpenAIError(error);
   ctx.log.error = normalized.message;
+  ctx.log.status = normalized.status;
+  if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
   try {
     writer.data(errorPayload(normalized));
     writer.data('[DONE]');
@@ -1675,15 +1677,18 @@ function sendStreamError(ctx, writer, error) {
 async function streamChatCompletionWithTools(ctx, params) {
   let writer = null;
   let resolved;
+  const preKA = ctx.beginPreHeaderSSEKeepalive?.({}, { streamMode: 'chat' });
   try {
     resolved = await resolveChatCompletion(ctx, params, {
       onUpstreamAccepted: () => {
-        if (!writer) writer = ctx.openSSE();
+        preKA?.stop?.();
+        if (!writer) writer = ctx.openSSE({}, { streamMode: 'chat' });
       }
     });
   } catch (error) {
-    if (!writer) throw error;
-    sendStreamError(ctx, writer, error);
+    const committed = preKA?.stop?.() || Boolean(writer) || Boolean(ctx.streamWriter && !ctx.streamWriter.closed);
+    if (!committed) throw error;
+    sendStreamError(ctx, writer || ctx.openSSE({}, { streamMode: 'chat' }), error);
     return;
   }
   const { content, reasoningText, sources, images, finishReason, toolCalls } = resolved;
@@ -1695,7 +1700,8 @@ async function streamChatCompletionWithTools(ctx, params) {
     system_fingerprint: null
   };
   ctx.chatFinal = { content, toolCalls, images };
-  if (!writer) writer = ctx.openSSE();
+  preKA?.stop?.();
+  if (!writer) writer = ctx.openSSE({}, { streamMode: 'chat' });
   const emit = (delta, finish = null) => {
     if (!writer.closed) writer.data({ ...base, choices: [{ index: 0, delta, logprobs: null, finish_reason: finish }] });
   };
@@ -1833,6 +1839,7 @@ async function streamChatCompletion(ctx, params) {
     };
   }
 
+  const preKA = ctx.beginPreHeaderSSEKeepalive?.({}, { streamMode: 'chat' });
   let chatPromise;
   try {
     const taskFor = (messagesForCall) => (runtime) =>
@@ -1867,6 +1874,7 @@ async function streamChatCompletion(ctx, params) {
       })
     );
   } catch (error) {
+    preKA?.stop?.();
     // Nothing has been written yet → JSON error response.
     throw error;
   }
@@ -1878,15 +1886,19 @@ async function streamChatCompletion(ctx, params) {
       gate.promise.then(() => ({ kind: 'event' }))
     ]);
   } catch (error) {
-    if (!gate.fired) throw error; // upstream failed before the first event → HTTP JSON error
-    writer = ctx.openSSE();
-    emitDelta({ role: 'assistant', content: '' });
-    flushPendingChoices();
+    const preCommitted = preKA?.stop?.();
+    if (!gate.fired && !preCommitted) throw error; // upstream failed before headers committed → HTTP JSON error
+    writer = ctx.openSSE({}, { streamMode: 'chat' });
+    if (gate.fired) {
+      emitDelta({ role: 'assistant', content: '' });
+      flushPendingChoices();
+    }
     sendStreamError(ctx, writer, error);
     return;
   }
 
-  writer = ctx.openSSE();
+  preKA?.stop?.();
+  writer = ctx.openSSE({}, { streamMode: 'chat' });
   emitDelta({ role: 'assistant', content: '' });
   flushPendingChoices();
 
@@ -1976,6 +1988,8 @@ async function streamChatCompletion(ctx, params) {
   } catch (error) {
     const normalized = toOpenAIError(error);
     ctx.log.error = normalized.message;
+    ctx.log.status = normalized.status;
+    if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
     try {
       writer.data(errorPayload(normalized));
       writer.data('[DONE]');

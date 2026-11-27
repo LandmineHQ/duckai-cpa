@@ -40,7 +40,7 @@ export const CONTEXT_LIMIT_MODES = Object.freeze(['trim', 'error']);
 /** Built-in defaults. Kept in sync with config/config.example.json. */
 export const DEFAULT_CONFIG = Object.freeze({
   server: { host: '127.0.0.1', port: 8787, cors: true },
-  http: { keepaliveIntervalMs: 15000 },
+  http: { keepaliveIntervalMs: 10000, preHeaderKeepaliveDelayMs: 8000 },
   auth: { apiKeys: [], adminToken: 'change-me-admin-token' },
   upstream: { rps: 1, maxConcurrent: 1, queueLimit: 50, queueTimeoutMs: 300000 },
   proxy: {
@@ -148,6 +148,8 @@ export const DEFAULT_CONFIG = Object.freeze({
 /** Config paths the dashboard may edit through PUT /admin/api/config. */
 export const ADMIN_EDITABLE_PATHS = Object.freeze([
   'server.cors',
+  'http.keepaliveIntervalMs',
+  'http.preHeaderKeepaliveDelayMs',
   'auth.apiKeys',
   'upstream.rps',
   'upstream.maxConcurrent',
@@ -685,7 +687,8 @@ export function normalizeConfig(raw = {}) {
       cors: toBoolean(server.cors, true)
     },
     http: {
-      keepaliveIntervalMs: toInteger(source.http?.keepaliveIntervalMs, 15000, 10, 600000)
+      keepaliveIntervalMs: toInteger(source.http?.keepaliveIntervalMs, 10000, 10, 600000),
+      preHeaderKeepaliveDelayMs: toInteger(source.http?.preHeaderKeepaliveDelayMs, 8000, 0, 600000)
     },
     auth: {
       apiKeys,
@@ -817,6 +820,16 @@ function assertEditableValue(dotted, value) {
     case 'identity.sync.enabled':
       if (typeof value !== 'boolean') fail('boolean');
       return;
+    case 'http.keepaliveIntervalMs': {
+      const ms = Number(value);
+      if (!Number.isInteger(ms) || ms < 10 || ms > 600000) fail('integer 10-600000');
+      return;
+    }
+    case 'http.preHeaderKeepaliveDelayMs': {
+      const ms = Number(value);
+      if (!Number.isInteger(ms) || ms < 0 || ms > 600000) fail('integer 0-600000');
+      return;
+    }
     case 'responses.retentionDays': {
       const days = Number(value);
       if (!Number.isInteger(days) || days < 0 || days > 365) fail('integer 0-365');

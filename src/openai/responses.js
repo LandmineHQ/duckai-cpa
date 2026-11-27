@@ -952,16 +952,22 @@ async function streamResponseWithTools(ctx, params) {
     if (writer && !writer.closed) writer.event(type, event);
   };
   let collected;
+  const preKA = ctx.beginPreHeaderSSEKeepalive?.({}, { streamMode: 'responses' });
   try {
     collected = await collectResponse(ctx, params, {
       onUpstreamAccepted: () => {
-        if (!writer) writer = ctx.openSSE();
+        preKA?.stop?.();
+        if (!writer) writer = ctx.openSSE({}, { streamMode: 'responses' });
       }
     });
   } catch (error) {
-    if (!writer) throw error;
+    const committed = preKA?.stop?.() || Boolean(writer) || Boolean(ctx.streamWriter && !ctx.streamWriter.closed);
+    if (!committed) throw error;
+    if (!writer) writer = ctx.openSSE({}, { streamMode: 'responses' });
     const normalized = toOpenAIError(error);
     ctx.log.error = normalized.message;
+    ctx.log.status = normalized.status;
+    if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
     try {
       const failed = makeResponseObject({
         id: responseId,
@@ -989,7 +995,8 @@ async function streamResponseWithTools(ctx, params) {
     writer.end();
     return;
   }
-  if (!writer) writer = ctx.openSSE();
+  preKA?.stop?.();
+  if (!writer) writer = ctx.openSSE({}, { streamMode: 'responses' });
 
   const { content, reasoningText, sources, images, toolCalls, usage: upstreamUsage } = collected;
   const annotations = buildAnnotations(sources);
@@ -1399,6 +1406,7 @@ async function streamResponse(ctx, params) {
     };
   }
 
+  const preKA = ctx.beginPreHeaderSSEKeepalive?.({}, { streamMode: 'responses' });
   let result;
   let chatPromise;
   try {
@@ -1434,6 +1442,7 @@ async function streamResponse(ctx, params) {
       })
     );
   } catch (error) {
+    preKA?.stop?.();
     throw error; // no SSE headers yet → JSON error
   }
 
@@ -1444,11 +1453,19 @@ async function streamResponse(ctx, params) {
       gate.promise.then(() => ({ kind: 'event' }))
     ]);
   } catch (error) {
-    if (!gate.fired) throw error; // pre-stream failure → HTTP JSON error (429 etc.)
-    writer = ctx.openSSE();
-    flushPendingEvents();
+    const preCommitted = preKA?.stop?.();
+    if (!gate.fired && !preCommitted) throw error; // pre-stream failure → HTTP JSON error (429 etc.)
+    writer = ctx.openSSE({}, { streamMode: 'responses' });
+    if (gate.fired) {
+      flushPendingEvents();
+    } else {
+      pendingEvents.length = 0;
+      sequence = 0;
+    }
     const normalized = toOpenAIError(error);
     ctx.log.error = normalized.message;
+    ctx.log.status = normalized.status;
+    if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
     emit('response.failed', {
       response: makeSnapshot('failed', {
         error: { code: normalized.code || normalized.type, message: normalized.message }
@@ -1463,7 +1480,8 @@ async function streamResponse(ctx, params) {
     return;
   }
 
-  writer = ctx.openSSE();
+  preKA?.stop?.();
+  writer = ctx.openSSE({}, { streamMode: 'responses' });
   flushPendingEvents();
 
   if (outcome.kind === 'event') {
@@ -1472,6 +1490,8 @@ async function streamResponse(ctx, params) {
     } catch (error) {
       const normalized = toOpenAIError(error);
       ctx.log.error = normalized.message;
+      ctx.log.status = normalized.status;
+      if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
       emit('response.failed', {
         response: makeSnapshot('failed', {
           error: { code: normalized.code || normalized.type, message: normalized.message }
@@ -1678,6 +1698,8 @@ async function streamResponse(ctx, params) {
   } catch (error) {
     const normalized = toOpenAIError(error);
     ctx.log.error = normalized.message;
+    ctx.log.status = normalized.status;
+    if (normalized.errorDetail) ctx.log.errorDetail = normalized.errorDetail;
     try {
       if (!writer.closed) {
         const failedResponse = makeSnapshot('failed', {

@@ -459,8 +459,8 @@ data/                运行时数据（不入库；含敏感文件）
 ## 9.5 v3.0（2026-11-26）整体重构：CDN 保活、Recon、严格协议网关、ChatGPT 对话台与图片工坊
 
 - **CDN 防超时保活**：
-  - `src/app/http/keepalive.js`：SSE 空闲感知 `: keepalive\n\n` 与非流式 JSON **延迟提交**前导空白 `' '` 保活（只在空闲达到 `http.keepaliveIntervalMs` 默认 `15000` ms 时才提交 200 并写空白，避免 4xx/5xx 前置错误被吞成 200；已提交后再出错时写出完整 OpenAI error JSON 并附 `X-Accel-Buffering: no` / `Cache-Control: no-cache|no-store, no-transform`）；
-  - `src/app/http/sse.js` / `context.js` / `errors.js` / `src/config.js`：`ctx.jsonKeepalive` / `ctx.beginJsonKeepalive()` 统一接管保活；工具模式流式（`streamChatCompletionWithTools` / `streamResponseWithTools`）在 `onUpstreamAccepted` 后立即打开 SSE 通道发出心跳。
+  - `src/app/http/keepalive.js`：SSE `createPreHeaderSSEKeepalive` 与非流式 JSON `createNonStreamJsonKeepalive` 支持两段定时提交——等待队列/挑战/Prefill 超过 `http.preHeaderKeepaliveDelayMs`（默认 `8000` ms，0=禁用）或上游接受后空闲超过 `http.keepaliveIntervalMs`（默认 `10000` ms）时提前提交 HTTP 200 与首条 `: keepalive\n\n` / 前导空格 `' '`；快速失败（`< delayMs`）仍保留精确 HTTP 状态码；已提交后再失败时写出规范 OpenAI SSE 错误帧（Chat `data: [DONE]`、Responses `event: response.failed` + `event: error`）或 error JSON；
+  - `src/app/http/sse.js` / `context.js` / `errors.js` / `src/http/server.js` / `adapter-fastify.js`：`openSSE` 支持 pre-header 提交后幂等复用并记录 `ctx.streamMode`；`finalize()` 基于 `ctx.clientDisconnected` 与 `ctx.log.status` 在日志中准确记录 `499` 与真实错误码（不再因提前写 200 头而误记 `200`）；HTTP `keepAliveTimeout = 65000ms` / `headersTimeout = 66000ms`。
 - **上游前端 Recon 引擎**：
   - `src/recon/snapshot.js` + `scripts/duck-web-snapshot.mjs` + `scripts/compare-duck-web.mjs`：HTML 动态噪声（`nonce`/`requestId` 等）归一化、仅抓取代码资源（跳过图片/字体/source map）、扫描 `duck.ai` 协议标记与未知模型漂移、输出结构化 diff（`same` / `targetsChanged` / `markerChanges` / `modelChanges` / `summary`）；
   - `src/admin/routes/recon.js` + `#/recon`：提供 `GET /admin/api/recon/status`、`POST /admin/api/recon/pull`、`POST /admin/api/recon/diff` 与前端控制台页面。

@@ -15,6 +15,10 @@ export function createFastifyServer(options = {}) {
     disableRequestLogging: true,
     bodyLimit: 64 * 1024 * 1024
   });
+  if (app.server) {
+    app.server.keepAliveTimeout = 65000;
+    app.server.headersTimeout = 66000;
+  }
 
   // Fastify 默认会按 content-type 解析 body；onRequest 里 hijack 后不会进入解析阶段。
   app.removeAllContentTypeParsers?.();

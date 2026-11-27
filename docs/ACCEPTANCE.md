@@ -1357,7 +1357,7 @@ call/result**；`assistant.content` 为空串。请求头含 `x-duckai-continuat
 
 | 检查项 | 命令 | 结果 |
 | --- | --- | --- |
-| 全量离线测试套件 | `npm test` | **561 / 561 PASS**（exit 0；含 CDN 保活、严格协议契约与 PDF、Recon、图片画廊、jsdom 前端并发等用例） |
+| 全量离线测试套件 | `npm test` | **564 / 564 PASS**（exit 0；含 Pre-header CDN 保活、499 断连/502 日志状态、严格协议契约与 PDF、Recon、图片画廊、jsdom 前端并发等用例） |
 | 前端构建 | `npm run build:web` | 通过（`2.82s`；生成 `web/index.html`、`web/assets/index-ZpXUFaQJ.js`、`web/assets/index-CsMwIk7p.css`） |
 | 构建完整性校验 | `node scripts/build-check.mjs` | **16 / 16 PASS**（exit 0） |
 | TypeScript 检查 | `.\node_modules\.bin\tsc.cmd -p webapp/tsconfig.json --noEmit` | 本次新增与修改前端文件 **0 报错**（仅仓库既有未改动文件存在历史严格类型错误） |

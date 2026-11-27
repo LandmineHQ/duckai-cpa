@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { errorPayload, toOpenAIError } from '../../openai/errors.js';
 import { isContextLimitError } from '../../openai/context-guard.js';
 import { sendError } from './errors.js';
-import { createNonStreamJsonKeepalive } from './keepalive.js';
+import { createNonStreamJsonKeepalive, createPreHeaderSSEKeepalive } from './keepalive.js';
 import { openSSE } from './sse.js';
 
 /**
@@ -28,7 +28,13 @@ export function createRequestContextFactory(deps) {
     const requestId = crypto.randomUUID();
     const startedAt = Date.now();
     const controller = new AbortController();
+    let ctx = null;
     const abortUpstream = () => {
+      if (ctx) {
+        ctx.clientDisconnected = true;
+        ctx.preHeaderKeepalive?.stop?.();
+        ctx.jsonKeepalive?.stop?.();
+      }
       if (!controller.signal.aborted) controller.abort(new Error('client disconnected'));
     };
     req.on('aborted', abortUpstream);
@@ -42,7 +48,7 @@ export function createRequestContextFactory(deps) {
       // ignore
     }
 
-    const ctx = {
+    ctx = {
       ...baseContext,
       req,
       res,
@@ -55,8 +61,11 @@ export function createRequestContextFactory(deps) {
       requestId,
       requestStartedAt: startedAt,
       sent: false,
+      clientDisconnected: false,
+      streamMode: null,
       streamWriter: null,
       jsonKeepalive: null,
+      preHeaderKeepalive: null,
       upstreamLogged: false,
       sessionKey: null,
       identityRoute: null,
@@ -71,6 +80,7 @@ export function createRequestContextFactory(deps) {
         source: 'v1',
         endpoint: '',
         model: null,
+        status: null,
         stream: false,
         promptChars: 0,
         queueWaitMs: 0,
@@ -221,9 +231,21 @@ export function createRequestContextFactory(deps) {
       beginJsonKeepalive(headers = {}, options = {}) {
         if (ctx.jsonKeepalive?.active) return true;
         if (!ctx.jsonKeepalive) ctx.jsonKeepalive = createNonStreamJsonKeepalive(ctx, options);
-        return ctx.jsonKeepalive.start(headers);
+        const started = ctx.jsonKeepalive.start(headers);
+        if (started && options.accepted === true) ctx.jsonKeepalive.markAccepted();
+        return started;
+      },
+      markJsonKeepaliveAccepted() {
+        ctx.jsonKeepalive?.markAccepted?.();
+      },
+      beginPreHeaderSSEKeepalive(headers = {}, options = {}) {
+        ctx.preHeaderKeepalive?.stop?.();
+        const handle = createPreHeaderSSEKeepalive(ctx, { ...options, headers, openSSE });
+        ctx.preHeaderKeepalive = handle;
+        return handle;
       },
       json(status, payload, headers = {}) {
+        ctx.preHeaderKeepalive?.stop?.();
         ctx.jsonKeepalive?.stop?.();
         if (ctx.jsonKeepalive?.started) {
           ctx.jsonKeepalive.finishJson(payload);
@@ -266,8 +288,9 @@ export function createRequestContextFactory(deps) {
         res.writeHead(status, headers);
         res.end();
       },
-      openSSE(headers = {}) {
-        return openSSE(ctx, headers);
+      openSSE(headers = {}, options = {}) {
+        ctx.preHeaderKeepalive?.stop?.();
+        return openSSE(ctx, headers, options);
       },
       sendError(error) {
         return sendError(ctx, error);

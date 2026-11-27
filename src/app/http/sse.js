@@ -1,6 +1,7 @@
 /**
  * SSE writer with idle-aware CDN keepalive (参考 bohrium-club-auto syncKeepaliveWriter).
  * 仅在流空闲达到 intervalMs 时发送 `: keepalive\n\n`，有正常输出时不插冗余心跳。
+ * 支持 pre-header keepalive 已提交 SSE 头后的幂等复用。
  */
 import { DEFAULT_KEEPALIVE_INTERVAL_MS, resolveKeepaliveIntervalMs } from './keepalive.js';
 
@@ -8,6 +9,12 @@ export const SSE_HEARTBEAT_MS = DEFAULT_KEEPALIVE_INTERVAL_MS;
 
 export function openSSE(ctx, extraHeaders = {}, options = {}) {
   const res = ctx.res;
+  if (options.streamMode) {
+    ctx.streamMode = options.streamMode;
+  }
+  if (ctx.streamWriter && !ctx.streamWriter.closed) {
+    return ctx.streamWriter;
+  }
   if (res.headersSent) throw new Error('SSE stream already started');
   const intervalMs = Math.max(10, Number(options.intervalMs) || resolveKeepaliveIntervalMs(ctx.config));
   res.writeHead(200, {

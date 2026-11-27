@@ -50,8 +50,12 @@ export async function executeUpstreamChatTurn(ctx, params) {
   const wrappedHandlers = {
     ...handlers,
     onUpstreamAccepted(info) {
-      if (enableNonStreamKeepalive && typeof ctx.beginJsonKeepalive === 'function') {
-        ctx.beginJsonKeepalive();
+      if (enableNonStreamKeepalive) {
+        if (typeof ctx.markJsonKeepaliveAccepted === 'function') {
+          ctx.markJsonKeepaliveAccepted();
+        } else if (typeof ctx.beginJsonKeepalive === 'function') {
+          ctx.beginJsonKeepalive({}, { accepted: true });
+        }
       }
       if (typeof onUpstreamAccepted === 'function') {
         onUpstreamAccepted(info);
@@ -61,6 +65,10 @@ export async function executeUpstreamChatTurn(ctx, params) {
       }
     }
   };
+
+  if (enableNonStreamKeepalive && typeof ctx.beginJsonKeepalive === 'function') {
+    ctx.beginJsonKeepalive();
+  }
 
   const taskFor = (messagesForCall) => (runtime) =>
     (runtime?.client || ctx.duck).chat(
